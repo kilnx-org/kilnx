@@ -16,10 +16,41 @@ type App struct {
 	Streams     []Stream     // SSE stream endpoints
 	Schedules   []Schedule   // timed tasks
 	Jobs        []Job        // async background jobs
+	Webhooks    []Webhook    // external event receivers
+	Sockets     []Socket     // bidirectional websockets
+	RateLimits  []RateLimit  // rate limiting rules
 	Auth        *AuthConfig  // nil if no auth block defined
 	Permissions []Permission // role-based access rules
 	Layouts     []Layout
 	Components  []Component
+}
+
+type Webhook struct {
+	Path      string
+	SecretEnv string            // env var name for signature verification
+	Events    []WebhookEvent    // on event handlers
+}
+
+type WebhookEvent struct {
+	Name string // e.g., "payment_intent.succeeded"
+	Body []Node // actions to execute
+}
+
+type Socket struct {
+	Path         string
+	Auth         bool
+	RequiresRole string
+	OnConnect    []Node
+	OnMessage    []Node
+	OnDisconnect []Node
+}
+
+type RateLimit struct {
+	PathPattern string // e.g., "/api/*", "/login"
+	Requests    int    // max requests
+	Window      string // "minute", "hour"
+	Per         string // "user", "ip"
+	DelaySecs   int    // cooldown on exceeded
 }
 
 type Schedule struct {
@@ -232,6 +263,15 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 		case "job":
 			job := p.parseJob()
 			app.Jobs = append(app.Jobs, job)
+		case "webhook":
+			wh := p.parseWebhook()
+			app.Webhooks = append(app.Webhooks, wh)
+		case "socket":
+			sock := p.parseSocket()
+			app.Sockets = append(app.Sockets, sock)
+		case "limit":
+			rl := p.parseRateLimit()
+			app.RateLimits = append(app.RateLimits, rl)
 		case "auth":
 			authCfg, err := p.parseAuth()
 			if err != nil {
@@ -1923,4 +1963,227 @@ func (p *parserState) parseSearchNode() Node {
 	}
 
 	return node
+}
+
+// parseWebhook parses:
+//
+//	webhook /stripe/payment secret env STRIPE_SECRET
+//	  on event payment_intent.succeeded
+//	    query: UPDATE order SET status = 'paid' WHERE stripe_id = :event_id
+func (p *parserState) parseWebhook() Webhook {
+	wh := Webhook{}
+
+	// consume "webhook"
+	p.advance()
+
+	if p.current().Type == lexer.TokenPath {
+		wh.Path = p.advance().Value
+	}
+
+	// "secret env VAR_NAME"
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
+		if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "secret" {
+			p.advance()
+			if p.current().Type == lexer.TokenIdentifier && p.current().Value == "env" {
+				p.advance()
+			}
+			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				wh.SecretEnv = p.advance().Value
+			}
+		} else {
+			p.advance()
+		}
+	}
+
+	p.skipNewlines()
+
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+
+			// "on event eventName"
+			if p.current().Type == lexer.TokenKeyword && p.current().Value == "on" {
+				p.advance()
+				if p.current().Type == lexer.TokenIdentifier && p.current().Value == "event" {
+					p.advance()
+				}
+				event := WebhookEvent{}
+				eventLine := p.current().Line
+				if eventLine >= 1 && eventLine <= len(p.lines) {
+					line := p.lines[eventLine-1]
+					idx := strings.Index(strings.ToLower(line), "event ")
+					if idx >= 0 {
+						event.Name = strings.TrimSpace(line[idx+len("event "):])
+					}
+				}
+				p.skipToEndOfLine()
+				p.skipNewlines()
+
+				if p.current().Type == lexer.TokenIndent {
+					p.advance()
+					event.Body = p.parseBody()
+				}
+
+				wh.Events = append(wh.Events, event)
+				continue
+			}
+			p.advance()
+		}
+	}
+
+	return wh
+}
+
+// parseSocket parses:
+//
+//	socket /chat/:room requires auth
+//	  on connect
+//	    query: SELECT ...
+//	  on message
+//	    query: INSERT ...
+func (p *parserState) parseSocket() Socket {
+	sock := Socket{}
+
+	p.advance()
+
+	if p.current().Type == lexer.TokenPath {
+		sock.Path = p.advance().Value
+	}
+
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
+		if (p.current().Type == lexer.TokenKeyword || p.current().Type == lexer.TokenIdentifier) && p.current().Value == "requires" {
+			p.advance()
+			sock.Auth = true
+			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				sock.RequiresRole = p.advance().Value
+			} else {
+				sock.RequiresRole = "auth"
+			}
+		} else {
+			p.advance()
+		}
+	}
+
+	p.skipNewlines()
+
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+
+			if p.current().Type == lexer.TokenKeyword && p.current().Value == "on" {
+				p.advance()
+				eventType := ""
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					eventType = p.advance().Value
+				}
+				p.skipToEndOfLine()
+				p.skipNewlines()
+
+				var body []Node
+				if p.current().Type == lexer.TokenIndent {
+					p.advance()
+					body = p.parseBody()
+				}
+
+				switch eventType {
+				case "connect":
+					sock.OnConnect = body
+				case "message":
+					sock.OnMessage = body
+				case "disconnect":
+					sock.OnDisconnect = body
+				}
+				continue
+			}
+			p.advance()
+		}
+	}
+
+	return sock
+}
+
+// parseRateLimit parses:
+//
+//	limit /api/*
+//	  requests: 100 per minute per user
+func (p *parserState) parseRateLimit() RateLimit {
+	rl := RateLimit{Requests: 100, Window: "minute", Per: "ip"}
+
+	p.advance()
+
+	if p.current().Type == lexer.TokenPath {
+		rl.PathPattern = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+
+			tok := p.current()
+
+			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "requests" {
+				p.advance()
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+				if p.current().Type == lexer.TokenNumber {
+					fmt.Sscanf(p.advance().Value, "%d", &rl.Requests)
+				}
+				for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+					if p.current().Type == lexer.TokenIdentifier && p.current().Value == "per" {
+						p.advance()
+						if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+							val := p.advance().Value
+							if val == "minute" || val == "hour" || val == "second" {
+								rl.Window = val
+							} else if val == "user" || val == "ip" {
+								rl.Per = val
+							}
+						}
+					} else {
+						p.advance()
+					}
+				}
+				continue
+			}
+
+			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "delay" {
+				p.advance()
+				rl.DelaySecs = p.parseDurationTokens()
+				p.skipToEndOfLine()
+				continue
+			}
+
+			p.skipToEndOfLine()
+		}
+	}
+
+	return rl
 }

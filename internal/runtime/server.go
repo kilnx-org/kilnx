@@ -19,17 +19,19 @@ var staticFS embed.FS
 var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\}`)
 
 type Server struct {
-	app      *parser.App
-	db       *database.DB
-	sessions *SessionStore
-	jobQueue *JobQueue
-	mu       sync.RWMutex
-	port     int
+	app         *parser.App
+	db          *database.DB
+	sessions    *SessionStore
+	jobQueue    *JobQueue
+	rateLimiter *RateLimiter
+	mu          sync.RWMutex
+	port        int
 }
 
 func NewServer(app *parser.App, db *database.DB, port int) *Server {
 	s := &Server{app: app, db: db, sessions: NewSessionStore(), port: port}
 	s.jobQueue = NewJobQueue(s)
+	s.rateLimiter = NewRateLimiter(app.RateLimits)
 	return s
 }
 
@@ -65,6 +67,31 @@ func (s *Server) Start() error {
 	// Catch-all handler that resolves routes dynamically (supports hot reload)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		app := s.getApp()
+
+		// Rate limiting
+		if !s.rateLimiter.Check(r, s.getSession(r)) {
+			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte("Too many requests"))
+			return
+		}
+
+		// Webhooks (POST, no CSRF)
+		for _, wh := range app.Webhooks {
+			if r.URL.Path == wh.Path {
+				s.handleWebhook(w, r, wh)
+				return
+			}
+		}
+
+		// WebSockets
+		for _, sock := range app.Sockets {
+			if matchPath(sock.Path, r.URL.Path) {
+				s.handleSocket(w, r, sock)
+				return
+			}
+		}
 
 		// Auth routes (auto-generated when auth block is present)
 		if app.Auth != nil {

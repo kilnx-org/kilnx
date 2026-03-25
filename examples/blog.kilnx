@@ -97,6 +97,22 @@ job welcome-email
   send email to :email
     subject: "Welcome to the blog"
 
+webhook /hooks/events secret env WEBHOOK_SECRET
+  on event user.created
+    query: INSERT INTO post (title, body, status, author_id) VALUES ('Welcome', 'Auto-generated post', 'draft', 1)
+
+socket /ws/chat requires auth
+  on connect
+    query: SELECT 'connected' as status
+  on message
+    query: SELECT 'received' as status
+
+limit /api/*
+  requests: 100 per minute per user
+
+limit /login
+  requests: 5 per minute per ip
+
 page /about title "About" layout main
   alert success "Kilnx is running."
   "A blog engine built with kilnx."

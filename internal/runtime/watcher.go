@@ -100,4 +100,13 @@ func printRoutes(app *parser.App) {
 	for _, j := range app.Jobs {
 		fmt.Printf("  JOB  %s\n", j.Name)
 	}
+	for _, wh := range app.Webhooks {
+		fmt.Printf("  HOOK %s\n", wh.Path)
+	}
+	for _, sock := range app.Sockets {
+		fmt.Printf("  WS   %s\n", sock.Path)
+	}
+	for _, rl := range app.RateLimits {
+		fmt.Printf("  LIMIT %s (%d per %s per %s)\n", rl.PathPattern, rl.Requests, rl.Window, rl.Per)
+	}
 }
