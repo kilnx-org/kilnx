@@ -20,6 +20,11 @@ auth
   login: /login
   after login: /
 
+permissions
+  admin: all
+  editor: read post, write post where author = current_user
+  viewer: read post where status = published
+
 layout main
   html
     <!DOCTYPE html>
@@ -37,51 +42,48 @@ layout main
     <body>
     {nav}
     <main>{page.content}</main>
-    <footer>Built with kilnx. 29 keywords. Single binary.</footer>
+    <footer>Built with kilnx.</footer>
     </body>
     </html>
-
-component stat-card
-  param: label, value
-  html
-    <div style="display:inline-block;padding:1rem 1.5rem;background:#f8f8f8;border-radius:6px;margin-right:0.75rem;margin-bottom:0.75rem">
-      <div style="font-size:0.8rem;color:#888;text-transform:uppercase">{label}</div>
-      <div style="font-size:1.5rem;font-weight:600">{value}</div>
-    </div>
 
 page / title "Dashboard" layout main requires auth
   query stats: SELECT count(*) as users FROM user
   query post_stats: SELECT count(*) as posts FROM post
-  alert info "Welcome back, {current_user.name}."
+  alert info "Welcome back, {current_user.name}. Role: {current_user.role}"
+  "Users: {stats.users} | Posts: {post_stats.posts}"
 
-page /users title "Users" layout main requires auth
+page /users title "Users" layout main requires admin
   query users: SELECT id, name, email, role FROM user ORDER BY id DESC paginate 10
   table users
     columns: name, email, role
     row action: edit /users/:id/edit
     row action: delete /users/:id/delete
 
-page /users/new title "New User" layout main requires auth
+page /users/new title "New User" layout main requires admin
   form user
 
-action /users/new requires auth
+action /users/new requires admin
   validate user
   query: INSERT INTO user (name, email, password, role) VALUES (:name, :email, :password, :role)
   redirect /users
 
-page /users/:id/edit title "Edit User" layout main requires auth
+page /users/:id/edit title "Edit User" layout main requires admin
   form user with query: SELECT * FROM user WHERE id = :id
 
-action /users/:id/edit requires auth
+action /users/:id/edit requires admin
   validate user
   query: UPDATE user SET name = :name, email = :email, role = :role WHERE id = :id
   redirect /users
 
-action /users/:id/delete method POST requires auth
+action /users/:id/delete method POST requires admin
   query: DELETE FROM user WHERE id = :id
   respond fragment delete
+
+page /posts title "Posts" layout main requires editor
+  query posts: SELECT p.id, p.title, p.status, u.name as author FROM post p LEFT JOIN user u ON u.id = p.author_id ORDER BY p.created DESC
+  table posts
+    columns: title, author, status
 
 page /about title "About" layout main
   alert success "Kilnx is running."
   "A blog engine built with kilnx."
-  "29 keywords. Single binary. Zero dependencies."

@@ -97,8 +97,8 @@ func (s *Server) getSession(r *http.Request) *Session {
 	return s.sessions.Get(cookie.Value)
 }
 
-// requireAuth checks if the page requires auth and redirects to login if needed.
-// Returns true if the request should proceed, false if redirected.
+// requireAuth checks if the page requires auth and/or a specific role.
+// Returns true if the request should proceed, false if redirected or forbidden.
 func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request, page parser.Page) bool {
 	if !page.Auth {
 		return true
@@ -109,14 +109,97 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request, page parser
 	}
 
 	session := s.getSession(r)
-	if session != nil {
+	if session == nil {
+		// Not logged in: redirect to login
+		loginPath := app.Auth.LoginPath
+		http.Redirect(w, r, loginPath+"?next="+r.URL.Path, http.StatusSeeOther)
+		return false
+	}
+
+	// Check role if specified
+	role := page.RequiresRole
+	if role == "" || role == "auth" {
+		return true // any authenticated user
+	}
+
+	// Check if user's role matches or if user's role has "all" permission
+	userRole := session.Role
+	if userRole == role {
 		return true
 	}
 
-	// Redirect to login
-	loginPath := app.Auth.LoginPath
-	http.Redirect(w, r, loginPath+"?next="+r.URL.Path, http.StatusSeeOther)
+	// Check permissions table: does the user's role have access?
+	if s.hasPermission(userRole, role, app.Permissions) {
+		return true
+	}
+
+	// Forbidden
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	w.Write([]byte(renderForbidden(app.Pages, session)))
 	return false
+}
+
+// hasPermission checks if userRole has the required access level
+func (s *Server) hasPermission(userRole, requiredRole string, perms []parser.Permission) bool {
+	// Find the user's permission entry
+	for _, p := range perms {
+		if p.Role == userRole {
+			for _, rule := range p.Rules {
+				if rule == "all" {
+					return true
+				}
+			}
+		}
+	}
+
+	// Check role hierarchy: if requiredRole is defined in permissions,
+	// check if userRole is "higher" (has more rules or has "all")
+	// Simple approach: admin > editor > viewer by convention
+	roleHierarchy := map[string]int{
+		"admin":  100,
+		"editor": 50,
+		"viewer": 10,
+	}
+
+	userLevel, userOk := roleHierarchy[userRole]
+	requiredLevel, reqOk := roleHierarchy[requiredRole]
+
+	if userOk && reqOk {
+		return userLevel >= requiredLevel
+	}
+
+	// Direct match only
+	return userRole == requiredRole
+}
+
+func renderForbidden(pages []parser.Page, session *Session) string {
+	nav := renderNav(pages, "", session)
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>403 - Forbidden</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 800px; margin: 0 auto; padding: 1rem; }
+    nav { display: flex; gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 1.5rem; flex-wrap: wrap; }
+    nav a { text-decoration: none; color: #555; font-size: 0.9rem; }
+    nav a:hover { color: #1a1a1a; }
+    main { padding: 2rem 0; text-align: center; }
+    h1 { font-size: 3rem; color: #ccc; margin-bottom: 0.5rem; }
+    p { color: #888; }
+  </style>
+</head>
+<body>
+%s  <main>
+    <h1>403</h1>
+    <p>You don't have permission to access this page.</p>
+  </main>
+</body>
+</html>
+`, nav)
 }
 
 // handleLogin processes the login form POST

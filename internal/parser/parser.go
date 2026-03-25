@@ -8,13 +8,19 @@ import (
 )
 
 type App struct {
-	Models     []Model
-	Pages      []Page
-	Actions    []Page       // actions share the same structure as pages but handle POST/PUT/DELETE
-	Fragments  []Page       // fragments return partial HTML (no page wrapper)
-	Auth       *AuthConfig  // nil if no auth block defined
-	Layouts    []Layout
-	Components []Component
+	Models      []Model
+	Pages       []Page
+	Actions     []Page       // actions share the same structure as pages but handle POST/PUT/DELETE
+	Fragments   []Page       // fragments return partial HTML (no page wrapper)
+	Auth        *AuthConfig  // nil if no auth block defined
+	Permissions []Permission // role-based access rules
+	Layouts     []Layout
+	Components  []Component
+}
+
+type Permission struct {
+	Role  string   // e.g., "admin", "editor", "viewer"
+	Rules []string // e.g., "all", "read post", "write post where author = current_user"
 }
 
 type Layout struct {
@@ -73,12 +79,13 @@ type Field struct {
 }
 
 type Page struct {
-	Path    string
-	Layout  string
-	Title   string
-	Auth    bool
-	Method  string
-	Body    []Node
+	Path         string
+	Layout       string
+	Title        string
+	Auth         bool
+	RequiresRole string // "auth" = any logged in, "admin"/"editor" = specific role
+	Method       string
+	Body         []Node
 }
 
 type NodeType int
@@ -179,6 +186,9 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 				return nil, err
 			}
 			app.Auth = &authCfg
+		case "permissions":
+			perms := p.parsePermissions()
+			app.Permissions = append(app.Permissions, perms...)
 		case "layout":
 			layout := p.parseLayout()
 			app.Layouts = append(app.Layouts, layout)
@@ -405,8 +415,10 @@ func (p *parserState) parsePage() (Page, error) {
 			case "requires":
 				p.advance()
 				page.Auth = true
-				if p.current().Type == lexer.TokenIdentifier {
-					p.advance()
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					page.RequiresRole = p.advance().Value
+				} else {
+					page.RequiresRole = "auth"
 				}
 			case "method":
 				p.advance()
@@ -851,8 +863,10 @@ func (p *parserState) parseAction() (Page, error) {
 			case "requires":
 				p.advance()
 				page.Auth = true
-				if p.current().Type == lexer.TokenIdentifier {
-					p.advance()
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					page.RequiresRole = p.advance().Value
+				} else {
+					page.RequiresRole = "auth"
 				}
 			default:
 				p.advance()
@@ -1018,8 +1032,10 @@ func (p *parserState) parseFragment() (Page, error) {
 		if (tok.Type == lexer.TokenKeyword || tok.Type == lexer.TokenIdentifier) && tok.Value == "requires" {
 			p.advance()
 			page.Auth = true
-			if p.current().Type == lexer.TokenIdentifier {
-				p.advance()
+			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				page.RequiresRole = p.advance().Value
+			} else {
+				page.RequiresRole = "auth"
 			}
 		} else {
 			p.advance()
@@ -1342,4 +1358,74 @@ func (p *parserState) parseComponent() Component {
 	}
 
 	return comp
+}
+
+// parsePermissions parses:
+//
+//	permissions
+//	  admin: all
+//	  editor: read post, write post where author = current_user
+//	  viewer: read post where status = published
+func (p *parserState) parsePermissions() []Permission {
+	var perms []Permission
+
+	// consume "permissions"
+	p.advance()
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type != lexer.TokenIndent {
+		return perms
+	}
+	p.advance()
+
+	for !p.isEOF() {
+		if p.current().Type == lexer.TokenDedent {
+			p.advance()
+			break
+		}
+		if p.current().Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		// role: rules
+		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			lineNum := p.current().Line
+			role := p.advance().Value
+
+			if p.current().Type == lexer.TokenColon {
+				p.advance()
+			}
+
+			// Extract the full rule text from the raw source line
+			var ruleText string
+			if lineNum >= 1 && lineNum <= len(p.lines) {
+				line := p.lines[lineNum-1]
+				idx := strings.Index(line, ":")
+				if idx >= 0 {
+					ruleText = strings.TrimSpace(line[idx+1:])
+				}
+			}
+
+			var rules []string
+			if ruleText != "" {
+				// Split by comma to get individual rules
+				for _, r := range strings.Split(ruleText, ",") {
+					r = strings.TrimSpace(r)
+					if r != "" {
+						rules = append(rules, r)
+					}
+				}
+			}
+
+			perms = append(perms, Permission{Role: role, Rules: rules})
+			p.skipToEndOfLine()
+		} else {
+			p.advance()
+		}
+	}
+
+	return perms
 }
