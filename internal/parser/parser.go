@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/kilnx-org/kilnx/internal/lexer"
@@ -19,6 +20,7 @@ type App struct {
 	Webhooks    []Webhook    // external event receivers
 	Sockets     []Socket     // bidirectional websockets
 	RateLimits  []RateLimit  // rate limiting rules
+	Config       *AppConfig    // nil if no config block defined
 	Auth         *AuthConfig   // nil if no auth block defined
 	Permissions  []Permission  // role-based access rules
 	Layouts      []Layout
@@ -37,6 +39,12 @@ type TestStep struct {
 	Action string // "visit", "fill", "submit", "expect", "as"
 	Target string // field name, URL, or selector
 	Value  string // value to fill or expected value
+}
+
+type AppConfig struct {
+	Database string // env var or default path
+	Port     int    // server port (default 8080)
+	Secret   string // env var for session secret
 }
 
 type LogConfig struct {
@@ -293,6 +301,9 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 		case "limit":
 			rl := p.parseRateLimit()
 			app.RateLimits = append(app.RateLimits, rl)
+		case "config":
+			cfg := p.parseConfig()
+			app.Config = &cfg
 		case "auth":
 			authCfg, err := p.parseAuth()
 			if err != nil {
@@ -2480,4 +2491,99 @@ func (p *parserState) parseTranslations() map[string]map[string]string {
 	}
 
 	return result
+}
+
+// parseConfig parses:
+//
+//	config
+//	  database: env DATABASE_URL default "sqlite://app.db"
+//	  port: env PORT default 8080
+//	  secret: env SECRET_KEY required
+func (p *parserState) parseConfig() AppConfig {
+	cfg := AppConfig{
+		Port: 8080,
+	}
+
+	// consume "config"
+	p.advance()
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type != lexer.TokenIndent {
+		return cfg
+	}
+	p.advance()
+
+	for !p.isEOF() {
+		if p.current().Type == lexer.TokenDedent {
+			p.advance()
+			break
+		}
+		if p.current().Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			lineNum := p.current().Line
+			key := p.advance().Value
+
+			if p.current().Type == lexer.TokenColon {
+				p.advance()
+			}
+
+			// Read raw value from source
+			rawVal := ""
+			if lineNum >= 1 && lineNum <= len(p.lines) {
+				line := p.lines[lineNum-1]
+				idx := strings.Index(line, ":")
+				if idx >= 0 {
+					rawVal = strings.TrimSpace(line[idx+1:])
+				}
+			}
+
+			switch key {
+			case "database":
+				cfg.Database = resolveEnvValue(rawVal)
+			case "port":
+				resolved := resolveEnvValue(rawVal)
+				fmt.Sscanf(resolved, "%d", &cfg.Port)
+			case "secret":
+				cfg.Secret = resolveEnvValue(rawVal)
+			}
+
+			p.skipToEndOfLine()
+		} else {
+			p.advance()
+		}
+	}
+
+	return cfg
+}
+
+// resolveEnvValue handles "env VAR_NAME default VALUE" syntax.
+// Returns the resolved value.
+func resolveEnvValue(raw string) string {
+	parts := strings.Fields(raw)
+	if len(parts) == 0 {
+		return raw
+	}
+
+	if parts[0] == "env" && len(parts) >= 2 {
+		envVar := parts[1]
+		val := os.Getenv(envVar)
+		if val != "" {
+			return val
+		}
+		// Check for "default" fallback
+		for i, p := range parts {
+			if p == "default" && i+1 < len(parts) {
+				return strings.Trim(strings.Join(parts[i+1:], " "), "\"")
+			}
+		}
+		return ""
+	}
+
+	return strings.Trim(raw, "\"")
 }

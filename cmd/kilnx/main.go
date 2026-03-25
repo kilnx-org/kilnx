@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kilnx-org/kilnx/internal/build"
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/lexer"
 	"github.com/kilnx-org/kilnx/internal/parser"
@@ -47,8 +48,21 @@ func main() {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "build":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: kilnx build <file.kilnx> [-o output]")
+			os.Exit(1)
+		}
+		output := ""
+		if len(os.Args) > 4 && os.Args[3] == "-o" {
+			output = os.Args[4]
+		}
+		if err := build.Build(os.Args[2], output); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "version":
-		fmt.Println("kilnx v0.3.0")
+		fmt.Println("kilnx v1.0.0")
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -62,7 +76,20 @@ func cmdRun(filename string) error {
 		return err
 	}
 
+	// Resolve config
+	port := 8080
 	dbPath := dbPathFor(filename)
+	if app.Config != nil {
+		if app.Config.Port > 0 {
+			port = app.Config.Port
+		}
+		if app.Config.Database != "" {
+			dbPath = app.Config.Database
+			// Handle sqlite:// prefix
+			dbPath = strings.TrimPrefix(dbPath, "sqlite://")
+		}
+	}
+
 	db, err := database.Open(dbPath)
 	if err != nil {
 		return err
@@ -80,7 +107,7 @@ func cmdRun(filename string) error {
 		}
 	}
 
-	return runtime.WatchAndServe(filename, db, 8080)
+	return runtime.WatchAndServe(filename, db, port)
 }
 
 func cmdMigrate(filename string) error {
@@ -211,8 +238,9 @@ func printUsage() {
 	fmt.Println("Usage: kilnx <command> [arguments]")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("  run <file.kilnx>      Start the server (auto-migrates)")
-	fmt.Println("  migrate <file.kilnx>  Apply database migrations")
-	fmt.Println("  test <file.kilnx>     Run declarative tests")
-	fmt.Println("  version               Print version")
+	fmt.Println("  run <file.kilnx>        Start the server (auto-migrates)")
+	fmt.Println("  build <file.kilnx> [-o] Compile to standalone binary")
+	fmt.Println("  migrate <file.kilnx>    Apply database migrations")
+	fmt.Println("  test <file.kilnx>       Run declarative tests")
+	fmt.Println("  version                 Print version")
 }

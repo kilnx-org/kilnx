@@ -1,3 +1,8 @@
+config
+  database: env DATABASE_URL default "blog.db"
+  port: env PORT default 8080
+  secret: env SECRET_KEY
+
 model user
   name: text required min 2
   email: email unique required
