@@ -1,6 +1,15 @@
-page /
-  "Hello World"
-
-page /about
-  "About Kilnx"
+page / title "Home"
+  "Welcome to Kilnx."
   "The backend language for the htmx era."
+
+page /about title "About"
+  "Kilnx is a declarative backend language written in Go."
+  "It pairs natively with htmx."
+  "29 keywords. Single binary. Zero dependencies."
+
+page /principles title "Principles"
+  "The complexity is the tool's fault, not the problem's."
+  "Zero decisions before the first useful line."
+  "SQL is a first-class citizen."
+  "HTML is the native output."
+  "The binary is the deploy."
