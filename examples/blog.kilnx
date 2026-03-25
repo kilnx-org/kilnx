@@ -1,0 +1,27 @@
+model user
+  name: text required
+  email: email unique
+  role: option [admin, editor, viewer] default viewer
+  active: bool default true
+  phone: phone optional
+  created: timestamp auto
+
+model post
+  title: text required min 5
+  body: richtext required
+  status: option [draft, published, archived] default draft
+  author: user required
+  created: timestamp auto
+  published_at: timestamp optional
+
+model comment
+  body: text required
+  post: post required
+  author: user required
+  created: timestamp auto
+
+page / title "Blog"
+  "Welcome to the blog."
+
+page /about title "About"
+  "A blog built with kilnx."

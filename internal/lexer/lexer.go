@@ -12,6 +12,11 @@ const (
 	TokenPath                        // /users, /about
 	TokenString                      // "Hello World"
 	TokenIdentifier                  // variable names, method names
+	TokenNumber                      // 2, 100, 8080
+	TokenColon                       // :
+	TokenComma                       // ,
+	TokenBracketOpen                 // [
+	TokenBracketClose                // ]
 	TokenNewline                     // end of line
 	TokenIndent                      // increase in indentation
 	TokenDedent                      // decrease in indentation
@@ -38,6 +43,29 @@ var keywords = map[string]bool{
 	"enqueue": true, "broadcast": true,
 	"send": true, "requires": true, "method": true,
 	"title": true, "with": true,
+}
+
+// Field type keywords recognized inside model blocks
+var fieldTypes = map[string]bool{
+	"text": true, "email": true, "bool": true,
+	"timestamp": true, "richtext": true, "option": true,
+	"int": true, "float": true, "password": true,
+	"image": true, "phone": true,
+}
+
+// Field constraint keywords
+var fieldConstraints = map[string]bool{
+	"required": true, "unique": true, "optional": true,
+	"default": true, "auto": true,
+	"min": true, "max": true,
+}
+
+func IsFieldType(s string) bool {
+	return fieldTypes[s]
+}
+
+func IsFieldConstraint(s string) bool {
+	return fieldConstraints[s]
 }
 
 func Tokenize(source string) []Token {
@@ -91,6 +119,26 @@ func tokenizeLine(line string, lineNum int) []Token {
 			continue
 		}
 
+		// Single character tokens
+		switch line[i] {
+		case ':':
+			tokens = append(tokens, Token{Type: TokenColon, Value: ":", Line: lineNum, Column: i})
+			i++
+			continue
+		case ',':
+			tokens = append(tokens, Token{Type: TokenComma, Value: ",", Line: lineNum, Column: i})
+			i++
+			continue
+		case '[':
+			tokens = append(tokens, Token{Type: TokenBracketOpen, Value: "[", Line: lineNum, Column: i})
+			i++
+			continue
+		case ']':
+			tokens = append(tokens, Token{Type: TokenBracketClose, Value: "]", Line: lineNum, Column: i})
+			i++
+			continue
+		}
+
 		// String literal
 		if line[i] == '"' {
 			j := i + 1
@@ -113,6 +161,17 @@ func tokenizeLine(line string, lineNum int) []Token {
 				j++
 			}
 			tokens = append(tokens, Token{Type: TokenPath, Value: line[i:j], Line: lineNum, Column: i})
+			i = j
+			continue
+		}
+
+		// Number
+		if unicode.IsDigit(rune(line[i])) {
+			j := i
+			for j < len(line) && (unicode.IsDigit(rune(line[j])) || line[j] == '.') {
+				j++
+			}
+			tokens = append(tokens, Token{Type: TokenNumber, Value: line[i:j], Line: lineNum, Column: i})
 			i = j
 			continue
 		}
