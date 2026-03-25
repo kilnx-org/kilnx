@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="kilnx - the backend language for the htmx era" width="700">
+  <br>
+  <strong style="font-size: 3rem;">kilnx</strong>
+  <br>
+  <em>The backend language for the htmx era.</em>
+  <br><br>
 </p>
 
 <p align="center">
