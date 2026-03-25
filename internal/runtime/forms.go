@@ -5,26 +5,53 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
-// CSRF token store (in-memory, good enough for single binary)
+// CSRF token store with expiry (#6 fix: bounded store with TTL cleanup)
+type csrfEntry struct {
+	createdAt time.Time
+}
+
 var (
-	csrfTokens   = make(map[string]bool)
+	csrfTokens   = make(map[string]csrfEntry)
 	csrfTokensMu sync.Mutex
+	csrfMaxAge   = 30 * time.Minute
 )
+
+func init() {
+	go csrfCleanupLoop()
+}
+
+func csrfCleanupLoop() {
+	for {
+		time.Sleep(5 * time.Minute)
+		csrfTokensMu.Lock()
+		now := time.Now()
+		for token, entry := range csrfTokens {
+			if now.Sub(entry.createdAt) > csrfMaxAge {
+				delete(csrfTokens, token)
+			}
+		}
+		csrfTokensMu.Unlock()
+	}
+}
 
 func generateCSRFToken() string {
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		panic("kilnx: failed to generate CSRF token: " + err.Error())
+	}
 	token := hex.EncodeToString(b)
 	csrfTokensMu.Lock()
-	csrfTokens[token] = true
+	csrfTokens[token] = csrfEntry{createdAt: time.Now()}
 	csrfTokensMu.Unlock()
 	return token
 }
@@ -32,9 +59,9 @@ func generateCSRFToken() string {
 func validateCSRFToken(token string) bool {
 	csrfTokensMu.Lock()
 	defer csrfTokensMu.Unlock()
-	if csrfTokens[token] {
-		delete(csrfTokens, token) // single use
-		return true
+	if entry, ok := csrfTokens[token]; ok {
+		delete(csrfTokens, token)
+		return time.Since(entry.createdAt) < csrfMaxAge
 	}
 	return false
 }

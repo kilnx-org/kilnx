@@ -119,18 +119,24 @@ func windowDuration(window string) time.Duration {
 }
 
 func clientIP(r *http.Request) string {
-	// Check X-Forwarded-For first
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.SplitN(xff, ",", 2)
-		return strings.TrimSpace(parts[0])
-	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-	// Fall back to RemoteAddr
+	// Use RemoteAddr as the primary source.
+	// Only trust X-Forwarded-For when the direct connection is from localhost
+	// (i.e., behind a local reverse proxy).
 	addr := r.RemoteAddr
 	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
-		return addr[:idx]
+		addr = addr[:idx]
 	}
+
+	isLocal := addr == "127.0.0.1" || addr == "::1" || addr == "localhost"
+	if isLocal {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.SplitN(xff, ",", 2)
+			return strings.TrimSpace(parts[0])
+		}
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return xri
+		}
+	}
+
 	return addr
 }

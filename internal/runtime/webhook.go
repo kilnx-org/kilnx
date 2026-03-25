@@ -78,7 +78,13 @@ func verifySignature(payload []byte, signature, secret string) bool {
 	if signature == "" {
 		return false
 	}
-	// Remove "sha256=" prefix if present
+
+	// Handle Stripe format: t=timestamp,v1=signature
+	if strings.Contains(signature, "v1=") {
+		return verifyStripeSignature(payload, signature, secret)
+	}
+
+	// Handle GitHub format: sha256=hex
 	signature = strings.TrimPrefix(signature, "sha256=")
 
 	mac := hmac.New(sha256.New, []byte(secret))
@@ -86,6 +92,33 @@ func verifySignature(payload []byte, signature, secret string) bool {
 	expected := hex.EncodeToString(mac.Sum(nil))
 
 	return hmac.Equal([]byte(expected), []byte(signature))
+}
+
+func verifyStripeSignature(payload []byte, header, secret string) bool {
+	var timestamp, sig string
+	for _, part := range strings.Split(header, ",") {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		switch kv[0] {
+		case "t":
+			timestamp = kv[1]
+		case "v1":
+			sig = kv[1]
+		}
+	}
+	if timestamp == "" || sig == "" {
+		return false
+	}
+
+	// Stripe signs: timestamp.payload
+	signedPayload := timestamp + "." + string(payload)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(signedPayload))
+	expected := hex.EncodeToString(mac.Sum(nil))
+
+	return hmac.Equal([]byte(expected), []byte(sig))
 }
 
 func extractEventType(payload map[string]interface{}) string {

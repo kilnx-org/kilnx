@@ -71,6 +71,16 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 		return
 	}
 
+	// Origin validation (#11 fix)
+	origin := r.Header.Get("Origin")
+	if origin != "" {
+		host := r.Host
+		if !strings.Contains(origin, host) {
+			http.Error(w, "Forbidden: origin mismatch", http.StatusForbidden)
+			return
+		}
+	}
+
 	key := r.Header.Get("Sec-WebSocket-Key")
 	if key == "" {
 		http.Error(w, "Missing WebSocket key", http.StatusBadRequest)
@@ -154,8 +164,9 @@ func computeAcceptKey(key string) string {
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
+const maxWSFrameSize = 1 << 20 // 1 MB max frame size (#4 fix)
+
 func readWSFrame(reader *bufio.Reader) ([]byte, error) {
-	// Read frame header
 	header := make([]byte, 2)
 	if _, err := reader.Read(header); err != nil {
 		return nil, err
@@ -176,6 +187,10 @@ func readWSFrame(reader *bufio.Reader) ([]byte, error) {
 			return nil, err
 		}
 		length = int(binary.BigEndian.Uint64(ext))
+	}
+
+	if length > maxWSFrameSize {
+		return nil, fmt.Errorf("frame too large: %d bytes", length)
 	}
 
 	var maskKey []byte

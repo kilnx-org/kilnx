@@ -19,6 +19,8 @@ func WatchAndServe(filename string, db *database.DB, port int) error {
 	printRoutes(app)
 
 	srv := NewServer(app, db, port)
+	srv.StartScheduler()
+	srv.StartJobQueue()
 
 	go watchFile(filename, srv)
 

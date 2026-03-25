@@ -3,10 +3,13 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
+
+var identifierRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 type DB struct {
 	conn *sql.DB
@@ -19,13 +22,11 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("opening database %s: %w", path, err)
 	}
 
-	// Enable WAL mode for better concurrent access
 	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("setting WAL mode: %w", err)
 	}
 
-	// Enable foreign keys
 	if _, err := conn.Exec("PRAGMA foreign_keys=ON"); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("enabling foreign keys: %w", err)
@@ -43,14 +44,15 @@ func (db *DB) Conn() *sql.DB {
 }
 
 // Migrate compares models with the current database state and applies changes.
-// Returns a list of SQL statements that were executed.
 func (db *DB) Migrate(models []parser.Model) ([]string, error) {
 	var executed []string
 
 	for _, model := range models {
-		tableName := model.Name
+		if !isValidIdentifier(model.Name) {
+			return executed, fmt.Errorf("invalid model name: %q", model.Name)
+		}
 
-		exists, err := db.tableExists(tableName)
+		exists, err := db.tableExists(model.Name)
 		if err != nil {
 			return executed, err
 		}
@@ -58,11 +60,10 @@ func (db *DB) Migrate(models []parser.Model) ([]string, error) {
 		if !exists {
 			stmt := generateCreateTable(model)
 			if _, err := db.conn.Exec(stmt); err != nil {
-				return executed, fmt.Errorf("creating table '%s': %w\nSQL: %s", tableName, err, stmt)
+				return executed, fmt.Errorf("creating table '%s': %w\nSQL: %s", model.Name, err, stmt)
 			}
 			executed = append(executed, stmt)
 		} else {
-			// Table exists: check for new columns
 			stmts, err := db.migrateExistingTable(model)
 			if err != nil {
 				return executed, err
@@ -92,6 +93,9 @@ func (db *DB) migrateExistingTable(model parser.Model) ([]string, error) {
 
 	for _, field := range model.Fields {
 		colName := fieldToColumnName(field)
+		if !isValidIdentifier(colName) {
+			return executed, fmt.Errorf("invalid column name: %q", colName)
+		}
 		if _, ok := existing[colName]; ok {
 			continue
 		}
@@ -99,7 +103,7 @@ func (db *DB) migrateExistingTable(model parser.Model) ([]string, error) {
 		sqlType := fieldToSQLType(field)
 		defaultClause := fieldToDefault(field)
 
-		stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s%s",
+		stmt := fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"%s\" %s%s",
 			model.Name, colName, sqlType, defaultClause)
 
 		if _, err := db.conn.Exec(stmt); err != nil {
@@ -113,7 +117,11 @@ func (db *DB) migrateExistingTable(model parser.Model) ([]string, error) {
 }
 
 func (db *DB) getColumns(table string) (map[string]bool, error) {
-	rows, err := db.conn.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if !isValidIdentifier(table) {
+		return nil, fmt.Errorf("invalid table name: %q", table)
+	}
+
+	rows, err := db.conn.Query(fmt.Sprintf("PRAGMA table_info(\"%s\")", table))
 	if err != nil {
 		return nil, err
 	}
@@ -130,13 +138,15 @@ func (db *DB) getColumns(table string) (map[string]bool, error) {
 		}
 		columns[name] = true
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return columns, nil
 }
 
 func generateCreateTable(model parser.Model) string {
 	var cols []string
 
-	// Auto id column
 	cols = append(cols, "id INTEGER PRIMARY KEY AUTOINCREMENT")
 
 	for _, field := range model.Fields {
@@ -144,7 +154,7 @@ func generateCreateTable(model parser.Model) string {
 		cols = append(cols, col)
 	}
 
-	return fmt.Sprintf("CREATE TABLE %s (\n  %s\n)", model.Name, strings.Join(cols, ",\n  "))
+	return fmt.Sprintf("CREATE TABLE \"%s\" (\n  %s\n)", model.Name, strings.Join(cols, ",\n  "))
 }
 
 func fieldToColumnDef(f parser.Field) string {
@@ -152,7 +162,7 @@ func fieldToColumnDef(f parser.Field) string {
 	sqlType := fieldToSQLType(f)
 
 	var parts []string
-	parts = append(parts, name, sqlType)
+	parts = append(parts, fmt.Sprintf("\"%s\"", name), sqlType)
 
 	if f.Required {
 		parts = append(parts, "NOT NULL")
@@ -168,7 +178,7 @@ func fieldToColumnDef(f parser.Field) string {
 	}
 
 	if f.Type == parser.FieldReference {
-		parts = append(parts, fmt.Sprintf("REFERENCES %s(id)", f.Reference))
+		parts = append(parts, fmt.Sprintf("REFERENCES \"%s\"(id)", f.Reference))
 	}
 
 	return strings.Join(parts, " ")
@@ -220,8 +230,13 @@ func fieldToDefault(f parser.Field) string {
 		case parser.FieldInt, parser.FieldFloat:
 			return fmt.Sprintf(" DEFAULT %s", f.Default)
 		default:
-			return fmt.Sprintf(" DEFAULT '%s'", f.Default)
+			escaped := strings.ReplaceAll(f.Default, "'", "''")
+			return fmt.Sprintf(" DEFAULT '%s'", escaped)
 		}
 	}
 	return ""
+}
+
+func isValidIdentifier(name string) bool {
+	return identifierRe.MatchString(name)
 }

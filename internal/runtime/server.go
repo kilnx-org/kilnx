@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 var staticFS embed.FS
 
 var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\}`)
+var identifierRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 type Server struct {
 	app         *parser.App
@@ -43,6 +45,10 @@ func (s *Server) Reload(app *parser.App) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.app = app
+}
+
+func (s *Server) StartJobQueue() {
+	s.jobQueue.Start()
 }
 
 func (s *Server) getApp() *parser.App {
@@ -187,10 +193,6 @@ func (s *Server) Start() error {
 		w.Write([]byte(render404(r.URL.Path, app.Pages)))
 	})
 
-	// Start background services
-	s.StartScheduler()
-	s.jobQueue.Start()
-
 	addr := fmt.Sprintf(":%d", s.port)
 	fmt.Printf("kilnx serving on http://localhost%s\n", addr)
 	return http.ListenAndServe(addr, mux)
@@ -246,17 +248,23 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 				if queryName == "" {
 					queryName = "_last"
 				}
+				var searchParams map[string]string
 				if fields, ok := searchFilters[queryName]; ok && searchTerm != "" {
-					sql = injectSearchFilter(sql, fields, searchTerm)
+					sql, searchParams = injectSearchFilter(sql, fields, searchTerm)
 				}
 
 				// Handle pagination
 				if node.Paginate > 0 {
-					// First get total count
 					countSQL := fmt.Sprintf("SELECT COUNT(*) as _count FROM (%s)", sql)
-					countRows, err := s.db.QueryRows(countSQL)
+					var countRows []database.Row
+					var countErr error
+					if searchParams != nil {
+						countRows, countErr = s.db.QueryRowsWithParams(countSQL, searchParams)
+					} else {
+						countRows, countErr = s.db.QueryRows(countSQL)
+					}
 					total := 0
-					if err == nil && len(countRows) > 0 {
+					if countErr == nil && len(countRows) > 0 {
 						fmt.Sscanf(countRows[0]["_count"], "%d", &total)
 					}
 
@@ -276,7 +284,13 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 					}
 				}
 
-				rows, err := s.db.QueryRows(sql)
+				var rows []database.Row
+				var err error
+				if searchParams != nil {
+					rows, err = s.db.QueryRowsWithParams(sql, searchParams)
+				} else {
+					rows, err = s.db.QueryRows(sql)
+				}
 				if err != nil {
 					body.WriteString(fmt.Sprintf("    <p style=\"color:red\">Query error: %s</p>\n",
 						html.EscapeString(err.Error())))
@@ -600,9 +614,8 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 
 		case parser.NodeRedirect:
 			path := node.Value
-			// Interpolate :params in redirect path
 			for k, v := range formData {
-				path = strings.ReplaceAll(path, ":"+k, v)
+				path = strings.ReplaceAll(path, ":"+k, url.PathEscape(v))
 			}
 			// If htmx request, use HX-Redirect header
 			if r.Header.Get("HX-Request") == "true" {
@@ -664,22 +677,28 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 	http.Redirect(w, r, referer, http.StatusSeeOther)
 }
 
-// injectSearchFilter wraps a SQL query with a WHERE LIKE filter on the given fields
-func injectSearchFilter(sql string, fields []string, term string) string {
+// injectSearchFilter wraps a SQL query with a parameterized WHERE LIKE filter.
+// Uses SQLite's || operator for safe LIKE binding: field LIKE '%' || :_search || '%'
+func injectSearchFilter(sql string, fields []string, term string) (string, map[string]string) {
+	params := map[string]string{"_search": term}
 	if len(fields) == 0 || term == "" {
-		return sql
+		return sql, nil
 	}
-
-	// Escape the search term for LIKE
-	escaped := strings.ReplaceAll(term, "'", "''")
 
 	var conditions []string
 	for _, f := range fields {
-		conditions = append(conditions, fmt.Sprintf("%s LIKE '%%%s%%'", f, escaped))
+		if !identifierRe.MatchString(f) {
+			continue
+		}
+		conditions = append(conditions, fmt.Sprintf("\"%s\" LIKE '%%' || :_search || '%%'", f))
+	}
+
+	if len(conditions) == 0 {
+		return sql, nil
 	}
 
 	whereClause := strings.Join(conditions, " OR ")
-	return fmt.Sprintf("SELECT * FROM (%s) WHERE %s", sql, whereClause)
+	return fmt.Sprintf("SELECT * FROM (%s) WHERE %s", sql, whereClause), params
 }
 
 // matchPath checks if a route pattern matches a URL path.

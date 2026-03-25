@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -31,7 +32,9 @@ type SessionStore struct {
 }
 
 func NewSessionStore() *SessionStore {
-	return &SessionStore{sessions: make(map[string]*Session)}
+	ss := &SessionStore{sessions: make(map[string]*Session)}
+	go ss.cleanupLoop()
+	return ss
 }
 
 func (ss *SessionStore) Create(user database.Row, identityField string) string {
@@ -64,9 +67,26 @@ func (ss *SessionStore) Delete(id string) {
 	delete(ss.sessions, id)
 }
 
+// cleanupLoop periodically removes expired sessions (#3 fix)
+func (ss *SessionStore) cleanupLoop() {
+	for {
+		time.Sleep(5 * time.Minute)
+		ss.mu.Lock()
+		now := time.Now()
+		for id, sess := range ss.sessions {
+			if now.After(sess.ExpiresAt) {
+				delete(ss.sessions, id)
+			}
+		}
+		ss.mu.Unlock()
+	}
+}
+
 func generateSessionID() string {
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		panic("kilnx: failed to generate session ID: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -110,30 +130,25 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request, page parser
 
 	session := s.getSession(r)
 	if session == nil {
-		// Not logged in: redirect to login
 		loginPath := app.Auth.LoginPath
 		http.Redirect(w, r, loginPath+"?next="+r.URL.Path, http.StatusSeeOther)
 		return false
 	}
 
-	// Check role if specified
 	role := page.RequiresRole
 	if role == "" || role == "auth" {
-		return true // any authenticated user
+		return true
 	}
 
-	// Check if user's role matches or if user's role has "all" permission
 	userRole := session.Role
 	if userRole == role {
 		return true
 	}
 
-	// Check permissions table: does the user's role have access?
 	if s.hasPermission(userRole, role, app.Permissions) {
 		return true
 	}
 
-	// Forbidden
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
 	w.Write([]byte(renderForbidden(app.Pages, session)))
@@ -142,7 +157,6 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request, page parser
 
 // hasPermission checks if userRole has the required access level
 func (s *Server) hasPermission(userRole, requiredRole string, perms []parser.Permission) bool {
-	// Find the user's permission entry
 	for _, p := range perms {
 		if p.Role == userRole {
 			for _, rule := range p.Rules {
@@ -153,9 +167,6 @@ func (s *Server) hasPermission(userRole, requiredRole string, perms []parser.Per
 		}
 	}
 
-	// Check role hierarchy: if requiredRole is defined in permissions,
-	// check if userRole is "higher" (has more rules or has "all")
-	// Simple approach: admin > editor > viewer by convention
 	roleHierarchy := map[string]int{
 		"admin":  100,
 		"editor": 50,
@@ -169,7 +180,6 @@ func (s *Server) hasPermission(userRole, requiredRole string, perms []parser.Per
 		return userLevel >= requiredLevel
 	}
 
-	// Direct match only
 	return userRole == requiredRole
 }
 
@@ -202,6 +212,20 @@ func renderForbidden(pages []parser.Page, session *Session) string {
 `, nav)
 }
 
+// isLocalPath validates that a redirect path is local (not an open redirect) (#1 fix)
+func isLocalPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	if strings.HasPrefix(path, "//") || strings.Contains(path, "://") {
+		return false
+	}
+	if !strings.HasPrefix(path, "/") {
+		return false
+	}
+	return true
+}
+
 // handleLogin processes the login form POST
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	app := s.getApp()
@@ -215,7 +239,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// POST: process login
 	r.ParseForm()
 	identity := r.FormValue("identity")
 	password := r.FormValue("password")
@@ -231,9 +254,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up user
-	sql := fmt.Sprintf("SELECT * FROM %s WHERE %s = :identity",
-		app.Auth.Table, app.Auth.Identity)
+	sql := fmt.Sprintf("SELECT * FROM \"%s\" WHERE \"%s\" = :identity",
+		sanitizeIdentifier(app.Auth.Table), sanitizeIdentifier(app.Auth.Identity))
 	rows, err := s.db.QueryRowsWithParams(sql, map[string]string{"identity": identity})
 	if err != nil || len(rows) == 0 {
 		s.renderLoginPage(w, r, "Invalid credentials")
@@ -248,20 +270,20 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create session
 	sessionID := s.sessions.Create(user, app.Auth.Identity)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "_kilnx_session",
 		Value:    sessionID,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   86400,
 	})
 
-	// Redirect to "next" or after login path
+	// Validate redirect target (#1 fix: prevent open redirect)
 	next := r.URL.Query().Get("next")
-	if next == "" {
+	if !isLocalPath(next) {
 		next = app.Auth.AfterLogin
 	}
 	http.Redirect(w, r, next, http.StatusSeeOther)
@@ -302,7 +324,6 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// POST: process registration
 	r.ParseForm()
 	identity := r.FormValue("identity")
 	password := r.FormValue("password")
@@ -330,13 +351,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insert user
 	if name == "" {
 		name = strings.Split(identity, "@")[0]
 	}
 
-	sql := fmt.Sprintf("INSERT INTO %s (name, %s, %s) VALUES (:name, :identity, :password)",
-		app.Auth.Table, app.Auth.Identity, app.Auth.Password)
+	sql := fmt.Sprintf("INSERT INTO \"%s\" (name, \"%s\", \"%s\") VALUES (:name, :identity, :password)",
+		sanitizeIdentifier(app.Auth.Table), sanitizeIdentifier(app.Auth.Identity), sanitizeIdentifier(app.Auth.Password))
 	err = s.db.ExecWithParams(sql, map[string]string{
 		"name":     name,
 		"identity": identity,
@@ -459,4 +479,15 @@ func renderAuthPage(title, body string, pages []parser.Page) string {
 %s</body>
 </html>
 `, html.EscapeString(title), html.EscapeString(title), body)
+}
+
+// sanitizeIdentifier ensures a SQL identifier contains only safe characters
+func sanitizeIdentifier(name string) string {
+	var b strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
 }

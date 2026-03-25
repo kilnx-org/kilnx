@@ -1,8 +1,8 @@
 package runtime
 
 import (
-	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"strings"
 	"time"
@@ -77,7 +77,8 @@ func (s *Server) sendSSEEvent(w http.ResponseWriter, flusher http.Flusher, strea
 
 	rows, err := s.db.QueryRowsWithParams(stream.SQL, params)
 	if err != nil {
-		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+		fmt.Printf("  SSE query error: %v\n", err)
+		fmt.Fprintf(w, "event: error\ndata: query failed\n\n")
 		flusher.Flush()
 		return
 	}
@@ -108,29 +109,20 @@ func renderSSERows(rows []database.Row) string {
 		return ""
 	}
 
-	// If single row with single column, return just the value
+	// If single row with single column, return just the escaped value
 	if len(rows) == 1 && len(rows[0]) == 1 {
 		for _, v := range rows[0] {
-			return v
+			return html.EscapeString(v)
 		}
 	}
 
-	// Render as JSON for flexibility (htmx can handle both HTML and JSON)
-	data, err := json.Marshal(rows)
-	if err != nil {
-		return "[]"
-	}
-
-	// Also render as a simple HTML list for direct htmx swap
 	var b strings.Builder
 	for _, row := range rows {
 		b.WriteString("<div class=\"kilnx-sse-item\">")
 		for _, val := range row {
-			b.WriteString(fmt.Sprintf("<span>%s</span> ", val))
+			b.WriteString(fmt.Sprintf("<span>%s</span> ", html.EscapeString(val)))
 		}
 		b.WriteString("</div>")
 	}
-
-	_ = data
 	return b.String()
 }

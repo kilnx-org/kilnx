@@ -124,6 +124,7 @@ func main() {
 
 	srv := runtime.NewServer(app, db, port)
 	srv.StartScheduler()
+	srv.StartJobQueue()
 
 	fmt.Printf("Serving on http://localhost:%d\n", port)
 	if err := srv.Start(); err != nil {
