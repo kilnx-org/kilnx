@@ -232,6 +232,11 @@ func writeWSFrame(conn net.Conn, data []byte) {
 		ext := make([]byte, 2)
 		binary.BigEndian.PutUint16(ext, uint16(len(data)))
 		frame = append(frame, ext...)
+	} else {
+		frame = append(frame, 127)
+		ext := make([]byte, 8)
+		binary.BigEndian.PutUint64(ext, uint64(len(data)))
+		frame = append(frame, ext...)
 	}
 
 	frame = append(frame, data...)

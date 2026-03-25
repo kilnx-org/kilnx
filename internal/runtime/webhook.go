@@ -21,6 +21,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request, wh parser
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB max
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
