@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kilnx-org/kilnx/internal/analyzer"
 	"github.com/kilnx-org/kilnx/internal/build"
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/lexer"
@@ -61,6 +62,15 @@ func main() {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "check":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: kilnx check <file.kilnx>")
+			os.Exit(1)
+		}
+		if err := cmdCheck(os.Args[2]); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Println("kilnx v1.0.0")
 	default:
@@ -70,10 +80,35 @@ func main() {
 	}
 }
 
+func cmdCheck(filename string) error {
+	app, err := loadApp(filename)
+	if err != nil {
+		return err
+	}
+
+	diags := analyzer.Analyze(app)
+	if len(diags) == 0 {
+		fmt.Println("No issues found.")
+		return nil
+	}
+
+	hasErrors := printDiagnostics(diags)
+	if hasErrors {
+		return fmt.Errorf("static analysis found errors")
+	}
+	return nil
+}
+
 func cmdRun(filename string) error {
 	app, err := loadApp(filename)
 	if err != nil {
 		return err
+	}
+
+	if diags := analyzer.Analyze(app); len(diags) > 0 {
+		if printDiagnostics(diags) {
+			return fmt.Errorf("static analysis found errors, not starting server")
+		}
 	}
 
 	// Resolve config
@@ -164,6 +199,12 @@ func cmdTest(filename string) error {
 		return err
 	}
 
+	if diags := analyzer.Analyze(app); len(diags) > 0 {
+		if printDiagnostics(diags) {
+			return fmt.Errorf("static analysis found errors")
+		}
+	}
+
 	if len(app.Tests) == 0 {
 		fmt.Println("No tests found.")
 		return nil
@@ -234,11 +275,29 @@ func dbPathFor(kilnxFile string) string {
 	return filepath.Join(dir, name+".db")
 }
 
+func printDiagnostics(diags []analyzer.Diagnostic) bool {
+	hasErrors := false
+	for _, d := range diags {
+		prefix := "warning"
+		if d.Level == "error" {
+			prefix = "error"
+			hasErrors = true
+		}
+		if d.Line > 0 {
+			fmt.Fprintf(os.Stderr, "kilnx %s: [%s] %s (line %d)\n", prefix, d.Context, d.Message, d.Line)
+		} else {
+			fmt.Fprintf(os.Stderr, "kilnx %s: [%s] %s\n", prefix, d.Context, d.Message)
+		}
+	}
+	return hasErrors
+}
+
 func printUsage() {
 	fmt.Println("Usage: kilnx <command> [arguments]")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  run <file.kilnx>        Start the server (auto-migrates)")
+	fmt.Println("  check <file.kilnx>      Run static analysis")
 	fmt.Println("  build <file.kilnx> [-o] Compile to standalone binary")
 	fmt.Println("  migrate <file.kilnx>    Apply database migrations")
 	fmt.Println("  test <file.kilnx>       Run declarative tests")

@@ -72,6 +72,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/kilnx-org/kilnx/internal/analyzer"
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/lexer"
 	"github.com/kilnx-org/kilnx/internal/parser"
@@ -86,6 +87,22 @@ func main() {
 	if err != nil {
 		fmt.Printf("Parse error: %v\n", err)
 		os.Exit(1)
+	}
+
+	if diags := analyzer.Analyze(app); len(diags) > 0 {
+		hasErrors := false
+		for _, d := range diags {
+			prefix := "warning"
+			if d.Level == "error" {
+				prefix = "error"
+				hasErrors = true
+			}
+			fmt.Fprintf(os.Stderr, "kilnx %s: [%s] %s\n", prefix, d.Context, d.Message)
+		}
+		if hasErrors {
+			fmt.Fprintln(os.Stderr, "Static analysis found errors, aborting.")
+			os.Exit(1)
+		}
 	}
 
 	port := 8080
