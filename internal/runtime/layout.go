@@ -55,6 +55,7 @@ func renderDefaultLayout(title, nav, content string) string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>%s</title>
   <script src="/_kilnx/htmx.min.js"></script>
+  <script src="/_kilnx/sse.js"></script>
   <style>
 %s
   </style>
@@ -75,7 +76,8 @@ func renderWithLayout(layout parser.Layout, title, nav, content string) string {
 	result = strings.ReplaceAll(result, "{page.content}", content)
 	result = strings.ReplaceAll(result, "{nav}", nav)
 	result = strings.ReplaceAll(result, "{kilnx.css}", kilnxCSS)
-	result = strings.ReplaceAll(result, "{kilnx.js}", `<script src="/_kilnx/htmx.min.js"></script>`)
+	result = strings.ReplaceAll(result, "{kilnx.js}", `<script src="/_kilnx/htmx.min.js"></script>
+<script src="/_kilnx/sse.js"></script>`)
 
 	return result
 }

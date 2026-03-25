@@ -13,10 +13,20 @@ type App struct {
 	Actions     []Page       // actions share the same structure as pages but handle POST/PUT/DELETE
 	Fragments   []Page       // fragments return partial HTML (no page wrapper)
 	APIs        []Page       // api endpoints return JSON instead of HTML
+	Streams     []Stream     // SSE stream endpoints
 	Auth        *AuthConfig  // nil if no auth block defined
 	Permissions []Permission // role-based access rules
 	Layouts     []Layout
 	Components  []Component
+}
+
+type Stream struct {
+	Path         string
+	Auth         bool
+	RequiresRole string
+	SQL          string   // query to execute on each tick
+	IntervalSecs int      // polling interval in seconds
+	EventName    string   // SSE event name (default: "message")
 }
 
 type Permission struct {
@@ -189,6 +199,12 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 				return nil, err
 			}
 			app.APIs = append(app.APIs, apiEndpoint)
+		case "stream":
+			stream, err := p.parseStream()
+			if err != nil {
+				return nil, err
+			}
+			app.Streams = append(app.Streams, stream)
 		case "auth":
 			authCfg, err := p.parseAuth()
 			if err != nil {
@@ -1494,6 +1510,132 @@ func (p *parserState) parseAPI() (Page, error) {
 	}
 
 	return page, nil
+}
+
+// parseStream parses:
+//
+//	stream /notifications requires auth
+//	  query: SELECT message, created_at FROM notifications WHERE seen = false
+//	  every 5s
+func (p *parserState) parseStream() (Stream, error) {
+	stream := Stream{
+		IntervalSecs: 5,
+		EventName:    "message",
+	}
+
+	// consume "stream"
+	p.advance()
+
+	// expect path
+	if p.current().Type != lexer.TokenPath {
+		return stream, fmt.Errorf("line %d: expected path after 'stream'", p.current().Line)
+	}
+	stream.Path = p.advance().Value
+
+	// parse modifiers: requires
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
+		tok := p.current()
+		if (tok.Type == lexer.TokenKeyword || tok.Type == lexer.TokenIdentifier) && tok.Value == "requires" {
+			p.advance()
+			stream.Auth = true
+			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				stream.RequiresRole = p.advance().Value
+			} else {
+				stream.RequiresRole = "auth"
+			}
+		} else {
+			p.advance()
+		}
+	}
+
+	p.skipNewlines()
+
+	if p.current().Type != lexer.TokenIndent {
+		return stream, nil
+	}
+	p.advance()
+
+	for !p.isEOF() {
+		if p.current().Type == lexer.TokenDedent {
+			p.advance()
+			break
+		}
+		if p.current().Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		tok := p.current()
+
+		// query: SELECT ...
+		if tok.Type == lexer.TokenKeyword && tok.Value == "query" {
+			queryLine := tok.Line
+			p.advance()
+			if p.current().Type == lexer.TokenColon {
+				p.advance()
+			}
+			stream.SQL = p.extractSQLFromLine(queryLine)
+			p.skipToEndOfLine()
+			cont := p.extractContinuationSQL()
+			if cont != "" {
+				stream.SQL += cont
+			}
+			continue
+		}
+
+		// every 5s / every 10s
+		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "every" {
+			p.advance()
+			if p.current().Type == lexer.TokenNumber || p.current().Type == lexer.TokenIdentifier {
+				val := p.advance().Value
+				stream.IntervalSecs = parseDuration(val)
+			}
+			p.skipToEndOfLine()
+			continue
+		}
+
+		// event: name
+		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "event" {
+			p.advance()
+			if p.current().Type == lexer.TokenColon {
+				p.advance()
+			}
+			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				stream.EventName = p.advance().Value
+			}
+			p.skipToEndOfLine()
+			continue
+		}
+
+		p.advance()
+	}
+
+	return stream, nil
+}
+
+// parseDuration parses "5s", "10s", "1m", "5m" into seconds
+func parseDuration(val string) int {
+	n := 0
+	unit := ""
+	for i, c := range val {
+		if c >= '0' && c <= '9' {
+			n = n*10 + int(c-'0')
+		} else {
+			unit = val[i:]
+			break
+		}
+	}
+	if n == 0 {
+		n = 5
+	}
+	switch unit {
+	case "m":
+		return n * 60
+	case "h":
+		return n * 3600
+	default: // "s" or empty
+		return n
+	}
 }
 
 // parseSearchNode parses: search queryName in title, body

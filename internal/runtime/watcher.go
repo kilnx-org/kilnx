@@ -91,4 +91,7 @@ func printRoutes(app *parser.App) {
 	for _, a := range app.APIs {
 		fmt.Printf("  API  %s %s\n", a.Method, a.Path)
 	}
+	for _, s := range app.Streams {
+		fmt.Printf("  SSE  %s (every %ds)\n", s.Path, s.IntervalSecs)
+	}
 }

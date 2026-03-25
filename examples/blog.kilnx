@@ -86,6 +86,10 @@ api /api/v1/users requires auth
 api /api/v1/users/:id requires auth
   query user: SELECT id, name, email, role, created FROM user WHERE id = :id
 
+stream /stream/user-count requires auth
+  query: SELECT count(*) as total FROM user
+  every 3s
+
 page /about title "About" layout main
   alert success "Kilnx is running."
   "A blog engine built with kilnx."

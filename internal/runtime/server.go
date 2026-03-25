@@ -13,7 +13,7 @@ import (
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
-//go:embed static/htmx.min.js
+//go:embed static/htmx.min.js static/sse.js
 var staticFS embed.FS
 
 var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\}`)
@@ -45,9 +45,15 @@ func (s *Server) getApp() *parser.App {
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
-	// Serve embedded htmx.js
+	// Serve embedded static files
 	mux.HandleFunc("/_kilnx/htmx.min.js", func(w http.ResponseWriter, r *http.Request) {
 		data, _ := staticFS.ReadFile("static/htmx.min.js")
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Cache-Control", "public, max-age=31536000")
+		w.Write(data)
+	})
+	mux.HandleFunc("/_kilnx/sse.js", func(w http.ResponseWriter, r *http.Request) {
+		data, _ := staticFS.ReadFile("static/sse.js")
 		w.Header().Set("Content-Type", "application/javascript")
 		w.Header().Set("Cache-Control", "public, max-age=31536000")
 		w.Write(data)
@@ -93,6 +99,14 @@ func (s *Server) Start() error {
 					s.handleAction(w, r, page, app)
 					return
 				}
+			}
+		}
+
+		// Match SSE streams
+		for _, stream := range app.Streams {
+			if matchPath(stream.Path, r.URL.Path) {
+				s.handleStream(w, r, stream)
+				return
 			}
 		}
 
