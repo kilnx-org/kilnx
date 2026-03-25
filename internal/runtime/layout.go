@@ -42,7 +42,10 @@ const kilnxCSS = `    * { margin: 0; padding: 0; box-sizing: border-box; }
     .kilnx-field input, .kilnx-field textarea, .kilnx-field select { padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9rem; font-family: inherit; }
     .kilnx-field input:focus, .kilnx-field textarea:focus, .kilnx-field select:focus { outline: none; border-color: #4a7aba; box-shadow: 0 0 0 2px rgba(74,122,186,0.15); }
     .kilnx-btn { padding: 0.5rem 1.25rem; background: #1a1a1a; color: white; border: none; border-radius: 4px; font-size: 0.9rem; cursor: pointer; align-self: flex-start; }
-    .kilnx-btn:hover { background: #333; }`
+    .kilnx-btn:hover { background: #333; }
+    .kilnx-search { margin-bottom: 1rem; }
+    .kilnx-search input { width: 100%%; padding: 0.5rem 0.75rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9rem; font-family: inherit; }
+    .kilnx-search input:focus { outline: none; border-color: #4a7aba; box-shadow: 0 0 0 2px rgba(74,122,186,0.15); }`
 
 func renderDefaultLayout(title, nav, content string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>

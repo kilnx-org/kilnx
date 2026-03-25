@@ -185,6 +185,24 @@ func interpolateRowPath(path string, row database.Row) string {
 	return result
 }
 
+// renderSearch renders a search input that filters a query via htmx.
+// The search input sends a GET request to the current page with ?q=term,
+// and the server filters the query results using LIKE on the specified fields.
+func renderSearch(node parser.Node, currentPath string) string {
+	placeholder := "Search"
+	if len(node.SearchFields) > 0 {
+		placeholder = "Search " + strings.Join(node.SearchFields, ", ")
+	}
+
+	return fmt.Sprintf(`    <div class="kilnx-search">
+      <input type="search" name="q" placeholder="%s"
+        hx-get="%s" hx-trigger="input changed delay:300ms, search"
+        hx-target="main" hx-push-url="true"
+        hx-include="this" autocomplete="off">
+    </div>
+`, html.EscapeString(placeholder), html.EscapeString(currentPath))
+}
+
 func getField(row database.Row, field string) string {
 	if val, ok := row[field]; ok {
 		return val

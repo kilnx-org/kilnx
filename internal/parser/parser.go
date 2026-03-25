@@ -12,6 +12,7 @@ type App struct {
 	Pages       []Page
 	Actions     []Page       // actions share the same structure as pages but handle POST/PUT/DELETE
 	Fragments   []Page       // fragments return partial HTML (no page wrapper)
+	APIs        []Page       // api endpoints return JSON instead of HTML
 	Auth        *AuthConfig  // nil if no auth block defined
 	Permissions []Permission // role-based access rules
 	Layouts     []Layout
@@ -102,6 +103,7 @@ const (
 	NodeRespond        // respond fragment ".selector" with query: SQL
 	NodeHTML           // html { raw html content }
 	NodeComponent      // user-card with name: "Alice", email: "alice@test.com"
+	NodeSearch         // search queryName in field1, field2
 )
 
 type Node struct {
@@ -121,6 +123,7 @@ type Node struct {
 	HTMLContent   string            // for html: raw HTML content
 	ComponentName string            // for component usage: which component
 	ComponentArgs map[string]string // for component usage: param values
+	SearchFields  []string          // for search: fields to search in
 }
 
 type Validation struct {
@@ -180,6 +183,12 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 				return nil, err
 			}
 			app.Fragments = append(app.Fragments, frag)
+		case "api":
+			apiEndpoint, err := p.parseAPI()
+			if err != nil {
+				return nil, err
+			}
+			app.APIs = append(app.APIs, apiEndpoint)
 		case "auth":
 			authCfg, err := p.parseAuth()
 			if err != nil {
@@ -483,6 +492,10 @@ func (p *parserState) parseBody() []Node {
 				continue
 			case "form":
 				node := p.parseFormNode()
+				nodes = append(nodes, node)
+				continue
+			case "search":
+				node := p.parseSearchNode()
 				nodes = append(nodes, node)
 				continue
 			case "redirect":
@@ -1428,4 +1441,90 @@ func (p *parserState) parsePermissions() []Permission {
 	}
 
 	return perms
+}
+
+// parseAPI parses:
+//
+//	api /api/v1/users requires auth
+//	  query users: SELECT id, name, email FROM user ORDER BY id
+//	  paginate 20
+func (p *parserState) parseAPI() (Page, error) {
+	page := Page{Method: "GET"}
+
+	// consume "api"
+	p.advance()
+
+	// expect path
+	if p.current().Type != lexer.TokenPath {
+		return page, fmt.Errorf("line %d: expected path after 'api'", p.current().Line)
+	}
+	page.Path = p.advance().Value
+
+	// parse modifiers: method, requires
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
+		tok := p.current()
+		if tok.Type == lexer.TokenKeyword || tok.Type == lexer.TokenIdentifier {
+			switch tok.Value {
+			case "method":
+				p.advance()
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					page.Method = p.advance().Value
+				}
+			case "requires":
+				p.advance()
+				page.Auth = true
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					page.RequiresRole = p.advance().Value
+				} else {
+					page.RequiresRole = "auth"
+				}
+			default:
+				p.advance()
+			}
+		} else {
+			p.advance()
+		}
+	}
+
+	p.skipNewlines()
+
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		page.Body = p.parseBody()
+	}
+
+	return page, nil
+}
+
+// parseSearchNode parses: search queryName in title, body
+func (p *parserState) parseSearchNode() Node {
+	node := Node{Type: NodeSearch}
+
+	// consume "search"
+	p.advance()
+
+	// query name to filter
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.Name = p.advance().Value
+	}
+
+	// expect "in"
+	if p.current().Type == lexer.TokenIdentifier && p.current().Value == "in" {
+		p.advance()
+	}
+
+	// field list
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+		if p.current().Type == lexer.TokenComma {
+			p.advance()
+			continue
+		}
+		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			node.SearchFields = append(node.SearchFields, p.advance().Value)
+		} else {
+			p.advance()
+		}
+	}
+
+	return node
 }

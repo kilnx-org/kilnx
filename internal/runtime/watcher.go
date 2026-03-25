@@ -73,8 +73,8 @@ func watchFile(filename string, srv *Server) {
 }
 
 func printRoutes(app *parser.App) {
-	fmt.Printf("Parsed %d page(s), %d action(s), %d fragment(s)\n",
-		len(app.Pages), len(app.Actions), len(app.Fragments))
+	fmt.Printf("Parsed %d page(s), %d action(s), %d fragment(s), %d api(s)\n",
+		len(app.Pages), len(app.Actions), len(app.Fragments), len(app.APIs))
 	for _, p := range app.Pages {
 		label := p.Path
 		if p.Title != "" {
@@ -87,5 +87,8 @@ func printRoutes(app *parser.App) {
 	}
 	for _, f := range app.Fragments {
 		fmt.Printf("  FRAG %s\n", f.Path)
+	}
+	for _, a := range app.APIs {
+		fmt.Printf("  API  %s %s\n", a.Method, a.Path)
 	}
 }

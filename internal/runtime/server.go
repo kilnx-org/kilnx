@@ -96,6 +96,17 @@ func (s *Server) Start() error {
 			}
 		}
 
+		// Match API endpoints (JSON)
+		for _, api := range app.APIs {
+			if matchPath(api.Path, r.URL.Path) {
+				if !s.requireAuth(w, r, api) {
+					return
+				}
+				s.handleAPI(w, r, api)
+				return
+			}
+		}
+
 		// Match fragments (partial HTML, no page wrapper)
 		for _, frag := range app.Fragments {
 			if matchPath(frag.Path, r.URL.Path) {
@@ -152,6 +163,15 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		ctx.queries["current_user"] = []database.Row{ctx.currentUser.Data}
 	}
 
+	// Collect search nodes to apply filters to queries
+	searchFilters := make(map[string][]string) // queryName -> fields to search
+	for _, node := range p.Body {
+		if node.Type == parser.NodeSearch {
+			searchFilters[node.Name] = node.SearchFields
+		}
+	}
+	searchTerm := r.URL.Query().Get("q")
+
 	// Get current page number from query string
 	pageNum := 1
 	if pg := r.URL.Query().Get("page"); pg != "" {
@@ -168,6 +188,15 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		case parser.NodeQuery:
 			if s.db != nil {
 				sql := node.SQL
+
+				// Apply search filter if this query has a search node
+				queryName := node.Name
+				if queryName == "" {
+					queryName = "_last"
+				}
+				if fields, ok := searchFilters[queryName]; ok && searchTerm != "" {
+					sql = injectSearchFilter(sql, fields, searchTerm)
+				}
 
 				// Handle pagination
 				if node.Paginate > 0 {
@@ -223,6 +252,9 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 
 		case parser.NodeForm:
 			body.WriteString(renderForm(node, s.getApp(), s.db, r))
+
+		case parser.NodeSearch:
+			body.WriteString(renderSearch(node, p.Path))
 
 		case parser.NodeHTML:
 			htmlContent := interpolate(node.HTMLContent, ctx)
@@ -544,6 +576,24 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 		referer = "/"
 	}
 	http.Redirect(w, r, referer, http.StatusSeeOther)
+}
+
+// injectSearchFilter wraps a SQL query with a WHERE LIKE filter on the given fields
+func injectSearchFilter(sql string, fields []string, term string) string {
+	if len(fields) == 0 || term == "" {
+		return sql
+	}
+
+	// Escape the search term for LIKE
+	escaped := strings.ReplaceAll(term, "'", "''")
+
+	var conditions []string
+	for _, f := range fields {
+		conditions = append(conditions, fmt.Sprintf("%s LIKE '%%%s%%'", f, escaped))
+	}
+
+	whereClause := strings.Join(conditions, " OR ")
+	return fmt.Sprintf("SELECT * FROM (%s) WHERE %s", sql, whereClause)
 }
 
 // matchPath checks if a route pattern matches a URL path.
