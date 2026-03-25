@@ -1,6 +1,6 @@
 model user
-  name: text required
-  email: email unique
+  name: text required min 2
+  email: email unique required
   role: option [admin, editor, viewer] default viewer
   active: bool default true
   created: timestamp auto
@@ -21,20 +21,29 @@ page / title "Dashboard"
 page /users title "Users"
   query users: SELECT id, name, email, role, created FROM user ORDER BY created DESC paginate 5
   table users
-    columns: name, email, role, created
-    row action: view /users/:id
+    columns: name, email, role
+    row action: edit /users/:id/edit
+    row action: delete /users/:id/delete
 
-page /posts title "Posts"
-  query posts: SELECT p.id, p.title, p.status, u.name as author, p.created FROM post p LEFT JOIN user u ON u.id = p.author_id ORDER BY p.created DESC paginate 5
-  table posts
-    columns: title, author, status, created
-    row action: view /posts/:id
+page /users/new title "New User"
+  form user
 
-page /recent title "Recent Activity"
-  query users: SELECT name, email FROM user ORDER BY created DESC LIMIT 5
-  list users
-    title: name
-    subtitle: email
+action /users/new
+  validate user
+  query: INSERT INTO user (name, email, role) VALUES (:name, :email, :role)
+  redirect /users
+
+page /users/:id/edit title "Edit User"
+  form user with query: SELECT * FROM user WHERE id = :id
+
+action /users/:id/edit
+  validate user
+  query: UPDATE user SET name = :name, email = :email, role = :role WHERE id = :id
+  redirect /users
+
+action /users/:id/delete
+  query: DELETE FROM user WHERE id = :id
+  redirect /users
 
 page /about title "About"
   alert success "Kilnx is running."

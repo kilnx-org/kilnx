@@ -73,12 +73,15 @@ func watchFile(filename string, srv *Server) {
 }
 
 func printRoutes(app *parser.App) {
-	fmt.Printf("Parsed %d page(s)\n", len(app.Pages))
+	fmt.Printf("Parsed %d page(s), %d action(s)\n", len(app.Pages), len(app.Actions))
 	for _, p := range app.Pages {
 		label := p.Path
 		if p.Title != "" {
 			label += " (" + p.Title + ")"
 		}
 		fmt.Printf("  %s %s\n", p.Method, label)
+	}
+	for _, a := range app.Actions {
+		fmt.Printf("  %s %s\n", a.Method, a.Path)
 	}
 }

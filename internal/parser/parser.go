@@ -8,8 +8,9 @@ import (
 )
 
 type App struct {
-	Models []Model
-	Pages  []Page
+	Models  []Model
+	Pages   []Page
+	Actions []Page // actions share the same structure as pages but handle POST/PUT/DELETE
 }
 
 type Model struct {
@@ -65,17 +66,28 @@ const (
 	NodeList           // list users { title: name, subtitle: email }
 	NodeTable          // table users { columns: name, email }
 	NodeAlert          // alert success "message"
+	NodeForm           // form user
+	NodeRedirect       // redirect /users
+	NodeValidate       // validate { name: required, email: required }
 )
 
 type Node struct {
-	Type       NodeType
-	Value      string
-	Name       string            // for query: result var name; for list/table: query name
-	SQL        string            // for query: the raw SQL
-	Props      map[string]string // for list: title, subtitle; for alert: level
-	Columns    []TableColumn     // for table: column definitions
-	RowActions []RowAction       // for table: row-level actions
-	Paginate   int               // for query: items per page (0 = no pagination)
+	Type        NodeType
+	Value       string
+	Name        string            // for query: result var name; for list/table: query name
+	SQL         string            // for query: the raw SQL
+	Props       map[string]string // for list: title, subtitle; for alert: level
+	Columns     []TableColumn     // for table: column definitions
+	RowActions  []RowAction       // for table: row-level actions
+	Paginate    int               // for query: items per page (0 = no pagination)
+	ModelName   string            // for form: which model to generate form from
+	QuerySQL    string            // for form with query: pre-fill data
+	Validations []Validation      // for validate block
+}
+
+type Validation struct {
+	Field string
+	Rules []string // required, is email, min N, max N
 }
 
 type TableColumn struct {
@@ -118,6 +130,12 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 				return nil, err
 			}
 			app.Pages = append(app.Pages, page)
+		case "action":
+			action, err := p.parseAction()
+			if err != nil {
+				return nil, err
+			}
+			app.Actions = append(app.Actions, action)
 		default:
 			p.advance()
 		}
@@ -400,6 +418,18 @@ func (p *parserState) parseBody() []Node {
 				continue
 			case "alert":
 				node := p.parseAlertNode()
+				nodes = append(nodes, node)
+				continue
+			case "form":
+				node := p.parseFormNode()
+				nodes = append(nodes, node)
+				continue
+			case "redirect":
+				node := p.parseRedirectNode()
+				nodes = append(nodes, node)
+				continue
+			case "validate":
+				node := p.parseValidateNode()
 				nodes = append(nodes, node)
 				continue
 			}
@@ -720,6 +750,180 @@ func (p *parserState) parseAlertNode() Node {
 
 	// message
 	if p.current().Type == lexer.TokenString {
+		node.Value = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	return node
+}
+
+// parseAction parses:
+//
+//	action /users/create method POST
+//	  validate user
+//	  query: INSERT INTO user (name, email) VALUES (:name, :email)
+//	  redirect /users
+func (p *parserState) parseAction() (Page, error) {
+	page := Page{Method: "POST"}
+
+	// consume "action"
+	p.advance()
+
+	// expect path
+	if p.current().Type != lexer.TokenPath {
+		return page, fmt.Errorf("line %d: expected path after 'action'", p.current().Line)
+	}
+	page.Path = p.advance().Value
+
+	// parse modifiers: method, requires
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
+		tok := p.current()
+		if tok.Type == lexer.TokenKeyword || tok.Type == lexer.TokenIdentifier {
+			switch tok.Value {
+			case "method":
+				p.advance()
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					page.Method = p.advance().Value
+				}
+			case "requires":
+				p.advance()
+				page.Auth = true
+				if p.current().Type == lexer.TokenIdentifier {
+					p.advance()
+				}
+			default:
+				p.advance()
+			}
+		} else {
+			p.advance()
+		}
+	}
+
+	p.skipNewlines()
+
+	// parse body
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		page.Body = p.parseBody()
+	}
+
+	return page, nil
+}
+
+// parseFormNode parses:
+//
+//	form user
+//	form user with query: SELECT * FROM user WHERE id = :id
+func (p *parserState) parseFormNode() Node {
+	node := Node{Type: NodeForm}
+
+	formLine := p.current().Line
+
+	// consume "form"
+	p.advance()
+
+	// model name
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.ModelName = p.advance().Value
+	}
+
+	// optional "with query: SQL"
+	if p.current().Type == lexer.TokenKeyword && p.current().Value == "with" {
+		p.advance()
+		if p.current().Type == lexer.TokenKeyword && p.current().Value == "query" {
+			p.advance()
+			if p.current().Type == lexer.TokenColon {
+				p.advance()
+			}
+			node.QuerySQL = p.extractSQLFromLine(formLine)
+			// extractSQLFromLine finds the first colon; we need the SQL after "with query:"
+			// Re-extract: find "query:" in the line
+			if formLine >= 1 && formLine <= len(p.lines) {
+				line := p.lines[formLine-1]
+				idx := strings.Index(line, "query:")
+				if idx >= 0 {
+					node.QuerySQL = strings.TrimSpace(line[idx+len("query:"):])
+				}
+			}
+		}
+	}
+
+	p.skipToEndOfLine()
+	return node
+}
+
+// parseValidateNode parses:
+//
+//	validate user
+//	  (uses model constraints automatically)
+//
+// or:
+//
+//	validate
+//	  name: required
+//	  email: required, is email
+func (p *parserState) parseValidateNode() Node {
+	node := Node{Type: NodeValidate}
+
+	// consume "validate"
+	p.advance()
+
+	// optional model name (validate user = use model constraints)
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.ModelName = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	// optional indented block with explicit rules
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+
+			// field: rules
+			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				v := Validation{Field: p.advance().Value}
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+				// collect rules until end of line
+				var rules []string
+				for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+					if p.current().Type == lexer.TokenComma {
+						p.advance()
+						continue
+					}
+					rules = append(rules, p.advance().Value)
+				}
+				v.Rules = rules
+				node.Validations = append(node.Validations, v)
+			} else {
+				p.advance()
+			}
+		}
+	}
+
+	return node
+}
+
+// parseRedirectNode parses: redirect /users
+func (p *parserState) parseRedirectNode() Node {
+	node := Node{Type: NodeRedirect}
+
+	// consume "redirect"
+	p.advance()
+
+	// path
+	if p.current().Type == lexer.TokenPath {
 		node.Value = p.advance().Value
 	}
 

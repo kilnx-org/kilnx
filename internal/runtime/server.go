@@ -56,9 +56,26 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		app := s.getApp()
 
-		// Find matching page
+		// Handle POST/PUT/DELETE -> match actions
+		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete {
+			for _, action := range app.Actions {
+				if matchPath(action.Path, r.URL.Path) {
+					s.handleAction(w, r, action, app)
+					return
+				}
+			}
+			// Also check pages with method POST (legacy)
+			for _, page := range app.Pages {
+				if page.Method == "POST" && matchPath(page.Path, r.URL.Path) {
+					s.handleAction(w, r, page, app)
+					return
+				}
+			}
+		}
+
+		// Find matching page (GET)
 		for _, page := range app.Pages {
-			if r.URL.Path == page.Path {
+			if matchPath(page.Path, r.URL.Path) {
 				content := s.renderPage(page, app.Pages, r)
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.Write([]byte(content))
@@ -157,6 +174,9 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 
 		case parser.NodeAlert:
 			body.WriteString(renderAlert(node, ctx))
+
+		case parser.NodeForm:
+			body.WriteString(renderForm(node, s.getApp(), s.db, r))
 		}
 	}
 
@@ -206,6 +226,13 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
     .kilnx-pagination a:hover { text-decoration: underline; }
     .kilnx-pagination .disabled { color: #ccc; font-size: 0.9rem; }
     .kilnx-page-info { font-size: 0.85rem; color: #888; }
+    .kilnx-form { display: flex; flex-direction: column; gap: 0.75rem; max-width: 500px; }
+    .kilnx-field { display: flex; flex-direction: column; gap: 0.25rem; }
+    .kilnx-field label { font-size: 0.85rem; font-weight: 500; color: #555; }
+    .kilnx-field input, .kilnx-field textarea, .kilnx-field select { padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9rem; font-family: inherit; }
+    .kilnx-field input:focus, .kilnx-field textarea:focus, .kilnx-field select:focus { outline: none; border-color: #4a7aba; box-shadow: 0 0 0 2px rgba(74,122,186,0.15); }
+    .kilnx-btn { padding: 0.5rem 1.25rem; background: #1a1a1a; color: white; border: none; border-radius: 4px; font-size: 0.9rem; cursor: pointer; align-self: flex-start; }
+    .kilnx-btn:hover { background: #333; }
   </style>
 </head>
 <body>
@@ -315,4 +342,113 @@ func render404(path string, pages []parser.Page) string {
 </body>
 </html>
 `, nav, html.EscapeString(path))
+}
+
+// handleAction processes a POST/PUT/DELETE request
+func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action parser.Page, app *parser.App) {
+	formData := extractFormData(r)
+
+	// Verify CSRF token
+	csrfToken := formData["_csrf"]
+	if !validateCSRFToken(csrfToken) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	delete(formData, "_csrf")
+
+	// Merge path params into form data
+	pathParams := matchPathParams(action.Path, r.URL.Path)
+	for k, v := range pathParams {
+		formData[k] = v
+	}
+
+	// Process body nodes
+	for _, node := range action.Body {
+		switch node.Type {
+		case parser.NodeValidate:
+			modelName := node.ModelName
+			if modelName == "" {
+				continue
+			}
+			errors := validateFormData(modelName, app, formData)
+			if len(errors) > 0 {
+				// Re-render the referring page with errors
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				referer := r.Header.Get("Referer")
+				if referer == "" {
+					referer = "/"
+				}
+				// Simple error response
+				var errorHTML strings.Builder
+				for _, e := range errors {
+					errorHTML.WriteString(fmt.Sprintf("<div class=\"kilnx-alert kilnx-alert-error\">%s</div>", html.EscapeString(e)))
+				}
+				w.Write([]byte(errorHTML.String()))
+				return
+			}
+
+		case parser.NodeQuery:
+			if s.db != nil {
+				err := s.db.ExecWithParams(node.SQL, formData)
+				if err != nil {
+					http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+
+		case parser.NodeRedirect:
+			path := node.Value
+			// Interpolate :params in redirect path
+			for k, v := range formData {
+				path = strings.ReplaceAll(path, ":"+k, v)
+			}
+			http.Redirect(w, r, path, http.StatusSeeOther)
+			return
+		}
+	}
+
+	// Default: redirect back to referer or /
+	referer := r.Header.Get("Referer")
+	if referer == "" {
+		referer = "/"
+	}
+	http.Redirect(w, r, referer, http.StatusSeeOther)
+}
+
+// matchPath checks if a route pattern matches a URL path.
+// Supports :param segments: /users/:id matches /users/5
+func matchPath(pattern, urlPath string) bool {
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	urlParts := strings.Split(strings.Trim(urlPath, "/"), "/")
+
+	if len(patternParts) != len(urlParts) {
+		return false
+	}
+
+	for i, pp := range patternParts {
+		if strings.HasPrefix(pp, ":") {
+			continue // param segment matches anything
+		}
+		if pp != urlParts[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// matchPathParams extracts :param values from a URL given a pattern
+func matchPathParams(pattern, urlPath string) map[string]string {
+	params := make(map[string]string)
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	urlParts := strings.Split(strings.Trim(urlPath, "/"), "/")
+
+	for i, pp := range patternParts {
+		if strings.HasPrefix(pp, ":") && i < len(urlParts) {
+			params[strings.TrimPrefix(pp, ":")] = urlParts[i]
+		}
+	}
+
+	return params
 }
