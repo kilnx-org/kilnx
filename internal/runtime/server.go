@@ -19,14 +19,15 @@ var staticFS embed.FS
 var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\}`)
 
 type Server struct {
-	app  *parser.App
-	db   *database.DB
-	mu   sync.RWMutex
-	port int
+	app      *parser.App
+	db       *database.DB
+	sessions *SessionStore
+	mu       sync.RWMutex
+	port     int
 }
 
 func NewServer(app *parser.App, db *database.DB, port int) *Server {
-	return &Server{app: app, db: db, port: port}
+	return &Server{app: app, db: db, sessions: NewSessionStore(), port: port}
 }
 
 func (s *Server) Reload(app *parser.App) {
@@ -56,10 +57,29 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		app := s.getApp()
 
+		// Auth routes (auto-generated when auth block is present)
+		if app.Auth != nil {
+			if r.URL.Path == app.Auth.LoginPath {
+				s.handleLogin(w, r)
+				return
+			}
+			if r.URL.Path == "/logout" {
+				s.handleLogout(w, r)
+				return
+			}
+			if r.URL.Path == "/register" {
+				s.handleRegister(w, r)
+				return
+			}
+		}
+
 		// Handle POST/PUT/DELETE -> match actions
 		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete {
 			for _, action := range app.Actions {
 				if matchPath(action.Path, r.URL.Path) {
+					if !s.requireAuth(w, r, action) {
+						return
+					}
 					s.handleAction(w, r, action, app)
 					return
 				}
@@ -67,6 +87,9 @@ func (s *Server) Start() error {
 			// Also check pages with method POST (legacy)
 			for _, page := range app.Pages {
 				if page.Method == "POST" && matchPath(page.Path, r.URL.Path) {
+					if !s.requireAuth(w, r, page) {
+						return
+					}
 					s.handleAction(w, r, page, app)
 					return
 				}
@@ -76,6 +99,9 @@ func (s *Server) Start() error {
 		// Match fragments (partial HTML, no page wrapper)
 		for _, frag := range app.Fragments {
 			if matchPath(frag.Path, r.URL.Path) {
+				if !s.requireAuth(w, r, frag) {
+					return
+				}
 				content := s.renderFragment(frag, r)
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.Write([]byte(content))
@@ -86,6 +112,9 @@ func (s *Server) Start() error {
 		// Find matching page (GET)
 		for _, page := range app.Pages {
 			if matchPath(page.Path, r.URL.Path) {
+				if !s.requireAuth(w, r, page) {
+					return
+				}
 				content := s.renderPage(page, app.Pages, r)
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.Write([]byte(content))
@@ -106,14 +135,21 @@ func (s *Server) Start() error {
 
 // renderContext holds query results available during template rendering
 type renderContext struct {
-	queries  map[string][]database.Row
-	paginate map[string]PaginateInfo
+	queries     map[string][]database.Row
+	paginate    map[string]PaginateInfo
+	currentUser *Session
 }
 
 func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Request) string {
 	ctx := &renderContext{
-		queries:  make(map[string][]database.Row),
-		paginate: make(map[string]PaginateInfo),
+		queries:     make(map[string][]database.Row),
+		paginate:    make(map[string]PaginateInfo),
+		currentUser: s.getSession(r),
+	}
+
+	// Make current_user available as a query result
+	if ctx.currentUser != nil {
+		ctx.queries["current_user"] = []database.Row{ctx.currentUser.Data}
 	}
 
 	// Get current page number from query string
@@ -202,7 +238,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 	// Interpolate title too
 	title = interpolate(title, ctx)
 
-	nav := renderNav(allPages, p.Path)
+	nav := renderNav(allPages, p.Path, ctx.currentUser)
 
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
@@ -304,10 +340,18 @@ func interpolate(text string, ctx *renderContext) string {
 	})
 }
 
-func renderNav(pages []parser.Page, currentPath string) string {
+func renderNav(pages []parser.Page, currentPath string, session *Session) string {
 	var nav strings.Builder
 	nav.WriteString("  <nav>\n")
 	for _, p := range pages {
+		// Skip pages with :params in the path (they're not navigable directly)
+		if strings.Contains(p.Path, ":") {
+			continue
+		}
+		// Skip auth-required pages if not logged in
+		if p.Auth && session == nil {
+			continue
+		}
 		class := ""
 		if p.Path == currentPath {
 			class = ` class="active"`
@@ -323,12 +367,18 @@ func renderNav(pages []parser.Page, currentPath string) string {
 		}
 		nav.WriteString(fmt.Sprintf("    <a href=\"%s\"%s>%s</a>\n", p.Path, class, html.EscapeString(label)))
 	}
+	// Auth links
+	if session != nil {
+		nav.WriteString(fmt.Sprintf("    <span style=\"margin-left:auto;font-size:0.85rem;color:#888\">%s</span>\n",
+			html.EscapeString(session.Identity)))
+		nav.WriteString("    <a href=\"/logout\">Logout</a>\n")
+	}
 	nav.WriteString("  </nav>\n")
 	return nav.String()
 }
 
 func render404(path string, pages []parser.Page) string {
-	nav := renderNav(pages, "")
+	nav := renderNav(pages, "", nil)
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -425,6 +475,14 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 	pathParams := matchPathParams(action.Path, r.URL.Path)
 	for k, v := range pathParams {
 		formData[k] = v
+	}
+
+	// Add current_user fields
+	session := s.getSession(r)
+	if session != nil {
+		formData["current_user_id"] = session.UserID
+		formData["current_user_identity"] = session.Identity
+		formData["current_user_role"] = session.Role
 	}
 
 	// Process body nodes

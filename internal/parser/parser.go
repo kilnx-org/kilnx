@@ -10,8 +10,17 @@ import (
 type App struct {
 	Models    []Model
 	Pages     []Page
-	Actions   []Page // actions share the same structure as pages but handle POST/PUT/DELETE
-	Fragments []Page // fragments return partial HTML (no page wrapper)
+	Actions   []Page      // actions share the same structure as pages but handle POST/PUT/DELETE
+	Fragments []Page      // fragments return partial HTML (no page wrapper)
+	Auth      *AuthConfig // nil if no auth block defined
+}
+
+type AuthConfig struct {
+	Table      string // user table name (default: "user")
+	Identity   string // identity field (default: "email")
+	Password   string // password field (default: "password")
+	LoginPath  string // login page path (default: "/login")
+	AfterLogin string // redirect after login (default: "/")
 }
 
 type Model struct {
@@ -148,6 +157,12 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 				return nil, err
 			}
 			app.Fragments = append(app.Fragments, frag)
+		case "auth":
+			authCfg, err := p.parseAuth()
+			if err != nil {
+				return nil, err
+			}
+			app.Auth = &authCfg
 		default:
 			p.advance()
 		}
@@ -1098,4 +1113,86 @@ func (p *parserState) parseHTMLNode() Node {
 	}
 
 	return node
+}
+
+// parseAuth parses:
+//
+//	auth
+//	  table: user
+//	  identity: email
+//	  password: password
+//	  login: /login
+//	  after login: /dashboard
+func (p *parserState) parseAuth() (AuthConfig, error) {
+	cfg := AuthConfig{
+		Table:      "user",
+		Identity:   "email",
+		Password:   "password",
+		LoginPath:  "/login",
+		AfterLogin: "/",
+	}
+
+	// consume "auth"
+	p.advance()
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type != lexer.TokenIndent {
+		return cfg, nil
+	}
+	p.advance()
+
+	for !p.isEOF() {
+		if p.current().Type == lexer.TokenDedent {
+			p.advance()
+			break
+		}
+		if p.current().Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			key := p.advance().Value
+
+			// "after login" is two words
+			if key == "after" && (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "login" {
+				p.advance()
+				key = "after login"
+			}
+
+			if p.current().Type == lexer.TokenColon {
+				p.advance()
+			}
+
+			var val string
+			if p.current().Type == lexer.TokenPath {
+				val = p.advance().Value
+			} else if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				val = p.advance().Value
+			} else if p.current().Type == lexer.TokenString {
+				val = p.advance().Value
+			}
+
+			switch key {
+			case "table":
+				cfg.Table = val
+			case "identity":
+				cfg.Identity = val
+			case "password":
+				cfg.Password = val
+			case "login":
+				cfg.LoginPath = val
+			case "after login":
+				cfg.AfterLogin = val
+			}
+
+			p.skipToEndOfLine()
+		} else {
+			p.advance()
+		}
+	}
+
+	return cfg, nil
 }

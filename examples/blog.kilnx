@@ -1,6 +1,7 @@
 model user
   name: text required min 2
   email: email unique required
+  password: password required
   role: option [admin, editor, viewer] default viewer
   active: bool default true
   created: timestamp auto
@@ -12,47 +13,45 @@ model post
   author: user required
   created: timestamp auto
 
-page / title "Dashboard"
+auth
+  table: user
+  identity: email
+  password: password
+  login: /login
+  after login: /
+
+page / title "Dashboard" requires auth
   query stats: SELECT count(*) as users FROM user
   query post_stats: SELECT count(*) as posts FROM post
-  alert info "Welcome to the kilnx blog engine."
+  alert info "Welcome back, {current_user.name}."
   "Users: {stats.users} | Posts: {post_stats.posts}"
 
-page /users title "Users"
+page /users title "Users" requires auth
   query users: SELECT id, name, email, role FROM user ORDER BY id DESC paginate 10
   table users
     columns: name, email, role
     row action: edit /users/:id/edit
     row action: delete /users/:id/delete
 
-page /users/new title "New User"
+page /users/new title "New User" requires auth
   form user
 
-action /users/new
+action /users/new requires auth
   validate user
-  query: INSERT INTO user (name, email, role) VALUES (:name, :email, :role)
+  query: INSERT INTO user (name, email, password, role) VALUES (:name, :email, :password, :role)
   redirect /users
 
-page /users/:id/edit title "Edit User"
+page /users/:id/edit title "Edit User" requires auth
   form user with query: SELECT * FROM user WHERE id = :id
 
-action /users/:id/edit
+action /users/:id/edit requires auth
   validate user
   query: UPDATE user SET name = :name, email = :email, role = :role WHERE id = :id
   redirect /users
 
-action /users/:id/delete method POST
+action /users/:id/delete method POST requires auth
   query: DELETE FROM user WHERE id = :id
   respond fragment delete
-
-fragment /users/:id/card
-  query user: SELECT name, email, role FROM user WHERE id = :id
-  html
-    <div class="kilnx-card" id="user-{user.id}">
-      <strong>{user.name}</strong>
-      <span>{user.email}</span>
-      <span class="kilnx-badge">{user.role}</span>
-    </div>
 
 page /about title "About"
   alert success "Kilnx is running."
