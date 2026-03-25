@@ -21,6 +21,12 @@ func (s *Server) StartScheduler() {
 }
 
 func (s *Server) runSchedule(sched parser.Schedule) {
+	// If it's a cron-style schedule (e.g., "every monday at 9:00")
+	if sched.Cron != "" {
+		s.runCronSchedule(sched)
+		return
+	}
+
 	interval := time.Duration(sched.IntervalSecs) * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -30,6 +36,74 @@ func (s *Server) runSchedule(sched parser.Schedule) {
 	for range ticker.C {
 		s.executeNodes(sched.Body, nil)
 	}
+}
+
+// runCronSchedule handles "every monday at 9:00" style expressions
+func (s *Server) runCronSchedule(sched parser.Schedule) {
+	fmt.Printf("  schedule '%s' cron: %s\n", sched.Name, sched.Cron)
+
+	for {
+		next := nextCronOccurrence(sched.Cron)
+		if next.IsZero() {
+			fmt.Printf("  schedule '%s': could not parse cron expression\n", sched.Name)
+			return
+		}
+		delay := time.Until(next)
+		fmt.Printf("  schedule '%s' next run at %s (in %s)\n", sched.Name, next.Format("2006-01-02 15:04"), delay.Round(time.Second))
+		time.Sleep(delay)
+		s.executeNodes(sched.Body, nil)
+	}
+}
+
+// nextCronOccurrence parses "every monday at 9:00" and returns the next occurrence
+func nextCronOccurrence(expr string) time.Time {
+	expr = strings.ToLower(strings.TrimSpace(expr))
+
+	dayMap := map[string]time.Weekday{
+		"sunday": time.Sunday, "monday": time.Monday, "tuesday": time.Tuesday,
+		"wednesday": time.Wednesday, "thursday": time.Thursday, "friday": time.Friday,
+		"saturday": time.Saturday,
+	}
+
+	var targetDay time.Weekday = -1
+	var hour, minute int
+
+	parts := strings.Fields(expr)
+	for i, p := range parts {
+		if d, ok := dayMap[p]; ok {
+			targetDay = d
+		}
+		if p == "at" && i+1 < len(parts) {
+			timeParts := strings.SplitN(parts[i+1], ":", 2)
+			if len(timeParts) == 2 {
+				fmt.Sscanf(timeParts[0], "%d", &hour)
+				fmt.Sscanf(timeParts[1], "%d", &minute)
+			} else {
+				fmt.Sscanf(timeParts[0], "%d", &hour)
+			}
+		}
+	}
+
+	if targetDay < 0 {
+		return time.Time{}
+	}
+
+	now := time.Now()
+	// Find the next occurrence of the target day
+	daysUntil := int(targetDay) - int(now.Weekday())
+	if daysUntil < 0 {
+		daysUntil += 7
+	}
+	if daysUntil == 0 {
+		// Same day: check if the time has passed
+		target := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+		if now.After(target) {
+			daysUntil = 7
+		}
+	}
+
+	next := time.Date(now.Year(), now.Month(), now.Day()+daysUntil, hour, minute, 0, 0, now.Location())
+	return next
 }
 
 // JobQueue manages async background jobs

@@ -31,8 +31,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 	var allRows []database.Row
 	var paginateInfo *PaginateInfo
 
+	statusCode := http.StatusOK
+
 	for _, node := range endpoint.Body {
 		switch node.Type {
+		case parser.NodeRespond:
+			if node.StatusCode > 0 {
+				statusCode = node.StatusCode
+			}
+			continue
 		case parser.NodeQuery:
 			if s.db == nil {
 				continue
@@ -89,7 +96,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 		}
 	}
 
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, statusCode, response)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {

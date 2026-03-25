@@ -183,6 +183,49 @@ func (s *Server) hasPermission(userRole, requiredRole string, perms []parser.Per
 	return userRole == requiredRole
 }
 
+// hasPermissionForRequest checks if a user role has permission for a specific HTTP request
+// Supports rules like "read post", "write post", "all"
+func (s *Server) hasPermissionForRequest(userRole string, r *http.Request, perms []parser.Permission) bool {
+	if len(perms) == 0 {
+		return true
+	}
+
+	// Determine access type from HTTP method
+	accessType := "read"
+	switch r.Method {
+	case "POST", "PUT", "DELETE", "PATCH":
+		accessType = "write"
+	}
+
+	for _, p := range perms {
+		if p.Role != userRole {
+			continue
+		}
+		for _, rule := range p.Rules {
+			if rule == "all" {
+				return true
+			}
+			parts := strings.Fields(rule)
+			if len(parts) >= 2 {
+				ruleAccess := parts[0]   // "read" or "write"
+				ruleResource := parts[1] // "post", "user", etc.
+
+				// Check if the access type matches
+				if ruleAccess != accessType {
+					continue
+				}
+
+				// Check if the URL path contains the resource name
+				if strings.Contains(r.URL.Path, ruleResource) || strings.Contains(r.URL.Path, ruleResource+"s") {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
 func renderForbidden(pages []parser.Page, session *Session) string {
 	nav := renderNav(pages, "", session)
 	return fmt.Sprintf(`<!DOCTYPE html>

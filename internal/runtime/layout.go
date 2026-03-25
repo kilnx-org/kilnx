@@ -45,7 +45,22 @@ const kilnxCSS = `    * { margin: 0; padding: 0; box-sizing: border-box; }
     .kilnx-btn:hover { background: #333; }
     .kilnx-search { margin-bottom: 1rem; }
     .kilnx-search input { width: 100%%; padding: 0.5rem 0.75rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9rem; font-family: inherit; }
-    .kilnx-search input:focus { outline: none; border-color: #4a7aba; box-shadow: 0 0 0 2px rgba(74,122,186,0.15); }`
+    .kilnx-search input:focus { outline: none; border-color: #4a7aba; box-shadow: 0 0 0 2px rgba(74,122,186,0.15); }
+    .kilnx-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
+    .kilnx-card { border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; }
+    .kilnx-card-img { width: 100%%; height: 160px; object-fit: cover; }
+    .kilnx-card-body { padding: 0.75rem; }
+    .kilnx-card-title { font-size: 1rem; margin-bottom: 0.25rem; }
+    .kilnx-card-subtitle { font-size: 0.85rem; color: #666; margin-bottom: 0.5rem; }
+    .kilnx-card-action { font-size: 0.85rem; color: #4a7aba; text-decoration: none; }
+    .kilnx-card-action:hover { text-decoration: underline; }
+    .kilnx-modal { position: fixed; top: 0; left: 0; width: 100%%; height: 100%%; z-index: 1000; display: flex; align-items: center; justify-content: center; }
+    .kilnx-modal-overlay { position: absolute; top: 0; left: 0; width: 100%%; height: 100%%; background: rgba(0,0,0,0.5); }
+    .kilnx-modal-content { position: relative; background: white; border-radius: 8px; max-width: 600px; width: 90%%; max-height: 80vh; overflow-y: auto; }
+    .kilnx-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem; border-bottom: 1px solid #e0e0e0; }
+    .kilnx-modal-header h3 { margin: 0; }
+    .kilnx-modal-close { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #888; }
+    .kilnx-modal-body { padding: 1rem; }`
 
 func renderDefaultLayout(title, nav, content string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>

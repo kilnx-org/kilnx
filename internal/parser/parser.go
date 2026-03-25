@@ -28,6 +28,7 @@ type App struct {
 	Tests        []Test
 	LogConfig    *LogConfig
 	Translations map[string]map[string]string // lang -> key -> value
+	NamedQueries map[string]string             // name -> SQL
 }
 
 type Test struct {
@@ -42,9 +43,13 @@ type TestStep struct {
 }
 
 type AppConfig struct {
-	Database string // env var or default path
-	Port     int    // server port (default 8080)
-	Secret   string // env var for session secret
+	Database        string // env var or default path
+	Port            int    // server port (default 8080)
+	Secret          string // env var for session secret
+	UploadsDir      string // upload directory
+	UploadsMaxMB    int    // max upload size in MB
+	DefaultLanguage string // default i18n language
+	DetectLanguage  string // "header accept-language" or empty
 }
 
 type LogConfig struct {
@@ -52,6 +57,7 @@ type LogConfig struct {
 	SlowQueryMs   int    // log queries slower than this (ms)
 	LogRequests   bool
 	LogErrors     bool
+	Stacktrace    bool   // log errors with stacktrace
 }
 
 type Webhook struct {
@@ -80,6 +86,7 @@ type RateLimit struct {
 	Window      string // "minute", "hour"
 	Per         string // "user", "ip"
 	DelaySecs   int    // cooldown on exceeded
+	Message     string // custom message on exceeded
 }
 
 type Schedule struct {
@@ -190,6 +197,8 @@ const (
 	NodeSearch         // search queryName in field1, field2
 	NodeSendEmail      // send email to :email { subject: "...", body: "..." }
 	NodeEnqueue        // enqueue job-name with param: value
+	NodeOn             // on success/error/not found branching
+	NodeBroadcast      // broadcast to :room
 )
 
 type Node struct {
@@ -215,6 +224,10 @@ type Node struct {
 	EmailTemplate string            // for send email: template name
 	JobName       string            // for enqueue: which job to run
 	JobParams     map[string]string // for enqueue: params to pass to job
+	Children      []Node            // for on: child nodes to execute
+	StatusCode    int               // for respond: HTTP status code
+	BroadcastRoom string            // for broadcast: room name
+	BroadcastFrag string            // for broadcast: fragment reference
 }
 
 type Validation struct {
@@ -338,8 +351,42 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 					app.Translations[lang][k] = v
 				}
 			}
+		case "queries":
+			nq := p.parseNamedQueries()
+			if app.NamedQueries == nil {
+				app.NamedQueries = make(map[string]string)
+			}
+			for k, v := range nq {
+				app.NamedQueries[k] = v
+			}
 		default:
 			p.advance()
+		}
+	}
+
+	// Resolve named query references in page/action/fragment/api bodies
+	if len(app.NamedQueries) > 0 {
+		resolveNamedQueries := func(nodes []Node) {
+			for i := range nodes {
+				if nodes[i].Type == NodeQuery && nodes[i].SQL != "" {
+					trimmed := strings.TrimSpace(nodes[i].SQL)
+					if sql, ok := app.NamedQueries[trimmed]; ok {
+						nodes[i].SQL = sql
+					}
+				}
+			}
+		}
+		for i := range app.Pages {
+			resolveNamedQueries(app.Pages[i].Body)
+		}
+		for i := range app.Actions {
+			resolveNamedQueries(app.Actions[i].Body)
+		}
+		for i := range app.Fragments {
+			resolveNamedQueries(app.Fragments[i].Body)
+		}
+		for i := range app.APIs {
+			resolveNamedQueries(app.APIs[i].Body)
 		}
 	}
 
@@ -648,6 +695,14 @@ func (p *parserState) parseBody() []Node {
 				node := p.parseEnqueueNode()
 				nodes = append(nodes, node)
 				continue
+			case "on":
+				node := p.parseOnNode()
+				nodes = append(nodes, node)
+				continue
+			case "broadcast":
+				node := p.parseBroadcastNode()
+				nodes = append(nodes, node)
+				continue
 			}
 		}
 
@@ -662,6 +717,13 @@ func (p *parserState) parseBody() []Node {
 				node := p.parseHTMLNode()
 				nodes = append(nodes, node)
 				continue
+			default:
+				// Check if this is a component usage: "component-name with key: val, ..."
+				if p.peekIsComponentUsage() {
+					node := p.parseComponentUsageNode()
+					nodes = append(nodes, node)
+					continue
+				}
 			}
 		}
 
@@ -1218,6 +1280,16 @@ func (p *parserState) parseRespondNode() Node {
 
 	// consume "respond"
 	p.advance()
+
+	// Check for "respond status N"
+	if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "status" {
+		p.advance()
+		if p.current().Type == lexer.TokenNumber {
+			fmt.Sscanf(p.advance().Value, "%d", &node.StatusCode)
+		}
+		p.skipToEndOfLine()
+		return node
+	}
 
 	// expect "fragment"
 	if (p.current().Type == lexer.TokenKeyword || p.current().Type == lexer.TokenIdentifier) && p.current().Value == "fragment" {
@@ -1801,9 +1873,32 @@ func (p *parserState) parseSchedule() Schedule {
 	}
 
 	// "every" interval: "every 1h", "every 24h", "every 5m", "every 30s"
+	// or cron: "every monday at 9:00"
 	if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "every" {
+		// Check if next token is a day name (cron expression)
+		schedLine := p.current().Line
 		p.advance()
-		sched.IntervalSecs = p.parseDurationTokens()
+		nextVal := ""
+		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			nextVal = strings.ToLower(p.current().Value)
+		}
+		days := map[string]bool{
+			"monday": true, "tuesday": true, "wednesday": true, "thursday": true,
+			"friday": true, "saturday": true, "sunday": true,
+		}
+		if days[nextVal] {
+			// It's a cron expression, extract from raw line
+			if schedLine >= 1 && schedLine <= len(p.lines) {
+				line := p.lines[schedLine-1]
+				idx := strings.Index(strings.ToLower(line), "every ")
+				if idx >= 0 {
+					sched.Cron = strings.TrimSpace(line[idx:])
+				}
+			}
+			p.skipToEndOfLine()
+		} else {
+			sched.IntervalSecs = p.parseDurationTokens()
+		}
 	}
 
 	p.skipToEndOfLine()
@@ -2232,6 +2327,19 @@ func (p *parserState) parseRateLimit() RateLimit {
 				continue
 			}
 
+			// message: "Custom exceeded message"
+			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "message" {
+				p.advance()
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+				if p.current().Type == lexer.TokenString {
+					rl.Message = p.advance().Value
+				}
+				p.skipToEndOfLine()
+				continue
+			}
+
 			p.skipToEndOfLine()
 		}
 	}
@@ -2391,7 +2499,7 @@ func (p *parserState) parseLogConfig() LogConfig {
 
 				switch key {
 				case "level":
-					cfg.Level = rawVal
+					cfg.Level = resolveEnvValue(rawVal)
 				case "queries":
 					// "slow > 100ms"
 					if strings.Contains(rawVal, ">") {
@@ -2405,6 +2513,9 @@ func (p *parserState) parseLogConfig() LogConfig {
 					cfg.LogRequests = rawVal == "all"
 				case "errors":
 					cfg.LogErrors = rawVal == "all" || rawVal == "all with stacktrace"
+					if strings.Contains(rawVal, "stacktrace") {
+						cfg.Stacktrace = true
+					}
 				}
 
 				p.skipToEndOfLine()
@@ -2529,11 +2640,19 @@ func (p *parserState) parseConfig() AppConfig {
 			lineNum := p.current().Line
 			key := p.advance().Value
 
+			// Handle compound keys
+			if key == "default" && (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "language" {
+				key = "default_language"
+				p.advance()
+			} else if key == "detect" && (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "language" {
+				key = "detect_language"
+				p.advance()
+			}
+
 			if p.current().Type == lexer.TokenColon {
 				p.advance()
 			}
 
-			// Read raw value from source
 			rawVal := ""
 			if lineNum >= 1 && lineNum <= len(p.lines) {
 				line := p.lines[lineNum-1]
@@ -2551,6 +2670,24 @@ func (p *parserState) parseConfig() AppConfig {
 				fmt.Sscanf(resolved, "%d", &cfg.Port)
 			case "secret":
 				cfg.Secret = resolveEnvValue(rawVal)
+				if strings.Contains(rawVal, "required") && cfg.Secret == "" {
+					fmt.Fprintf(os.Stderr, "kilnx: config secret is required but not set\n")
+					os.Exit(1)
+				}
+			case "uploads":
+				parts := strings.Fields(rawVal)
+				if len(parts) > 0 {
+					cfg.UploadsDir = parts[0]
+				}
+				for i, pt := range parts {
+					if pt == "max" && i+1 < len(parts) {
+						fmt.Sscanf(parts[i+1], "%d", &cfg.UploadsMaxMB)
+					}
+				}
+			case "default_language":
+				cfg.DefaultLanguage = strings.TrimSpace(rawVal)
+			case "detect_language":
+				cfg.DetectLanguage = strings.TrimSpace(rawVal)
 			}
 
 			p.skipToEndOfLine()
@@ -2560,6 +2697,186 @@ func (p *parserState) parseConfig() AppConfig {
 	}
 
 	return cfg
+}
+
+// peekIsComponentUsage checks if the current identifier is followed by "with"
+func (p *parserState) peekIsComponentUsage() bool {
+	if p.pos+1 < len(p.tokens) {
+		next := p.tokens[p.pos+1]
+		return next.Type == lexer.TokenKeyword && next.Value == "with"
+	}
+	return false
+}
+
+// parseComponentUsageNode parses: component-name with key: val, key2: val2
+func (p *parserState) parseComponentUsageNode() Node {
+	node := Node{Type: NodeComponent, ComponentArgs: make(map[string]string)}
+
+	node.ComponentName = p.advance().Value
+
+	// consume "with"
+	if p.current().Type == lexer.TokenKeyword && p.current().Value == "with" {
+		p.advance()
+	}
+
+	// Parse key: value pairs (comma-separated on same line or indented)
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+		if p.current().Type == lexer.TokenComma {
+			p.advance()
+			continue
+		}
+		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			key := p.advance().Value
+			if p.current().Type == lexer.TokenColon {
+				p.advance()
+			}
+			var val string
+			if p.current().Type == lexer.TokenString {
+				val = p.advance().Value
+			} else if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				val = "{" + p.advance().Value + "}"
+			}
+			node.ComponentArgs[key] = val
+		} else {
+			p.advance()
+		}
+	}
+
+	return node
+}
+
+// parseOnNode parses:
+//
+//	on success
+//	  redirect /users
+//	on error
+//	  alert error "Something went wrong"
+//	on not found
+//	  redirect /404
+func (p *parserState) parseOnNode() Node {
+	node := Node{Type: NodeOn, Props: make(map[string]string)}
+
+	// consume "on"
+	p.advance()
+
+	// condition: success, error, forbidden, "not found"
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		cond := p.advance().Value
+		// Handle "not found" as two words
+		if cond == "not" && (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "found" {
+			p.advance()
+			cond = "not found"
+		}
+		node.Props["condition"] = cond
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	// Parse children (indented block)
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		node.Children = p.parseBody()
+	}
+
+	return node
+}
+
+// parseBroadcastNode parses:
+//
+//	broadcast to :room
+//	broadcast to :room fragment chat-message
+func (p *parserState) parseBroadcastNode() Node {
+	node := Node{Type: NodeBroadcast, Props: make(map[string]string)}
+
+	// consume "broadcast"
+	p.advance()
+
+	// expect "to"
+	if p.current().Type == lexer.TokenIdentifier && p.current().Value == "to" {
+		p.advance()
+	}
+
+	// room reference: :room or identifier
+	if p.current().Type == lexer.TokenColon {
+		p.advance()
+		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			node.BroadcastRoom = ":" + p.advance().Value
+		}
+	} else if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.BroadcastRoom = p.advance().Value
+	}
+
+	// optional "fragment name"
+	if (p.current().Type == lexer.TokenKeyword || p.current().Type == lexer.TokenIdentifier) && p.current().Value == "fragment" {
+		p.advance()
+		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			node.BroadcastFrag = p.advance().Value
+		}
+	}
+
+	p.skipToEndOfLine()
+	return node
+}
+
+// parseNamedQueries parses:
+//
+//	queries
+//	  active-users: SELECT u.name FROM users u WHERE u.active = true
+//	  recent-posts: SELECT * FROM post ORDER BY created DESC LIMIT 10
+func (p *parserState) parseNamedQueries() map[string]string {
+	result := make(map[string]string)
+
+	// consume "queries"
+	p.advance()
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type != lexer.TokenIndent {
+		return result
+	}
+	p.advance()
+
+	for !p.isEOF() {
+		if p.current().Type == lexer.TokenDedent {
+			p.advance()
+			break
+		}
+		if p.current().Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			lineNum := p.current().Line
+			name := p.advance().Value
+
+			if p.current().Type == lexer.TokenColon {
+				p.advance()
+			}
+
+			// Extract SQL from source line
+			if lineNum >= 1 && lineNum <= len(p.lines) {
+				line := p.lines[lineNum-1]
+				idx := strings.Index(line, ":")
+				if idx >= 0 {
+					result[name] = strings.TrimSpace(line[idx+1:])
+				}
+			}
+
+			p.skipToEndOfLine()
+			// Check for continuation SQL
+			cont := p.extractContinuationSQL()
+			if cont != "" {
+				result[name] += cont
+			}
+		} else {
+			p.advance()
+		}
+	}
+
+	return result
 }
 
 // resolveEnvValue handles "env VAR_NAME default VALUE" syntax.

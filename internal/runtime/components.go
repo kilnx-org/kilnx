@@ -203,6 +203,78 @@ func renderSearch(node parser.Node, currentPath string) string {
 `, html.EscapeString(placeholder), html.EscapeString(currentPath))
 }
 
+// renderCard renders a card component from query results.
+// Props: title, subtitle, image, action_label, action_path
+func renderCard(node parser.Node, ctx *renderContext) string {
+	rows, ok := ctx.queries[node.Name]
+	if !ok {
+		return fmt.Sprintf("    <p style=\"color:#888\">No data for card '%s'</p>\n", node.Name)
+	}
+
+	if len(rows) == 0 {
+		return "    <p style=\"color:#888\">No items found.</p>\n"
+	}
+
+	titleField := node.Props["title"]
+	subtitleField := node.Props["subtitle"]
+	imageField := node.Props["image"]
+	actionLabel := node.Props["action_label"]
+	actionPath := node.Props["action_path"]
+
+	var b strings.Builder
+	b.WriteString("    <div class=\"kilnx-cards\">\n")
+
+	for _, row := range rows {
+		b.WriteString("      <div class=\"kilnx-card\">\n")
+		if imageField != "" {
+			img := getField(row, imageField)
+			if img != "" {
+				b.WriteString(fmt.Sprintf("        <img src=\"%s\" class=\"kilnx-card-img\" alt=\"\">\n",
+					html.EscapeString(img)))
+			}
+		}
+		b.WriteString("        <div class=\"kilnx-card-body\">\n")
+		if titleField != "" {
+			title := getField(row, titleField)
+			b.WriteString(fmt.Sprintf("          <h3 class=\"kilnx-card-title\">%s</h3>\n",
+				html.EscapeString(title)))
+		}
+		if subtitleField != "" {
+			subtitle := getField(row, subtitleField)
+			b.WriteString(fmt.Sprintf("          <p class=\"kilnx-card-subtitle\">%s</p>\n",
+				html.EscapeString(subtitle)))
+		}
+		if actionLabel != "" && actionPath != "" {
+			path := interpolateRowPath(actionPath, row)
+			b.WriteString(fmt.Sprintf("          <a href=\"%s\" class=\"kilnx-card-action\">%s</a>\n",
+				html.EscapeString(path), html.EscapeString(actionLabel)))
+		}
+		b.WriteString("        </div>\n")
+		b.WriteString("      </div>\n")
+	}
+
+	b.WriteString("    </div>\n")
+	return b.String()
+}
+
+// renderModal wraps content in a modal dialog, opened/closed with htmx
+func renderModal(id, title, content string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("    <div id=\"%s\" class=\"kilnx-modal\" style=\"display:none\">\n", html.EscapeString(id)))
+	b.WriteString("      <div class=\"kilnx-modal-overlay\" onclick=\"this.parentElement.style.display='none'\"></div>\n")
+	b.WriteString("      <div class=\"kilnx-modal-content\">\n")
+	b.WriteString("        <div class=\"kilnx-modal-header\">\n")
+	b.WriteString(fmt.Sprintf("          <h3>%s</h3>\n", html.EscapeString(title)))
+	b.WriteString("          <button onclick=\"this.closest('.kilnx-modal').style.display='none'\" class=\"kilnx-modal-close\">&times;</button>\n")
+	b.WriteString("        </div>\n")
+	b.WriteString("        <div class=\"kilnx-modal-body\">\n")
+	b.WriteString("          " + content + "\n")
+	b.WriteString("        </div>\n")
+	b.WriteString("      </div>\n")
+	b.WriteString("    </div>\n")
+	return b.String()
+}
+
 func getField(row database.Row, field string) string {
 	if val, ok := row[field]; ok {
 		return val

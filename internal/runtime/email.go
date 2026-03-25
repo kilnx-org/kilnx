@@ -34,6 +34,39 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+// LoadEmailTemplate loads a template file and interpolates {key} placeholders
+func LoadEmailTemplate(templateName string, params map[string]string) string {
+	// Try to load from templates/ directory
+	path := "templates/" + templateName + ".html"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		// Try without .html extension
+		path = "templates/" + templateName
+		data, err = os.ReadFile(path)
+		if err != nil {
+			return "" // template not found
+		}
+	}
+
+	content := string(data)
+	// Interpolate {key} placeholders
+	for k, v := range params {
+		content = strings.ReplaceAll(content, "{"+k+"}", v)
+	}
+	return content
+}
+
+// SendEmailWithTemplate sends an email, optionally using a template
+func SendEmailWithTemplate(to, subject, body, templateName string, params map[string]string) error {
+	if templateName != "" {
+		tmplBody := LoadEmailTemplate(templateName, params)
+		if tmplBody != "" {
+			body = tmplBody
+		}
+	}
+	return SendEmail(to, subject, body)
+}
+
 // SendEmail sends an email using SMTP
 func SendEmail(to, subject, body string) error {
 	cfg := loadEmailConfig()

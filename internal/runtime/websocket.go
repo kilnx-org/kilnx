@@ -123,8 +123,28 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 
 	fmt.Printf("  ws connected: %s (%s)\n", roomName, conn.RemoteAddr())
 
-	// Execute on connect
+	// Execute on connect and send history
 	if len(sock.OnConnect) > 0 {
+		// Execute on connect nodes and check for query results to send as history
+		if s.db != nil {
+			for _, node := range sock.OnConnect {
+				if node.Type == parser.NodeQuery {
+					rows, err := s.db.QueryRowsWithParams(node.SQL, pathParams)
+					if err == nil && len(rows) > 0 {
+						// Send each row as a message to the newly connected client
+						for _, row := range rows {
+							// Build a simple message from row values
+							var parts []string
+							for _, val := range row {
+								parts = append(parts, val)
+							}
+							msg := strings.Join(parts, " ")
+							writeWSFrame(conn, []byte(msg))
+						}
+					}
+				}
+			}
+		}
 		s.executeNodes(sock.OnConnect, pathParams)
 	}
 
@@ -146,8 +166,41 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 
 			s.executeNodes(sock.OnMessage, params)
 
-			// Broadcast the message to the room
-			room.broadcast(msg)
+			// Check for broadcast nodes
+			hasBroadcast := false
+			for _, node := range sock.OnMessage {
+				if node.Type == parser.NodeBroadcast {
+					hasBroadcast = true
+					// Resolve broadcast room
+					broadcastRoom := node.BroadcastRoom
+					if strings.HasPrefix(broadcastRoom, ":") {
+						paramName := strings.TrimPrefix(broadcastRoom, ":")
+						if val, ok := params[paramName]; ok {
+							broadcastRoom = val
+						}
+					}
+					targetRoom := getRoom(broadcastRoom)
+
+					// If a fragment reference is specified, render it
+					if node.BroadcastFrag != "" {
+						app := s.getApp()
+						for _, frag := range app.Fragments {
+							if strings.TrimPrefix(frag.Path, "/") == node.BroadcastFrag {
+								// Simple: just broadcast the raw message
+								targetRoom.broadcast(msg)
+								break
+							}
+						}
+					} else {
+						targetRoom.broadcast(msg)
+					}
+				}
+			}
+
+			// Default: broadcast to the room if no explicit broadcast node
+			if !hasBroadcast {
+				room.broadcast(msg)
+			}
 		}
 	}
 

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
@@ -79,11 +80,19 @@ func (s *Server) Start() error {
 		app := s.getApp()
 
 		// Rate limiting
-		if !s.rateLimiter.Check(r, s.getSession(r)) {
+		if exceeded, rule := s.rateLimiter.CheckWithRule(r, s.getSession(r)); exceeded {
+			// Apply delay if configured
+			if rule != nil && rule.DelaySecs > 0 {
+				time.Sleep(time.Duration(rule.DelaySecs) * time.Second)
+			}
+			msg := "Too many requests"
+			if rule != nil && rule.Message != "" {
+				msg = rule.Message
+			}
 			w.Header().Set("Content-Type", "text/plain")
 			w.Header().Set("Retry-After", "60")
 			w.WriteHeader(http.StatusTooManyRequests)
-			w.Write([]byte("Too many requests"))
+			w.Write([]byte(msg))
 			return
 		}
 
@@ -195,7 +204,7 @@ func (s *Server) Start() error {
 
 	addr := fmt.Sprintf(":%d", s.port)
 	fmt.Printf("kilnx serving on http://localhost%s\n", addr)
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, s.logger.LoggingMiddleware(mux))
 }
 
 // renderContext holds query results available during template rendering
@@ -326,6 +335,20 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		case parser.NodeHTML:
 			htmlContent := interpolate(node.HTMLContent, ctx)
 			body.WriteString("    " + htmlContent + "\n")
+
+		case parser.NodeComponent:
+			// Find the component definition
+			for _, comp := range s.getApp().Components {
+				if comp.Name == node.ComponentName {
+					// Build args, interpolating from query context
+					args := make(map[string]string)
+					for k, v := range node.ComponentArgs {
+						args[k] = interpolate(v, ctx)
+					}
+					body.WriteString(renderComponent(comp, args))
+					break
+				}
+			}
 		}
 	}
 
@@ -544,12 +567,30 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 		formData["current_user_role"] = session.Role
 	}
 
+	// Track last query result for `on` branching
+	lastQueryOk := true
+	lastQueryNotFound := false
+
 	// Process body nodes
 	for _, node := range action.Body {
 		switch node.Type {
 		case parser.NodeValidate:
 			modelName := node.ModelName
 			if modelName == "" {
+				// Inline validation rules
+				if len(node.Validations) > 0 {
+					errors := validateInlineRules(node.Validations, formData)
+					if len(errors) > 0 {
+						w.Header().Set("Content-Type", "text/html; charset=utf-8")
+						w.WriteHeader(http.StatusUnprocessableEntity)
+						var errorHTML strings.Builder
+						for _, e := range errors {
+							errorHTML.WriteString(fmt.Sprintf("<div class=\"kilnx-alert kilnx-alert-error\">%s</div>", html.EscapeString(e)))
+						}
+						w.Write([]byte(errorHTML.String()))
+						return
+					}
+				}
 				continue
 			}
 			errors := validateFormData(modelName, app, formData)
@@ -572,11 +613,55 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 
 		case parser.NodeQuery:
 			if s.db != nil {
-				err := s.db.ExecWithParams(node.SQL, formData)
-				if err != nil {
-					http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
-					return
+				trimmed := strings.TrimSpace(strings.ToUpper(node.SQL))
+				if strings.HasPrefix(trimmed, "SELECT") {
+					rows, err := s.db.QueryRowsWithParams(node.SQL, formData)
+					if err != nil {
+						lastQueryOk = false
+						lastQueryNotFound = false
+						continue
+					}
+					lastQueryOk = true
+					lastQueryNotFound = len(rows) == 0
+					// Store results for interpolation
+					name := node.Name
+					if name == "" {
+						name = "_last"
+					}
+					for _, row := range rows {
+						for k, v := range row {
+							formData[name+"."+k] = v
+						}
+					}
+				} else {
+					err := s.db.ExecWithParams(node.SQL, formData)
+					if err != nil {
+						lastQueryOk = false
+						lastQueryNotFound = false
+						http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+						return
+					}
+					lastQueryOk = true
+					lastQueryNotFound = false
 				}
+			}
+
+		case parser.NodeOn:
+			condition := node.Props["condition"]
+			shouldExecute := false
+			switch condition {
+			case "success":
+				shouldExecute = lastQueryOk && !lastQueryNotFound
+			case "error":
+				shouldExecute = !lastQueryOk
+			case "not found":
+				shouldExecute = lastQueryNotFound
+			case "forbidden":
+				shouldExecute = false // reserved for future permission checks
+			}
+			if shouldExecute {
+				s.handleActionNodes(w, r, node.Children, formData, app)
+				return
 			}
 
 		case parser.NodeSendEmail:
@@ -586,12 +671,13 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			if emailBody == "" {
 				emailBody = subject
 			}
+			templateName := node.EmailTemplate
 			// Fire and forget (don't block the request)
-			go func(to, subj, body string) {
-				if err := SendEmail(to, subj, body); err != nil {
+			go func(to, subj, body, tmpl string, params map[string]string) {
+				if err := SendEmailWithTemplate(to, subj, body, tmpl, params); err != nil {
 					fmt.Printf("  email error: %v\n", err)
 				}
-			}(recipient, subject, emailBody)
+			}(recipient, subject, emailBody, templateName, formData)
 
 		case parser.NodeEnqueue:
 			if s.jobQueue != nil {
@@ -627,6 +713,13 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			return
 
 		case parser.NodeRespond:
+			// respond status N
+			if node.StatusCode > 0 {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(node.StatusCode)
+				return
+			}
+
 			// respond fragment delete -> empty body, htmx removes element
 			if node.RespondSwap == "delete" {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -675,6 +768,43 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 		referer = "/"
 	}
 	http.Redirect(w, r, referer, http.StatusSeeOther)
+}
+
+// handleActionNodes processes a subset of action nodes (used by `on` branching)
+func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes []parser.Node, formData map[string]string, app *parser.App) {
+	for _, node := range nodes {
+		switch node.Type {
+		case parser.NodeRedirect:
+			path := node.Value
+			for k, v := range formData {
+				path = strings.ReplaceAll(path, ":"+k, url.PathEscape(v))
+			}
+			if r.Header.Get("HX-Request") == "true" {
+				w.Header().Set("HX-Redirect", path)
+				w.WriteHeader(http.StatusOK)
+			} else {
+				http.Redirect(w, r, path, http.StatusSeeOther)
+			}
+			return
+		case parser.NodeAlert:
+			level := node.Props["level"]
+			if level == "" {
+				level = "info"
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write([]byte(fmt.Sprintf("<div class=\"kilnx-alert kilnx-alert-%s\">%s</div>",
+				html.EscapeString(level), html.EscapeString(node.Value))))
+			return
+		case parser.NodeRespond:
+			if node.StatusCode > 0 {
+				w.WriteHeader(node.StatusCode)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+	}
 }
 
 // injectSearchFilter wraps a SQL query with a parameterized WHERE LIKE filter.

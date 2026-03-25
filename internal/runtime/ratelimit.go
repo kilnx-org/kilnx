@@ -35,6 +35,57 @@ func NewRateLimiter(rules []parser.RateLimit) *RateLimiter {
 	return rl
 }
 
+// CheckWithRule returns (exceeded bool, matched rule) for the request.
+// exceeded is true when the request should be blocked.
+func (rl *RateLimiter) CheckWithRule(r *http.Request, session *Session) (bool, *parser.RateLimit) {
+	if len(rl.rules) == 0 {
+		return false, nil
+	}
+
+	for _, rule := range rl.rules {
+		if !matchRateLimitPath(rule.PathPattern, r.URL.Path) {
+			continue
+		}
+
+		var key string
+		switch rule.Per {
+		case "user":
+			if session != nil {
+				key = rule.PathPattern + ":user:" + session.UserID
+			} else {
+				key = rule.PathPattern + ":ip:" + clientIP(r)
+			}
+		default:
+			key = rule.PathPattern + ":ip:" + clientIP(r)
+		}
+
+		window := windowDuration(rule.Window)
+
+		rl.mu.Lock()
+		entry, exists := rl.entries[key]
+		if !exists || time.Now().After(entry.expiresAt) {
+			rl.entries[key] = &rateLimitEntry{
+				count:     1,
+				expiresAt: time.Now().Add(window),
+			}
+			rl.mu.Unlock()
+			return false, nil
+		}
+
+		entry.count++
+		if entry.count > rule.Requests {
+			rl.mu.Unlock()
+			r := rule // copy to avoid loop variable issue
+			return true, &r
+		}
+
+		rl.mu.Unlock()
+		return false, nil
+	}
+
+	return false, nil
+}
+
 // Check returns true if the request is allowed, false if rate limited
 func (rl *RateLimiter) Check(r *http.Request, session *Session) bool {
 	if len(rl.rules) == 0 {

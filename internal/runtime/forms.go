@@ -7,6 +7,7 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -93,8 +94,21 @@ func renderForm(node parser.Node, app *parser.App, db *database.DB, r *http.Requ
 
 	csrfToken := generateCSRFToken()
 
+	// Check if model has image fields for multipart encoding
+	hasImageField := false
+	for _, field := range model.Fields {
+		if field.Type == parser.FieldImage {
+			hasImageField = true
+			break
+		}
+	}
+
 	var b strings.Builder
-	b.WriteString("    <form method=\"POST\" class=\"kilnx-form\">\n")
+	if hasImageField {
+		b.WriteString("    <form method=\"POST\" class=\"kilnx-form\" enctype=\"multipart/form-data\">\n")
+	} else {
+		b.WriteString("    <form method=\"POST\" class=\"kilnx-form\">\n")
+	}
 	b.WriteString(fmt.Sprintf("      <input type=\"hidden\" name=\"_csrf\" value=\"%s\">\n", csrfToken))
 
 	for _, field := range model.Fields {
@@ -102,8 +116,9 @@ func renderForm(node parser.Node, app *parser.App, db *database.DB, r *http.Requ
 		if field.Auto {
 			continue
 		}
-		// Skip reference fields for now (will need dropdowns later)
+
 		if field.Type == parser.FieldReference {
+			b.WriteString(renderReferenceField(field, prefill, db))
 			continue
 		}
 
@@ -182,6 +197,10 @@ func renderFormField(field parser.Field, prefill database.Row) string {
 		b.WriteString(fmt.Sprintf("        <textarea id=\"%s\" name=\"%s\" rows=\"6\"%s>%s</textarea>\n",
 			name, name, required, html.EscapeString(value)))
 
+	case parser.FieldImage:
+		b.WriteString(fmt.Sprintf("        <input type=\"file\" id=\"%s\" name=\"%s\" accept=\"image/*\"%s>\n",
+			name, name, required))
+
 	case parser.FieldOption:
 		b.WriteString(fmt.Sprintf("        <select id=\"%s\" name=\"%s\"%s>\n", name, name, required))
 		for _, opt := range field.Options {
@@ -199,6 +218,55 @@ func renderFormField(field parser.Field, prefill database.Row) string {
 			name, name, html.EscapeString(value), required))
 	}
 
+	b.WriteString("      </div>\n")
+	return b.String()
+}
+
+// renderReferenceField renders a <select> dropdown for a reference field
+// by querying all rows from the referenced model's table
+func renderReferenceField(field parser.Field, prefill database.Row, db *database.DB) string {
+	var b strings.Builder
+	name := field.Name
+	label := strings.ToUpper(name[:1]) + name[1:]
+	value := ""
+	if prefill != nil {
+		if v, ok := prefill[name]; ok {
+			value = v
+		}
+	}
+
+	required := ""
+	if field.Required {
+		required = " required"
+	}
+
+	b.WriteString("      <div class=\"kilnx-field\">\n")
+	b.WriteString(fmt.Sprintf("        <label for=\"%s\">%s</label>\n", name, html.EscapeString(label)))
+	b.WriteString(fmt.Sprintf("        <select id=\"%s\" name=\"%s\"%s>\n", name, name, required))
+	b.WriteString("          <option value=\"\">-- Select --</option>\n")
+
+	if db != nil && field.Reference != "" {
+		sql := fmt.Sprintf("SELECT id, name FROM \"%s\" ORDER BY name", field.Reference)
+		rows, err := db.QueryRows(sql)
+		if err == nil {
+			for _, row := range rows {
+				id := row["id"]
+				displayName := row["name"]
+				if displayName == "" {
+					// Fallback: use id as display
+					displayName = id
+				}
+				selected := ""
+				if id == value {
+					selected = " selected"
+				}
+				b.WriteString(fmt.Sprintf("          <option value=\"%s\"%s>%s</option>\n",
+					html.EscapeString(id), selected, html.EscapeString(displayName)))
+			}
+		}
+	}
+
+	b.WriteString("        </select>\n")
 	b.WriteString("      </div>\n")
 	return b.String()
 }
@@ -259,6 +327,74 @@ func validateFormData(modelName string, app *parser.App, formData map[string]str
 	return errors
 }
 
+// validateInlineRules validates form data against explicit validation rules
+// (not model-based). Supports: "required", "is email", "is date", "min N", "max N"
+func validateInlineRules(validations []parser.Validation, formData map[string]string) []string {
+	var errors []string
+
+	for _, v := range validations {
+		val := formData[v.Field]
+		label := strings.ToUpper(v.Field[:1]) + v.Field[1:]
+
+		for i := 0; i < len(v.Rules); i++ {
+			rule := v.Rules[i]
+
+			switch rule {
+			case "required":
+				if strings.TrimSpace(val) == "" {
+					errors = append(errors, label+" is required")
+				}
+			case "is":
+				// "is" is followed by the type: "email", "date"
+				if i+1 < len(v.Rules) {
+					i++
+					ruleType := v.Rules[i]
+					switch ruleType {
+					case "email":
+						if val != "" && (!strings.Contains(val, "@") || !strings.Contains(val, ".")) {
+							errors = append(errors, label+" must be a valid email address")
+						}
+					case "date":
+						if val != "" {
+							// Check common date formats
+							valid := false
+							for _, layout := range []string{"2006-01-02", "01/02/2006", "02-01-2006", "2006/01/02"} {
+								if _, err := time.Parse(layout, val); err == nil {
+									valid = true
+									break
+								}
+							}
+							if !valid {
+								errors = append(errors, label+" must be a valid date")
+							}
+						}
+					}
+				}
+			case "min":
+				if i+1 < len(v.Rules) {
+					i++
+					var min int
+					fmt.Sscanf(v.Rules[i], "%d", &min)
+					if val != "" && len(val) < min {
+						errors = append(errors, fmt.Sprintf("%s must be at least %d characters", label, min))
+					}
+				}
+			case "max":
+				if i+1 < len(v.Rules) {
+					i++
+					var max int
+					fmt.Sscanf(v.Rules[i], "%d", &max)
+					if val != "" && max > 0 && len(val) > max {
+						errors = append(errors, fmt.Sprintf("%s must be at most %d characters", label, max))
+					}
+				}
+			}
+		}
+	}
+
+	return errors
+}
+
 // extractPathParams extracts :param values from URL path
 func extractPathParams(r *http.Request) map[string]string {
 	params := make(map[string]string)
@@ -275,14 +411,56 @@ func extractPathParams(r *http.Request) map[string]string {
 	return params
 }
 
-// extractFormData reads form values from a POST request
+// extractFormData reads form values from a POST request, including file uploads
 func extractFormData(r *http.Request) map[string]string {
-	r.ParseForm()
+	contentType := r.Header.Get("Content-Type")
 	data := make(map[string]string)
-	for key, values := range r.PostForm {
-		if len(values) > 0 {
-			data[key] = values[0]
+
+	if strings.Contains(contentType, "multipart/form-data") {
+		// Parse multipart form with 32MB max
+		r.ParseMultipartForm(32 << 20)
+		if r.MultipartForm != nil {
+			for key, values := range r.MultipartForm.Value {
+				if len(values) > 0 {
+					data[key] = values[0]
+				}
+			}
+			// Handle file uploads
+			for key, fileHeaders := range r.MultipartForm.File {
+				if len(fileHeaders) > 0 {
+					file, err := fileHeaders[0].Open()
+					if err != nil {
+						continue
+					}
+					defer file.Close()
+
+					// Determine uploads directory
+					uploadsDir := "uploads"
+					fileName := fmt.Sprintf("%d_%s", time.Now().UnixNano(), fileHeaders[0].Filename)
+					filePath := uploadsDir + "/" + fileName
+
+					// Create uploads directory if needed
+					os.MkdirAll(uploadsDir, 0755)
+
+					dst, err := os.Create(filePath)
+					if err != nil {
+						continue
+					}
+					defer dst.Close()
+					io.Copy(dst, file)
+
+					data[key] = filePath
+				}
+			}
+		}
+	} else {
+		r.ParseForm()
+		for key, values := range r.PostForm {
+			if len(values) > 0 {
+				data[key] = values[0]
+			}
 		}
 	}
+
 	return data
 }
