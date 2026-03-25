@@ -199,6 +199,10 @@ const (
 	NodeEnqueue        // enqueue job-name with param: value
 	NodeOn             // on success/error/not found branching
 	NodeBroadcast      // broadcast to :room
+	NodeGeneratePDF    // generate pdf from template X with data Y
+	NodeCard           // card queryName { title: field, subtitle: field }
+	NodeModal          // modal id title { content }
+	NodeChart          // chart queryName { type: bar, label: field, value: field }
 )
 
 type Node struct {
@@ -226,8 +230,13 @@ type Node struct {
 	JobParams     map[string]string // for enqueue: params to pass to job
 	Children      []Node            // for on: child nodes to execute
 	StatusCode    int               // for respond: HTTP status code
-	BroadcastRoom string            // for broadcast: room name
-	BroadcastFrag string            // for broadcast: fragment reference
+	BroadcastRoom   string            // for broadcast: room name
+	BroadcastFrag   string            // for broadcast: fragment reference
+	TemplateName    string            // for generate pdf: template name
+	DataQueryName   string            // for generate pdf: data query name
+	EmailAttach     string            // for send email: attachment file path or param
+	ModalID         string            // for modal: element ID
+	ModalTitle      string            // for modal: title text
 }
 
 type Validation struct {
@@ -706,7 +715,7 @@ func (p *parserState) parseBody() []Node {
 			}
 		}
 
-		// "respond" and "html" are identifiers, not keywords
+		// "respond", "html", "generate", "card", "modal", "chart" are identifiers, not keywords
 		if tok.Type == lexer.TokenIdentifier {
 			switch tok.Value {
 			case "respond":
@@ -715,6 +724,22 @@ func (p *parserState) parseBody() []Node {
 				continue
 			case "html":
 				node := p.parseHTMLNode()
+				nodes = append(nodes, node)
+				continue
+			case "generate":
+				node := p.parseGeneratePDFNode()
+				nodes = append(nodes, node)
+				continue
+			case "card":
+				node := p.parseCardNode()
+				nodes = append(nodes, node)
+				continue
+			case "modal":
+				node := p.parseModalNode()
+				nodes = append(nodes, node)
+				continue
+			case "chart":
+				node := p.parseChartNode()
 				nodes = append(nodes, node)
 				continue
 			default:
@@ -2010,6 +2035,7 @@ func (p *parserState) parseSendEmailNode() Node {
 
 	node.EmailSubject = node.Props["subject"]
 	node.EmailTemplate = node.Props["template"]
+	node.EmailAttach = node.Props["attach"]
 
 	return node
 }
@@ -2903,4 +2929,180 @@ func resolveEnvValue(raw string) string {
 	}
 
 	return strings.Trim(raw, "\"")
+}
+
+// parseGeneratePDFNode parses: generate pdf from template X with data Y
+func (p *parserState) parseGeneratePDFNode() Node {
+	node := Node{Type: NodeGeneratePDF}
+
+	// consume "generate"
+	p.advance()
+
+	// expect "pdf"
+	if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "pdf" {
+		p.advance()
+	}
+
+	// expect "from"
+	if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "from" {
+		p.advance()
+	}
+
+	// expect "template"
+	if (p.current().Type == lexer.TokenKeyword || p.current().Type == lexer.TokenIdentifier) && p.current().Value == "template" {
+		p.advance()
+	}
+
+	// template name
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword || p.current().Type == lexer.TokenString {
+		node.TemplateName = p.advance().Value
+	}
+
+	// expect "with"
+	if p.current().Type == lexer.TokenKeyword && p.current().Value == "with" {
+		p.advance()
+	}
+
+	// "data" keyword (optional)
+	if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "data" {
+		p.advance()
+	}
+
+	// data query name
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.DataQueryName = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	return node
+}
+
+// parseCardNode parses: card queryName { title: field, subtitle: field }
+// Same structure as list parsing
+func (p *parserState) parseCardNode() Node {
+	node := Node{Type: NodeCard, Props: make(map[string]string)}
+
+	// consume "card"
+	p.advance()
+
+	// query name
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.Name = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	// parse indented props
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				key := p.advance().Value
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					node.Props[key] = p.advance().Value
+				} else if p.current().Type == lexer.TokenString {
+					node.Props[key] = p.advance().Value
+				}
+				p.skipToEndOfLine()
+			} else {
+				p.advance()
+			}
+		}
+	}
+
+	return node
+}
+
+// parseModalNode parses: modal "my-modal" title "Modal Title"
+// followed by indented body content
+func (p *parserState) parseModalNode() Node {
+	node := Node{Type: NodeModal, Props: make(map[string]string)}
+
+	// consume "modal"
+	p.advance()
+
+	// modal ID
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenString {
+		node.ModalID = p.advance().Value
+	}
+
+	// optional title keyword
+	if (p.current().Type == lexer.TokenKeyword || p.current().Type == lexer.TokenIdentifier) && p.current().Value == "title" {
+		p.advance()
+		if p.current().Type == lexer.TokenString {
+			node.ModalTitle = p.advance().Value
+		} else if p.current().Type == lexer.TokenIdentifier {
+			node.ModalTitle = p.advance().Value
+		}
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	// parse children
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		node.Children = p.parseBody()
+	}
+
+	return node
+}
+
+// parseChartNode parses: chart queryName { type: bar, label: field, value: field }
+func (p *parserState) parseChartNode() Node {
+	node := Node{Type: NodeChart, Props: make(map[string]string)}
+
+	// consume "chart"
+	p.advance()
+
+	// query name
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.Name = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	// parse indented props
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				key := p.advance().Value
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					node.Props[key] = p.advance().Value
+				} else if p.current().Type == lexer.TokenString {
+					node.Props[key] = p.advance().Value
+				}
+				p.skipToEndOfLine()
+			} else {
+				p.advance()
+			}
+		}
+	}
+
+	return node
 }

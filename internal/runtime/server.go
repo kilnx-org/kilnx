@@ -349,6 +349,29 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 					break
 				}
 			}
+
+		case parser.NodeCard:
+			body.WriteString(renderCard(node, ctx))
+
+		case parser.NodeModal:
+			// Render children as modal body content
+			var modalBody strings.Builder
+			for _, child := range node.Children {
+				switch child.Type {
+				case parser.NodeText:
+					text := interpolate(child.Value, ctx)
+					modalBody.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
+				case parser.NodeHTML:
+					htmlContent := interpolate(child.HTMLContent, ctx)
+					modalBody.WriteString(htmlContent + "\n")
+				case parser.NodeForm:
+					modalBody.WriteString(renderForm(child, s.getApp(), s.db, r))
+				}
+			}
+			body.WriteString(renderModal(node.ModalID, node.ModalTitle, modalBody.String()))
+
+		case parser.NodeChart:
+			body.WriteString(renderChart(node, ctx))
 		}
 	}
 
@@ -541,6 +564,54 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 	return body.String()
 }
 
+// renderFragmentWithParams renders a fragment using provided params (for WebSocket broadcast)
+func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]string) string {
+	ctx := &renderContext{
+		queries:  make(map[string][]database.Row),
+		paginate: make(map[string]PaginateInfo),
+	}
+
+	var body strings.Builder
+
+	for _, node := range frag.Body {
+		switch node.Type {
+		case parser.NodeQuery:
+			if s.db != nil {
+				rows, err := s.db.QueryRowsWithParams(node.SQL, params)
+				if err != nil {
+					body.WriteString(fmt.Sprintf("<p style=\"color:red\">Query error: %s</p>",
+						html.EscapeString(err.Error())))
+					continue
+				}
+				name := node.Name
+				if name == "" {
+					name = "_last"
+				}
+				ctx.queries[name] = rows
+			}
+
+		case parser.NodeText:
+			text := interpolate(node.Value, ctx)
+			body.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
+
+		case parser.NodeList:
+			body.WriteString(renderList(node, ctx))
+
+		case parser.NodeTable:
+			body.WriteString(renderTable(node, ctx, frag.Path))
+
+		case parser.NodeAlert:
+			body.WriteString(renderAlert(node, ctx))
+
+		case parser.NodeHTML:
+			htmlContent := interpolate(node.HTMLContent, ctx)
+			body.WriteString(htmlContent + "\n")
+		}
+	}
+
+	return body.String()
+}
+
 // handleAction processes a POST/PUT/DELETE request
 func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action parser.Page, app *parser.App) {
 	formData := extractFormData(r)
@@ -657,7 +728,14 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			case "not found":
 				shouldExecute = lastQueryNotFound
 			case "forbidden":
-				shouldExecute = false // reserved for future permission checks
+				// Check if the current user's role doesn't match the action's RequiresRole
+				sess := s.getSession(r)
+				if sess == nil {
+					shouldExecute = true // no session means forbidden
+				} else if action.RequiresRole != "" && action.RequiresRole != "auth" {
+					shouldExecute = sess.Role != action.RequiresRole &&
+						!s.hasPermission(sess.Role, action.RequiresRole, app.Permissions)
+				}
 			}
 			if shouldExecute {
 				s.handleActionNodes(w, r, node.Children, formData, app)

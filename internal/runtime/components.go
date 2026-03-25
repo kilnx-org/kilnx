@@ -275,6 +275,68 @@ func renderModal(id, title, content string) string {
 	return b.String()
 }
 
+// renderChart renders a simple CSS bar chart from query data.
+// Props: type (bar), label (field for labels), value (field for values)
+func renderChart(node parser.Node, ctx *renderContext) string {
+	rows, ok := ctx.queries[node.Name]
+	if !ok {
+		return fmt.Sprintf("    <p style=\"color:#888\">No data for chart '%s'</p>\n", node.Name)
+	}
+
+	if len(rows) == 0 {
+		return "    <p style=\"color:#888\">No items found.</p>\n"
+	}
+
+	labelField := node.Props["label"]
+	valueField := node.Props["value"]
+	chartType := node.Props["type"]
+	if chartType == "" {
+		chartType = "bar"
+	}
+
+	// Find max value for scaling
+	maxVal := 0
+	type entry struct {
+		label string
+		value int
+	}
+	var entries []entry
+	for _, row := range rows {
+		label := getField(row, labelField)
+		valStr := getField(row, valueField)
+		val := 0
+		fmt.Sscanf(valStr, "%d", &val)
+		if val > maxVal {
+			maxVal = val
+		}
+		entries = append(entries, entry{label: label, value: val})
+	}
+	if maxVal == 0 {
+		maxVal = 1
+	}
+
+	var b strings.Builder
+	b.WriteString("    <div class=\"kilnx-chart\" data-type=\"" + html.EscapeString(chartType) + "\">\n")
+	b.WriteString("      <table class=\"kilnx-chart-table\" style=\"width:100%;border-collapse:collapse\">\n")
+
+	for _, e := range entries {
+		pct := (e.value * 100) / maxVal
+		b.WriteString("        <tr>\n")
+		b.WriteString(fmt.Sprintf("          <td style=\"width:120px;padding:4px 8px;font-size:0.85rem\">%s</td>\n",
+			html.EscapeString(e.label)))
+		b.WriteString(fmt.Sprintf("          <td style=\"padding:4px\" data-value=\"%d\">\n", e.value))
+		b.WriteString(fmt.Sprintf("            <div style=\"background:#4a7aba;height:20px;width:%d%%;border-radius:3px;min-width:2px\" title=\"%d\"></div>\n",
+			pct, e.value))
+		b.WriteString("          </td>\n")
+		b.WriteString(fmt.Sprintf("          <td style=\"width:50px;padding:4px;font-size:0.85rem;text-align:right\">%d</td>\n", e.value))
+		b.WriteString("        </tr>\n")
+	}
+
+	b.WriteString("      </table>\n")
+	b.WriteString("    </div>\n")
+	return b.String()
+}
+
 func getField(row database.Row, field string) string {
 	if val, ok := row[field]; ok {
 		return val

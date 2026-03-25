@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"net/http"
+	"runtime"
 	"time"
 
 	"github.com/kilnx-org/kilnx/internal/parser"
@@ -48,13 +49,20 @@ func (l *Logger) LogSlowQuery(sql string, duration time.Duration) {
 	}
 }
 
-// LogError logs an error
+// LogError logs an error, optionally with a goroutine stack trace
 func (l *Logger) LogError(msg string, err error) {
 	if !l.config.LogErrors {
 		return
 	}
 	fmt.Printf("[%s] ERROR: %s: %v\n",
 		time.Now().Format("15:04:05"), msg, err)
+
+	if l.config.Stacktrace {
+		buf := make([]byte, 4096)
+		n := runtime.Stack(buf, false)
+		fmt.Printf("[%s] STACKTRACE:\n%s\n",
+			time.Now().Format("15:04:05"), string(buf[:n]))
+	}
 }
 
 func truncateSQL(sql string) string {

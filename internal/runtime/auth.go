@@ -16,6 +16,25 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// checkOwnership verifies if a user owns a resource by querying the database.
+// tableName is the resource table, resourceID is the ID from the URL,
+// userID is the current user's ID, and ownerField is the column to check (e.g., "author").
+func checkOwnership(db *database.DB, tableName, resourceID, userID, ownerField string) bool {
+	if db == nil || resourceID == "" || userID == "" {
+		return false
+	}
+	sql := fmt.Sprintf("SELECT id FROM \"%s\" WHERE id = :id AND \"%s\" = :user_id",
+		sanitizeIdentifier(tableName), sanitizeIdentifier(ownerField))
+	rows, err := db.QueryRowsWithParams(sql, map[string]string{
+		"id":      resourceID,
+		"user_id": userID,
+	})
+	if err != nil {
+		return false
+	}
+	return len(rows) > 0
+}
+
 // Session stores authenticated user data
 type Session struct {
 	UserID    string
@@ -184,7 +203,8 @@ func (s *Server) hasPermission(userRole, requiredRole string, perms []parser.Per
 }
 
 // hasPermissionForRequest checks if a user role has permission for a specific HTTP request
-// Supports rules like "read post", "write post", "all"
+// Supports rules like "read post", "write post", "all",
+// and "write post where author = current_user" for ownership checks
 func (s *Server) hasPermissionForRequest(userRole string, r *http.Request, perms []parser.Permission) bool {
 	if len(perms) == 0 {
 		return true
@@ -196,6 +216,8 @@ func (s *Server) hasPermissionForRequest(userRole string, r *http.Request, perms
 	case "POST", "PUT", "DELETE", "PATCH":
 		accessType = "write"
 	}
+
+	session := s.getSession(r)
 
 	for _, p := range perms {
 		if p.Role != userRole {
@@ -217,6 +239,33 @@ func (s *Server) hasPermissionForRequest(userRole string, r *http.Request, perms
 
 				// Check if the URL path contains the resource name
 				if strings.Contains(r.URL.Path, ruleResource) || strings.Contains(r.URL.Path, ruleResource+"s") {
+					// Check for "where owner = current_user" clause
+					if strings.Contains(rule, "where") && strings.Contains(rule, "current_user") {
+						// Extract owner field from "where FIELD = current_user"
+						whereIdx := strings.Index(rule, "where ")
+						if whereIdx >= 0 {
+							whereClause := rule[whereIdx+6:]
+							clauseParts := strings.Fields(whereClause)
+							ownerField := "author"
+							if len(clauseParts) >= 1 {
+								ownerField = clauseParts[0]
+							}
+
+							// Extract resource ID from URL path
+							urlParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+							resourceID := ""
+							if len(urlParts) >= 2 {
+								resourceID = urlParts[1] // e.g., /posts/5/edit -> "5"
+							}
+
+							if session != nil && s.db != nil && resourceID != "" {
+								if checkOwnership(s.db, ruleResource, resourceID, session.UserID, ownerField) {
+									return true
+								}
+							}
+							continue // ownership check failed, try next rule
+						}
+					}
 					return true
 				}
 			}

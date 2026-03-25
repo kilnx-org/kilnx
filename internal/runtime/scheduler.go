@@ -2,11 +2,13 @@ package runtime
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
+	"github.com/kilnx-org/kilnx/internal/pdf"
 )
 
 // StartScheduler launches goroutines for each schedule defined in the app
@@ -216,9 +218,71 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) {
 			body = interpolate(body, ctx)
 			recipient = interpolate(recipient, ctx)
 
-			if err := SendEmail(recipient, subject, body); err != nil {
-				fmt.Printf("  email error: %v\n", err)
+			// Check for attachment
+			attach := node.EmailAttach
+			if attach != "" {
+				if strings.HasPrefix(attach, "_") {
+					if val, ok := params[attach]; ok {
+						attach = val
+					}
+				}
+				if err := SendEmailWithAttachment(recipient, subject, body, attach); err != nil {
+					fmt.Printf("  email error: %v\n", err)
+				}
+			} else {
+				if err := SendEmail(recipient, subject, body); err != nil {
+					fmt.Printf("  email error: %v\n", err)
+				}
 			}
+
+		case parser.NodeValidate:
+			if len(node.Validations) > 0 {
+				errors := validateInlineRules(node.Validations, params)
+				if len(errors) > 0 {
+					fmt.Printf("  validation failed: %v\n", errors)
+					return // skip remaining nodes
+				}
+			}
+
+		case parser.NodeGeneratePDF:
+			// Generate PDF from query data
+			doc := pdf.NewDocument()
+			doc.SetTitle(node.TemplateName)
+			doc.SetFooter("Page {page} of {pages}")
+			page := doc.AddPage()
+			page.AddHeading(node.TemplateName)
+			page.AddSpace(10)
+
+			// Get data from query results
+			dataName := node.DataQueryName
+			if rows, ok := ctx.queries[dataName]; ok && len(rows) > 0 {
+				// Build table headers from first row keys
+				var headers []string
+				for key := range rows[0] {
+					headers = append(headers, key)
+				}
+				// Build table rows
+				var tableRows [][]string
+				for _, row := range rows {
+					var tr []string
+					for _, h := range headers {
+						tr = append(tr, row[h])
+					}
+					tableRows = append(tableRows, tr)
+				}
+				page.AddTable(headers, tableRows)
+			}
+
+			pdfBytes := doc.Render()
+			tmpFile, err := os.CreateTemp("", "kilnx-*.pdf")
+			if err != nil {
+				fmt.Printf("  pdf generation error: %v\n", err)
+				continue
+			}
+			tmpFile.Write(pdfBytes)
+			tmpFile.Close()
+			params["_generated_pdf"] = tmpFile.Name()
+			fmt.Printf("  generated pdf: %s\n", tmpFile.Name())
 		}
 	}
 }

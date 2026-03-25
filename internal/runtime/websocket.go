@@ -184,12 +184,19 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 					// If a fragment reference is specified, render it
 					if node.BroadcastFrag != "" {
 						app := s.getApp()
+						rendered := false
 						for _, frag := range app.Fragments {
-							if strings.TrimPrefix(frag.Path, "/") == node.BroadcastFrag {
-								// Simple: just broadcast the raw message
-								targetRoom.broadcast(msg)
+							fragName := strings.TrimPrefix(frag.Path, "/")
+							if fragName == node.BroadcastFrag {
+								// Render the fragment with the current params as context
+								renderedHTML := s.renderFragmentWithParams(frag, params)
+								targetRoom.broadcast([]byte(renderedHTML))
+								rendered = true
 								break
 							}
+						}
+						if !rendered {
+							targetRoom.broadcast(msg)
 						}
 					} else {
 						targetRoom.broadcast(msg)

@@ -1,9 +1,11 @@
 package runtime
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/smtp"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -87,6 +89,66 @@ func SendEmail(to, subject, body string) error {
 	}
 
 	fmt.Printf("  email sent to %s: %s\n", to, subject)
+	return nil
+}
+
+// SendEmailWithAttachment sends an email with a file attachment using MIME multipart
+func SendEmailWithAttachment(to, subject, body, attachPath string) error {
+	cfg := loadEmailConfig()
+
+	boundary := "KilnxBoundary" + fmt.Sprintf("%d", os.Getpid())
+
+	var msg strings.Builder
+	msg.WriteString(fmt.Sprintf("From: %s\r\n", cfg.From))
+	msg.WriteString(fmt.Sprintf("To: %s\r\n", to))
+	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+	msg.WriteString("MIME-Version: 1.0\r\n")
+	msg.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\n", boundary))
+	msg.WriteString("\r\n")
+
+	// Body part
+	msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	msg.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+	msg.WriteString("Content-Transfer-Encoding: 7bit\r\n")
+	msg.WriteString("\r\n")
+	msg.WriteString(body)
+	msg.WriteString("\r\n")
+
+	// Attachment part
+	fileData, err := os.ReadFile(attachPath)
+	if err != nil {
+		return fmt.Errorf("reading attachment %s: %w", attachPath, err)
+	}
+
+	fileName := filepath.Base(attachPath)
+	contentType := "application/octet-stream"
+	if strings.HasSuffix(fileName, ".pdf") {
+		contentType = "application/pdf"
+	}
+
+	msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	msg.WriteString(fmt.Sprintf("Content-Type: %s; name=\"%s\"\r\n", contentType, fileName))
+	msg.WriteString("Content-Transfer-Encoding: base64\r\n")
+	msg.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=\"%s\"\r\n", fileName))
+	msg.WriteString("\r\n")
+	msg.WriteString(base64.StdEncoding.EncodeToString(fileData))
+	msg.WriteString("\r\n")
+
+	msg.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+
+	addr := cfg.Host + ":" + cfg.Port
+
+	var auth smtp.Auth
+	if cfg.User != "" {
+		auth = smtp.PlainAuth("", cfg.User, cfg.Password, cfg.Host)
+	}
+
+	err = smtp.SendMail(addr, auth, cfg.From, []string{to}, []byte(msg.String()))
+	if err != nil {
+		return fmt.Errorf("sending email with attachment to %s: %w", to, err)
+	}
+
+	fmt.Printf("  email sent to %s (with attachment): %s\n", to, subject)
 	return nil
 }
 
