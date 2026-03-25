@@ -40,6 +40,7 @@ var keywords = map[string]bool{
 	"query": true, "queries": true, "validate": true,
 	"search": true, "paginate": true, "form": true,
 	"redirect": true, "on": true, "limit": true,
+	"list": true, "table": true, "alert": true,
 	"log": true, "test": true, "translations": true,
 	"enqueue": true, "broadcast": true,
 	"send": true, "requires": true, "method": true,

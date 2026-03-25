@@ -59,7 +59,7 @@ func (s *Server) Start() error {
 		// Find matching page
 		for _, page := range app.Pages {
 			if r.URL.Path == page.Path {
-				content := s.renderPage(page, app.Pages)
+				content := s.renderPage(page, app.Pages, r)
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.Write([]byte(content))
 				return
@@ -79,13 +79,23 @@ func (s *Server) Start() error {
 
 // renderContext holds query results available during template rendering
 type renderContext struct {
-	// named query results: "users" -> [{name: "John", email: "john@test.com"}, ...]
-	queries map[string][]database.Row
+	queries  map[string][]database.Row
+	paginate map[string]PaginateInfo
 }
 
-func (s *Server) renderPage(p parser.Page, allPages []parser.Page) string {
+func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Request) string {
 	ctx := &renderContext{
-		queries: make(map[string][]database.Row),
+		queries:  make(map[string][]database.Row),
+		paginate: make(map[string]PaginateInfo),
+	}
+
+	// Get current page number from query string
+	pageNum := 1
+	if pg := r.URL.Query().Get("page"); pg != "" {
+		fmt.Sscanf(pg, "%d", &pageNum)
+		if pageNum < 1 {
+			pageNum = 1
+		}
 	}
 
 	var body strings.Builder
@@ -94,22 +104,59 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page) string {
 		switch node.Type {
 		case parser.NodeQuery:
 			if s.db != nil {
-				rows, err := s.db.QueryRows(node.SQL)
+				sql := node.SQL
+
+				// Handle pagination
+				if node.Paginate > 0 {
+					// First get total count
+					countSQL := fmt.Sprintf("SELECT COUNT(*) as _count FROM (%s)", sql)
+					countRows, err := s.db.QueryRows(countSQL)
+					total := 0
+					if err == nil && len(countRows) > 0 {
+						fmt.Sscanf(countRows[0]["_count"], "%d", &total)
+					}
+
+					offset := (pageNum - 1) * node.Paginate
+					sql = fmt.Sprintf("%s LIMIT %d OFFSET %d", sql, node.Paginate, offset)
+
+					name := node.Name
+					if name == "" {
+						name = "_last"
+					}
+					ctx.paginate[name] = PaginateInfo{
+						Page:    pageNum,
+						PerPage: node.Paginate,
+						Total:   total,
+						HasPrev: pageNum > 1,
+						HasNext: offset+node.Paginate < total,
+					}
+				}
+
+				rows, err := s.db.QueryRows(sql)
 				if err != nil {
 					body.WriteString(fmt.Sprintf("    <p style=\"color:red\">Query error: %s</p>\n",
 						html.EscapeString(err.Error())))
 					continue
 				}
-				if node.Name != "" {
-					ctx.queries[node.Name] = rows
-				} else {
-					ctx.queries["_last"] = rows
+				name := node.Name
+				if name == "" {
+					name = "_last"
 				}
+				ctx.queries[name] = rows
 			}
 
 		case parser.NodeText:
 			text := interpolate(node.Value, ctx)
 			body.WriteString(fmt.Sprintf("    <p>%s</p>\n", html.EscapeString(text)))
+
+		case parser.NodeList:
+			body.WriteString(renderList(node, ctx))
+
+		case parser.NodeTable:
+			body.WriteString(renderTable(node, ctx, p.Path))
+
+		case parser.NodeAlert:
+			body.WriteString(renderAlert(node, ctx))
 		}
 	}
 
@@ -139,6 +186,26 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page) string {
     nav a.active { color: #1a1a1a; font-weight: 600; }
     main { padding: 0.5rem 0; }
     p { margin-bottom: 0.75rem; }
+    .kilnx-list { list-style: none; }
+    .kilnx-list-item { padding: 0.6rem 0; border-bottom: 1px solid #f0f0f0; display: flex; flex-direction: column; gap: 0.15rem; }
+    .kilnx-list-item strong { font-size: 0.95rem; }
+    .kilnx-list-item span { font-size: 0.85rem; color: #666; }
+    .kilnx-table { width: 100%%; border-collapse: collapse; font-size: 0.9rem; }
+    .kilnx-table th { text-align: left; padding: 0.5rem; border-bottom: 2px solid #e0e0e0; font-weight: 600; font-size: 0.8rem; text-transform: uppercase; color: #888; }
+    .kilnx-table td { padding: 0.5rem; border-bottom: 1px solid #f0f0f0; }
+    .kilnx-table tr:hover { background: #fafafa; }
+    .kilnx-table td a { color: #4a7aba; text-decoration: none; font-size: 0.85rem; }
+    .kilnx-table td a:hover { text-decoration: underline; }
+    .kilnx-alert { padding: 0.75rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
+    .kilnx-alert-success { background: #f0fdf0; color: #166534; border: 1px solid #bbf7d0; }
+    .kilnx-alert-error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    .kilnx-alert-warning { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+    .kilnx-alert-info { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+    .kilnx-pagination { display: flex; align-items: center; gap: 1rem; padding: 1rem 0; justify-content: center; }
+    .kilnx-pagination a { color: #4a7aba; text-decoration: none; font-size: 0.9rem; }
+    .kilnx-pagination a:hover { text-decoration: underline; }
+    .kilnx-pagination .disabled { color: #ccc; font-size: 0.9rem; }
+    .kilnx-page-info { font-size: 0.85rem; color: #888; }
   </style>
 </head>
 <body>

@@ -11,24 +11,32 @@ model post
   status: option [draft, published, archived] default draft
   author: user required
   created: timestamp auto
-  published_at: timestamp optional
 
-model comment
-  body: text required
-  post: post required
-  author: user required
-  created: timestamp auto
-
-page / title "Blog"
-  query stats: SELECT count(*) as total_users FROM user
-  query posts: SELECT count(*) as total_posts FROM post
-  "Welcome to the blog."
-  "Users: {stats.total_users} | Posts: {posts.total_posts}"
+page / title "Dashboard"
+  query stats: SELECT count(*) as users FROM user
+  query post_stats: SELECT count(*) as posts FROM post
+  alert info "Welcome to the kilnx blog engine."
+  "Users: {stats.users} | Posts: {post_stats.posts}"
 
 page /users title "Users"
-  query stats: SELECT count(*) as total FROM user
-  "Total users: {stats.total}"
+  query users: SELECT id, name, email, role, created FROM user ORDER BY created DESC paginate 5
+  table users
+    columns: name, email, role, created
+    row action: view /users/:id
+
+page /posts title "Posts"
+  query posts: SELECT p.id, p.title, p.status, u.name as author, p.created FROM post p LEFT JOIN user u ON u.id = p.author_id ORDER BY p.created DESC paginate 5
+  table posts
+    columns: title, author, status, created
+    row action: view /posts/:id
+
+page /recent title "Recent Activity"
+  query users: SELECT name, email FROM user ORDER BY created DESC LIMIT 5
+  list users
+    title: name
+    subtitle: email
 
 page /about title "About"
-  "A blog built with kilnx."
+  alert success "Kilnx is running."
+  "A blog engine built with kilnx."
   "29 keywords. Single binary. Zero dependencies."

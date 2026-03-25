@@ -62,13 +62,30 @@ type NodeType int
 const (
 	NodeText  NodeType = iota
 	NodeQuery          // query users: select name, email from user
+	NodeList           // list users { title: name, subtitle: email }
+	NodeTable          // table users { columns: name, email }
+	NodeAlert          // alert success "message"
 )
 
 type Node struct {
-	Type     NodeType
-	Value    string
-	Name     string // for query: the result variable name
-	SQL      string // for query: the raw SQL
+	Type       NodeType
+	Value      string
+	Name       string            // for query: result var name; for list/table: query name
+	SQL        string            // for query: the raw SQL
+	Props      map[string]string // for list: title, subtitle; for alert: level
+	Columns    []TableColumn     // for table: column definitions
+	RowActions []RowAction       // for table: row-level actions
+	Paginate   int               // for query: items per page (0 = no pagination)
+}
+
+type TableColumn struct {
+	Field string // column field name from query result
+	Label string // display label (optional, defaults to field name)
+}
+
+type RowAction struct {
+	Label string // e.g., "edit", "delete", "view"
+	Path  string // e.g., /users/:id/edit
 }
 
 func Parse(tokens []lexer.Token, source string) (*App, error) {
@@ -365,13 +382,27 @@ func (p *parserState) parseBody() []Node {
 			continue
 		}
 
-		// query name: SELECT ...
-		if tok.Type == lexer.TokenKeyword && tok.Value == "query" {
-			node, err := p.parseQueryNode()
-			if err == nil {
+		if tok.Type == lexer.TokenKeyword {
+			switch tok.Value {
+			case "query":
+				node, err := p.parseQueryNode()
+				if err == nil {
+					nodes = append(nodes, node)
+				}
+				continue
+			case "list":
+				node := p.parseListNode()
 				nodes = append(nodes, node)
+				continue
+			case "table":
+				node := p.parseTableNode()
+				nodes = append(nodes, node)
+				continue
+			case "alert":
+				node := p.parseAlertNode()
+				nodes = append(nodes, node)
+				continue
 			}
-			continue
 		}
 
 		if tok.Type == lexer.TokenString {
@@ -403,6 +434,7 @@ func (p *parserState) parseQueryNode() (Node, error) {
 		node.SQL = p.extractSQLFromLine(queryLine)
 		p.skipToEndOfLine()
 		node.SQL += p.extractContinuationSQL()
+		node.SQL, node.Paginate = extractPaginate(node.SQL)
 		return node, nil
 	}
 
@@ -419,6 +451,9 @@ func (p *parserState) parseQueryNode() (Node, error) {
 	node.SQL = p.extractSQLFromLine(queryLine)
 	p.skipToEndOfLine()
 	node.SQL += p.extractContinuationSQL()
+
+	// Check for "paginate N" suffix in SQL
+	node.SQL, node.Paginate = extractPaginate(node.SQL)
 
 	return node, nil
 }
@@ -490,4 +525,204 @@ func (p *parserState) extractContinuationSQL() string {
 		return ""
 	}
 	return " " + strings.Join(sqlParts, " ")
+}
+
+// extractPaginate checks for "paginate N" at the end of SQL and strips it.
+// Returns the cleaned SQL and the page size (0 if no pagination).
+func extractPaginate(sql string) (string, int) {
+	trimmed := strings.TrimSpace(sql)
+	lower := strings.ToLower(trimmed)
+
+	idx := strings.LastIndex(lower, "paginate ")
+	if idx < 0 {
+		return sql, 0
+	}
+
+	after := strings.TrimSpace(trimmed[idx+len("paginate "):])
+	n := 0
+	fmt.Sscanf(after, "%d", &n)
+	if n <= 0 {
+		return sql, 0
+	}
+
+	return strings.TrimSpace(trimmed[:idx]), n
+}
+
+// parseListNode parses:
+//
+//	list queryName
+//	  title: fieldName
+//	  subtitle: fieldName
+func (p *parserState) parseListNode() Node {
+	node := Node{Type: NodeList, Props: make(map[string]string)}
+
+	// consume "list"
+	p.advance()
+
+	// query name to iterate over
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.Name = p.advance().Value
+	}
+
+	// skip to newline
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	// parse indented props
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+
+			// prop: value
+			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				key := p.advance().Value
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					node.Props[key] = p.advance().Value
+				} else if p.current().Type == lexer.TokenString {
+					node.Props[key] = p.advance().Value
+				}
+				p.skipToEndOfLine()
+			} else {
+				p.advance()
+			}
+		}
+	}
+
+	return node
+}
+
+// parseTableNode parses:
+//
+//	table queryName
+//	  columns: name, email, created
+//	  row action: edit /users/:id/edit
+//	  row action: delete /users/:id/delete
+func (p *parserState) parseTableNode() Node {
+	node := Node{Type: NodeTable, Props: make(map[string]string)}
+
+	// consume "table"
+	p.advance()
+
+	// query name
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.Name = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	// parse indented block
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+
+			tok := p.current()
+
+			// columns: name, email as "Email", created
+			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "columns" {
+				p.advance()
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+				node.Columns = p.parseColumnList()
+				continue
+			}
+
+			// row action: label /path
+			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "row" {
+				p.advance()
+				// expect "action" (can be keyword or identifier)
+				if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "action" {
+					p.advance()
+				}
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+				action := RowAction{}
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					action.Label = p.advance().Value
+				}
+				if p.current().Type == lexer.TokenPath {
+					action.Path = p.advance().Value
+				}
+				node.RowActions = append(node.RowActions, action)
+				p.skipToEndOfLine()
+				continue
+			}
+
+			p.advance()
+		}
+	}
+
+	return node
+}
+
+// parseColumnList parses: name, email as "Email Address", created
+func (p *parserState) parseColumnList() []TableColumn {
+	var cols []TableColumn
+
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+		if p.current().Type == lexer.TokenComma {
+			p.advance()
+			continue
+		}
+
+		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			col := TableColumn{Field: p.advance().Value}
+
+			// Check for "as" alias
+			if p.current().Type == lexer.TokenIdentifier && p.current().Value == "as" {
+				p.advance()
+				if p.current().Type == lexer.TokenString {
+					col.Label = p.advance().Value
+				}
+			}
+
+			cols = append(cols, col)
+		} else {
+			p.advance()
+		}
+	}
+
+	return cols
+}
+
+// parseAlertNode parses: alert success "message"
+func (p *parserState) parseAlertNode() Node {
+	node := Node{Type: NodeAlert, Props: make(map[string]string)}
+
+	// consume "alert"
+	p.advance()
+
+	// level: success, error, warning, info
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.Props["level"] = p.advance().Value
+	}
+
+	// message
+	if p.current().Type == lexer.TokenString {
+		node.Value = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	return node
 }
