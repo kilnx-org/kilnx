@@ -52,25 +52,25 @@ func cmdRun(filename string) error {
 		return err
 	}
 
+	dbPath := dbPathFor(filename)
+	db, err := database.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
 	// Auto-migrate if models exist
 	if len(app.Models) > 0 {
-		dbPath := dbPathFor(filename)
-		db, err := database.Open(dbPath)
-		if err != nil {
-			return err
-		}
 		stmts, err := db.Migrate(app.Models)
 		if err != nil {
-			db.Close()
 			return err
 		}
 		if len(stmts) > 0 {
 			fmt.Printf("Auto-migrated %d change(s) to %s\n", len(stmts), dbPath)
 		}
-		db.Close()
 	}
 
-	return runtime.WatchAndServe(filename, 8080)
+	return runtime.WatchAndServe(filename, db, 8080)
 }
 
 func cmdMigrate(filename string) error {
@@ -128,7 +128,7 @@ func loadApp(filename string) (*parser.App, error) {
 	}
 
 	tokens := lexer.Tokenize(string(source))
-	return parser.Parse(tokens)
+	return parser.Parse(tokens, string(source))
 }
 
 func dbPathFor(kilnxFile string) string {

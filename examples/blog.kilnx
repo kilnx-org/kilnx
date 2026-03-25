@@ -3,7 +3,6 @@ model user
   email: email unique
   role: option [admin, editor, viewer] default viewer
   active: bool default true
-  phone: phone optional
   created: timestamp auto
 
 model post
@@ -21,7 +20,15 @@ model comment
   created: timestamp auto
 
 page / title "Blog"
+  query stats: SELECT count(*) as total_users FROM user
+  query posts: SELECT count(*) as total_posts FROM post
   "Welcome to the blog."
+  "Users: {stats.total_users} | Posts: {posts.total_posts}"
+
+page /users title "Users"
+  query stats: SELECT count(*) as total FROM user
+  "Total users: {stats.total}"
 
 page /about title "About"
   "A blog built with kilnx."
+  "29 keywords. Single binary. Zero dependencies."

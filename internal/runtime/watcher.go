@@ -5,11 +5,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/lexer"
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
-func WatchAndServe(filename string, port int) error {
+func WatchAndServe(filename string, db *database.DB, port int) error {
 	app, err := loadApp(filename)
 	if err != nil {
 		return err
@@ -17,7 +18,7 @@ func WatchAndServe(filename string, port int) error {
 
 	printRoutes(app)
 
-	srv := NewServer(app, port)
+	srv := NewServer(app, db, port)
 
 	go watchFile(filename, srv)
 
@@ -31,7 +32,7 @@ func loadApp(filename string) (*parser.App, error) {
 	}
 
 	tokens := lexer.Tokenize(string(source))
-	app, err := parser.Parse(tokens)
+	app, err := parser.Parse(tokens, string(source))
 	if err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", filename, err)
 	}

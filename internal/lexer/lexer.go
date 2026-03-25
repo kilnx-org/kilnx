@@ -20,6 +20,7 @@ const (
 	TokenNewline                     // end of line
 	TokenIndent                      // increase in indentation
 	TokenDedent                      // decrease in indentation
+	TokenRawLine                     // raw text of a full line (for SQL capture)
 	TokenEOF                         // end of file
 )
 

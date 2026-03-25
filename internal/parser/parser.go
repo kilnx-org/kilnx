@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/kilnx-org/kilnx/internal/lexer"
 )
@@ -59,16 +60,20 @@ type Page struct {
 type NodeType int
 
 const (
-	NodeText NodeType = iota
+	NodeText  NodeType = iota
+	NodeQuery          // query users: select name, email from user
 )
 
 type Node struct {
-	Type  NodeType
-	Value string
+	Type     NodeType
+	Value    string
+	Name     string // for query: the result variable name
+	SQL      string // for query: the raw SQL
 }
 
-func Parse(tokens []lexer.Token) (*App, error) {
-	p := &parserState{tokens: tokens, pos: 0}
+func Parse(tokens []lexer.Token, source string) (*App, error) {
+	lines := strings.Split(source, "\n")
+	p := &parserState{tokens: tokens, pos: 0, lines: lines}
 	app := &App{}
 
 	for !p.isEOF() {
@@ -107,6 +112,7 @@ func Parse(tokens []lexer.Token) (*App, error) {
 type parserState struct {
 	tokens []lexer.Token
 	pos    int
+	lines  []string // original source lines for raw text extraction
 }
 
 func (p *parserState) current() lexer.Token {
@@ -359,6 +365,15 @@ func (p *parserState) parseBody() []Node {
 			continue
 		}
 
+		// query name: SELECT ...
+		if tok.Type == lexer.TokenKeyword && tok.Value == "query" {
+			node, err := p.parseQueryNode()
+			if err == nil {
+				nodes = append(nodes, node)
+			}
+			continue
+		}
+
 		if tok.Type == lexer.TokenString {
 			nodes = append(nodes, Node{Type: NodeText, Value: tok.Value})
 			p.advance()
@@ -369,4 +384,110 @@ func (p *parserState) parseBody() []Node {
 	}
 
 	return nodes
+}
+
+// parseQueryNode parses: query name: SELECT ... (rest of line and continuation lines)
+// Extracts SQL directly from source lines to preserve special chars like (), *, etc.
+func (p *parserState) parseQueryNode() (Node, error) {
+	node := Node{Type: NodeQuery}
+
+	queryLine := p.current().Line
+
+	// consume "query"
+	p.advance()
+
+	// query name (or inline: "query: SELECT ...")
+	if p.current().Type == lexer.TokenColon {
+		// unnamed query: query: SELECT ...
+		p.advance() // consume ':'
+		node.SQL = p.extractSQLFromLine(queryLine)
+		p.skipToEndOfLine()
+		node.SQL += p.extractContinuationSQL()
+		return node, nil
+	}
+
+	// named query: query users: SELECT ...
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.Name = p.advance().Value
+	}
+
+	// expect colon
+	if p.current().Type == lexer.TokenColon {
+		p.advance()
+	}
+
+	node.SQL = p.extractSQLFromLine(queryLine)
+	p.skipToEndOfLine()
+	node.SQL += p.extractContinuationSQL()
+
+	return node, nil
+}
+
+// extractSQLFromLine extracts the SQL portion from a source line.
+// For "  query stats: SELECT count(*) as total FROM user",
+// it returns "SELECT count(*) as total FROM user"
+func (p *parserState) extractSQLFromLine(lineNum int) string {
+	if lineNum < 1 || lineNum > len(p.lines) {
+		return ""
+	}
+	line := p.lines[lineNum-1]
+
+	// Find the colon after "query" or "query name"
+	idx := strings.Index(line, ":")
+	if idx < 0 {
+		return strings.TrimSpace(line)
+	}
+	return strings.TrimSpace(line[idx+1:])
+}
+
+// skipToEndOfLine advances past all tokens on the current line
+func (p *parserState) skipToEndOfLine() {
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+		p.advance()
+	}
+}
+
+// extractContinuationSQL collects indented continuation lines for multi-line SQL
+func (p *parserState) extractContinuationSQL() string {
+	var sqlParts []string
+
+	// Skip the newline
+	if p.current().Type == lexer.TokenNewline {
+		p.advance()
+	}
+
+	// Check for indented continuation
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+			// Get the raw line
+			lineNum := p.current().Line
+			if lineNum >= 1 && lineNum <= len(p.lines) {
+				rawLine := strings.TrimSpace(p.lines[lineNum-1])
+				if rawLine != "" {
+					sqlParts = append(sqlParts, rawLine)
+				}
+			}
+			// Skip all tokens on this line
+			currentLine := p.current().Line
+			for !p.isEOF() && p.current().Line == currentLine &&
+				p.current().Type != lexer.TokenNewline &&
+				p.current().Type != lexer.TokenDedent {
+				p.advance()
+			}
+		}
+	}
+
+	if len(sqlParts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(sqlParts, " ")
 }

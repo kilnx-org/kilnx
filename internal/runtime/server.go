@@ -5,23 +5,28 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 
+	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
 //go:embed static/htmx.min.js
 var staticFS embed.FS
 
+var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\}`)
+
 type Server struct {
 	app  *parser.App
+	db   *database.DB
 	mu   sync.RWMutex
 	port int
 }
 
-func NewServer(app *parser.App, port int) *Server {
-	return &Server{app: app, port: port}
+func NewServer(app *parser.App, db *database.DB, port int) *Server {
+	return &Server{app: app, db: db, port: port}
 }
 
 func (s *Server) Reload(app *parser.App) {
@@ -54,7 +59,7 @@ func (s *Server) Start() error {
 		// Find matching page
 		for _, page := range app.Pages {
 			if r.URL.Path == page.Path {
-				content := renderPage(page, app.Pages)
+				content := s.renderPage(page, app.Pages)
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.Write([]byte(content))
 				return
@@ -72,18 +77,39 @@ func (s *Server) Start() error {
 	return http.ListenAndServe(addr, mux)
 }
 
-func Serve(app *parser.App, port int) error {
-	s := NewServer(app, port)
-	return s.Start()
+// renderContext holds query results available during template rendering
+type renderContext struct {
+	// named query results: "users" -> [{name: "John", email: "john@test.com"}, ...]
+	queries map[string][]database.Row
 }
 
-func renderPage(p parser.Page, allPages []parser.Page) string {
+func (s *Server) renderPage(p parser.Page, allPages []parser.Page) string {
+	ctx := &renderContext{
+		queries: make(map[string][]database.Row),
+	}
+
 	var body strings.Builder
 
 	for _, node := range p.Body {
 		switch node.Type {
+		case parser.NodeQuery:
+			if s.db != nil {
+				rows, err := s.db.QueryRows(node.SQL)
+				if err != nil {
+					body.WriteString(fmt.Sprintf("    <p style=\"color:red\">Query error: %s</p>\n",
+						html.EscapeString(err.Error())))
+					continue
+				}
+				if node.Name != "" {
+					ctx.queries[node.Name] = rows
+				} else {
+					ctx.queries["_last"] = rows
+				}
+			}
+
 		case parser.NodeText:
-			body.WriteString(fmt.Sprintf("    <p>%s</p>\n", html.EscapeString(node.Value)))
+			text := interpolate(node.Value, ctx)
+			body.WriteString(fmt.Sprintf("    <p>%s</p>\n", html.EscapeString(text)))
 		}
 	}
 
@@ -91,6 +117,9 @@ func renderPage(p parser.Page, allPages []parser.Page) string {
 	if title == "" {
 		title = "kilnx"
 	}
+
+	// Interpolate title too
+	title = interpolate(title, ctx)
 
 	nav := renderNav(allPages, p.Path)
 
@@ -117,7 +146,54 @@ func renderPage(p parser.Page, allPages []parser.Page) string {
 %s  </main>
 </body>
 </html>
-`, title, nav, body.String())
+`, html.EscapeString(title), nav, body.String())
+}
+
+// interpolate replaces {name.field} patterns with query result values
+// Supports:
+//   - {queryName.field} -> first row of named query, specific column
+//   - {queryName.count} -> number of rows in named query (built-in)
+func interpolate(text string, ctx *renderContext) string {
+	return interpolateRe.ReplaceAllStringFunc(text, func(match string) string {
+		// Strip braces
+		expr := match[1 : len(match)-1]
+
+		parts := strings.SplitN(expr, ".", 2)
+
+		if len(parts) == 2 {
+			queryName := parts[0]
+			field := parts[1]
+
+			rows, ok := ctx.queries[queryName]
+			if !ok {
+				return match // leave unchanged if query not found
+			}
+
+			// Built-in: .count returns number of rows
+			if field == "count" {
+				return fmt.Sprintf("%d", len(rows))
+			}
+
+			// Return first row's field value
+			if len(rows) > 0 {
+				if val, ok := rows[0][field]; ok {
+					return val
+				}
+			}
+			return ""
+		}
+
+		// Single name: check all queries for a matching column in first row
+		for _, rows := range ctx.queries {
+			if len(rows) > 0 {
+				if val, ok := rows[0][expr]; ok {
+					return val
+				}
+			}
+		}
+
+		return match
+	})
 }
 
 func renderNav(pages []parser.Page, currentPath string) string {
