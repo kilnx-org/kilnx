@@ -94,4 +94,10 @@ func printRoutes(app *parser.App) {
 	for _, s := range app.Streams {
 		fmt.Printf("  SSE  %s (every %ds)\n", s.Path, s.IntervalSecs)
 	}
+	for _, s := range app.Schedules {
+		fmt.Printf("  CRON %s (every %ds)\n", s.Name, s.IntervalSecs)
+	}
+	for _, j := range app.Jobs {
+		fmt.Printf("  JOB  %s\n", j.Name)
+	}
 }

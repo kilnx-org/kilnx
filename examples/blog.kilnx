@@ -90,6 +90,13 @@ stream /stream/user-count requires auth
   query: SELECT count(*) as total FROM user
   every 3s
 
+schedule cleanup every 1h
+  query: DELETE FROM user WHERE active = 0 AND created < datetime('now', '-30 days')
+
+job welcome-email
+  send email to :email
+    subject: "Welcome to the blog"
+
 page /about title "About" layout main
   alert success "Kilnx is running."
   "A blog engine built with kilnx."

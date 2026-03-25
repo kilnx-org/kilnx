@@ -22,12 +22,15 @@ type Server struct {
 	app      *parser.App
 	db       *database.DB
 	sessions *SessionStore
+	jobQueue *JobQueue
 	mu       sync.RWMutex
 	port     int
 }
 
 func NewServer(app *parser.App, db *database.DB, port int) *Server {
-	return &Server{app: app, db: db, sessions: NewSessionStore(), port: port}
+	s := &Server{app: app, db: db, sessions: NewSessionStore(), port: port}
+	s.jobQueue = NewJobQueue(s)
+	return s
 }
 
 func (s *Server) Reload(app *parser.App) {
@@ -152,6 +155,10 @@ func (s *Server) Start() error {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte(render404(r.URL.Path, app.Pages)))
 	})
+
+	// Start background services
+	s.StartScheduler()
+	s.jobQueue.Start()
 
 	addr := fmt.Sprintf(":%d", s.port)
 	fmt.Printf("kilnx serving on http://localhost%s\n", addr)
@@ -523,6 +530,39 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				if err != nil {
 					http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
 					return
+				}
+			}
+
+		case parser.NodeSendEmail:
+			recipient := resolveEmailRecipient(node.EmailTo, formData)
+			subject := node.EmailSubject
+			emailBody := node.Props["body"]
+			if emailBody == "" {
+				emailBody = subject
+			}
+			// Fire and forget (don't block the request)
+			go func(to, subj, body string) {
+				if err := SendEmail(to, subj, body); err != nil {
+					fmt.Printf("  email error: %v\n", err)
+				}
+			}(recipient, subject, emailBody)
+
+		case parser.NodeEnqueue:
+			if s.jobQueue != nil {
+				// Resolve param values from formData
+				resolvedParams := make(map[string]string)
+				for k, v := range node.JobParams {
+					if strings.HasPrefix(v, ":") {
+						paramName := strings.TrimPrefix(v, ":")
+						if val, ok := formData[paramName]; ok {
+							resolvedParams[k] = val
+							continue
+						}
+					}
+					resolvedParams[k] = v
+				}
+				if err := s.jobQueue.Enqueue(node.JobName, resolvedParams); err != nil {
+					fmt.Printf("  enqueue error: %v\n", err)
 				}
 			}
 

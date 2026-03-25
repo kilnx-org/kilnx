@@ -14,10 +14,24 @@ type App struct {
 	Fragments   []Page       // fragments return partial HTML (no page wrapper)
 	APIs        []Page       // api endpoints return JSON instead of HTML
 	Streams     []Stream     // SSE stream endpoints
+	Schedules   []Schedule   // timed tasks
+	Jobs        []Job        // async background jobs
 	Auth        *AuthConfig  // nil if no auth block defined
 	Permissions []Permission // role-based access rules
 	Layouts     []Layout
 	Components  []Component
+}
+
+type Schedule struct {
+	Name         string
+	IntervalSecs int    // parsed from "every 24h", "every 1m", etc.
+	Cron         string // raw cron expression like "every monday at 9:00"
+	Body         []Node // query, send email, etc.
+}
+
+type Job struct {
+	Name string
+	Body []Node // query, send email, etc.
 }
 
 type Stream struct {
@@ -114,6 +128,8 @@ const (
 	NodeHTML           // html { raw html content }
 	NodeComponent      // user-card with name: "Alice", email: "alice@test.com"
 	NodeSearch         // search queryName in field1, field2
+	NodeSendEmail      // send email to :email { subject: "...", body: "..." }
+	NodeEnqueue        // enqueue job-name with param: value
 )
 
 type Node struct {
@@ -134,6 +150,11 @@ type Node struct {
 	ComponentName string            // for component usage: which component
 	ComponentArgs map[string]string // for component usage: param values
 	SearchFields  []string          // for search: fields to search in
+	EmailTo       string            // for send email: recipient (:email or query result)
+	EmailSubject  string            // for send email: subject line
+	EmailTemplate string            // for send email: template name
+	JobName       string            // for enqueue: which job to run
+	JobParams     map[string]string // for enqueue: params to pass to job
 }
 
 type Validation struct {
@@ -205,6 +226,12 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 				return nil, err
 			}
 			app.Streams = append(app.Streams, stream)
+		case "schedule":
+			sched := p.parseSchedule()
+			app.Schedules = append(app.Schedules, sched)
+		case "job":
+			job := p.parseJob()
+			app.Jobs = append(app.Jobs, job)
 		case "auth":
 			authCfg, err := p.parseAuth()
 			if err != nil {
@@ -520,6 +547,14 @@ func (p *parserState) parseBody() []Node {
 				continue
 			case "validate":
 				node := p.parseValidateNode()
+				nodes = append(nodes, node)
+				continue
+			case "send":
+				node := p.parseSendEmailNode()
+				nodes = append(nodes, node)
+				continue
+			case "enqueue":
+				node := p.parseEnqueueNode()
 				nodes = append(nodes, node)
 				continue
 			}
@@ -1586,10 +1621,7 @@ func (p *parserState) parseStream() (Stream, error) {
 		// every 5s / every 10s
 		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "every" {
 			p.advance()
-			if p.current().Type == lexer.TokenNumber || p.current().Type == lexer.TokenIdentifier {
-				val := p.advance().Value
-				stream.IntervalSecs = parseDuration(val)
-			}
+			stream.IntervalSecs = p.parseDurationTokens()
 			p.skipToEndOfLine()
 			continue
 		}
@@ -1611,6 +1643,25 @@ func (p *parserState) parseStream() (Stream, error) {
 	}
 
 	return stream, nil
+}
+
+// parseDurationTokens reads duration from token stream.
+// Handles both "5s" as single token and "5" + "s" as split tokens.
+func (p *parserState) parseDurationTokens() int {
+	if p.current().Type == lexer.TokenNumber {
+		num := p.advance().Value
+		// Check if next token is the unit suffix
+		if p.current().Type == lexer.TokenIdentifier &&
+			(p.current().Value == "s" || p.current().Value == "m" || p.current().Value == "h") {
+			unit := p.advance().Value
+			return parseDuration(num + unit)
+		}
+		return parseDuration(num)
+	}
+	if p.current().Type == lexer.TokenIdentifier {
+		return parseDuration(p.advance().Value)
+	}
+	return 5
 }
 
 // parseDuration parses "5s", "10s", "1m", "5m" into seconds
@@ -1636,6 +1687,209 @@ func parseDuration(val string) int {
 	default: // "s" or empty
 		return n
 	}
+}
+
+// parseSchedule parses:
+//
+//	schedule cleanup every 24h
+//	  query: DELETE FROM session WHERE expires_at < now()
+//
+//	schedule report every monday at 9:00
+//	  query stats: SELECT count(*) as new_users FROM user
+//	  send email to admin@test.com
+//	    subject: "Weekly report"
+func (p *parserState) parseSchedule() Schedule {
+	sched := Schedule{IntervalSecs: 3600}
+
+	// consume "schedule"
+	p.advance()
+
+	// schedule name
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		sched.Name = p.advance().Value
+	}
+
+	// "every" interval: "every 1h", "every 24h", "every 5m", "every 30s"
+	if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "every" {
+		p.advance()
+		sched.IntervalSecs = p.parseDurationTokens()
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		sched.Body = p.parseBody()
+	}
+
+	return sched
+}
+
+// parseJob parses:
+//
+//	job generate-report
+//	  query data: SELECT * FROM order WHERE created > :start_date
+//	  send email to :requested_by
+//	    subject: "Your report is ready"
+func (p *parserState) parseJob() Job {
+	job := Job{}
+
+	// consume "job"
+	p.advance()
+
+	// job name
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		job.Name = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		job.Body = p.parseBody()
+	}
+
+	return job
+}
+
+// parseSendEmailNode parses:
+//
+//	send email to :email
+//	  subject: "Welcome"
+//	  template: welcome
+//
+// or inline: send email to admin@test.com subject "Report ready"
+func (p *parserState) parseSendEmailNode() Node {
+	node := Node{Type: NodeSendEmail, Props: make(map[string]string)}
+
+	// consume "send"
+	p.advance()
+
+	// expect "email"
+	if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "email" {
+		p.advance()
+	}
+
+	// expect "to"
+	if p.current().Type == lexer.TokenIdentifier && p.current().Value == "to" {
+		p.advance()
+	}
+
+	// recipient: :param, identifier, or string
+	if p.current().Type == lexer.TokenColon {
+		p.advance() // consume ':'
+		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			node.EmailTo = ":" + p.advance().Value
+		}
+	} else if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.EmailTo = p.advance().Value
+	} else if p.current().Type == lexer.TokenString {
+		node.EmailTo = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	// Parse indented block: subject, template, body
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+
+			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				key := p.advance().Value
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+				if p.current().Type == lexer.TokenString {
+					node.Props[key] = p.advance().Value
+				} else if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					node.Props[key] = p.advance().Value
+				}
+				p.skipToEndOfLine()
+			} else {
+				p.advance()
+			}
+		}
+	}
+
+	node.EmailSubject = node.Props["subject"]
+	node.EmailTemplate = node.Props["template"]
+
+	return node
+}
+
+// parseEnqueueNode parses:
+//
+//	enqueue generate-report with
+//	  start_date: :start_date
+//	  requested_by: :current_user_email
+func (p *parserState) parseEnqueueNode() Node {
+	node := Node{Type: NodeEnqueue, JobParams: make(map[string]string)}
+
+	// consume "enqueue"
+	p.advance()
+
+	// job name
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.JobName = p.advance().Value
+	}
+
+	// optional "with"
+	if p.current().Type == lexer.TokenKeyword && p.current().Value == "with" {
+		p.advance()
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	// Parse indented params
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+
+			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				key := p.advance().Value
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+				var val string
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+					if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+						val = ":" + p.advance().Value
+					}
+				} else if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					val = p.advance().Value
+				} else if p.current().Type == lexer.TokenString {
+					val = p.advance().Value
+				}
+				node.JobParams[key] = val
+				p.skipToEndOfLine()
+			} else {
+				p.advance()
+			}
+		}
+	}
+
+	return node
 }
 
 // parseSearchNode parses: search queryName in title, body
