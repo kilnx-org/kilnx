@@ -8,9 +8,10 @@ import (
 )
 
 type App struct {
-	Models  []Model
-	Pages   []Page
-	Actions []Page // actions share the same structure as pages but handle POST/PUT/DELETE
+	Models    []Model
+	Pages     []Page
+	Actions   []Page // actions share the same structure as pages but handle POST/PUT/DELETE
+	Fragments []Page // fragments return partial HTML (no page wrapper)
 }
 
 type Model struct {
@@ -69,6 +70,8 @@ const (
 	NodeForm           // form user
 	NodeRedirect       // redirect /users
 	NodeValidate       // validate { name: required, email: required }
+	NodeRespond        // respond fragment ".selector" with query: SQL
+	NodeHTML           // html { raw html content }
 )
 
 type Node struct {
@@ -80,9 +83,12 @@ type Node struct {
 	Columns     []TableColumn     // for table: column definitions
 	RowActions  []RowAction       // for table: row-level actions
 	Paginate    int               // for query: items per page (0 = no pagination)
-	ModelName   string            // for form: which model to generate form from
-	QuerySQL    string            // for form with query: pre-fill data
-	Validations []Validation      // for validate block
+	ModelName     string            // for form: which model to generate form from
+	QuerySQL      string            // for form with query: pre-fill data
+	Validations   []Validation      // for validate block
+	RespondTarget string            // for respond: CSS selector target
+	RespondSwap   string            // for respond: htmx swap strategy
+	HTMLContent   string            // for html: raw HTML content
 }
 
 type Validation struct {
@@ -136,6 +142,12 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 				return nil, err
 			}
 			app.Actions = append(app.Actions, action)
+		case "fragment":
+			frag, err := p.parseFragment()
+			if err != nil {
+				return nil, err
+			}
+			app.Fragments = append(app.Fragments, frag)
 		default:
 			p.advance()
 		}
@@ -430,6 +442,20 @@ func (p *parserState) parseBody() []Node {
 				continue
 			case "validate":
 				node := p.parseValidateNode()
+				nodes = append(nodes, node)
+				continue
+			}
+		}
+
+		// "respond" and "html" are identifiers, not keywords
+		if tok.Type == lexer.TokenIdentifier {
+			switch tok.Value {
+			case "respond":
+				node := p.parseRespondNode()
+				nodes = append(nodes, node)
+				continue
+			case "html":
+				node := p.parseHTMLNode()
 				nodes = append(nodes, node)
 				continue
 			}
@@ -928,5 +954,148 @@ func (p *parserState) parseRedirectNode() Node {
 	}
 
 	p.skipToEndOfLine()
+	return node
+}
+
+// parseFragment parses:
+//
+//	fragment /users/:id/card
+//	  query user: SELECT name, email FROM user WHERE id = :id
+//	  html
+//	    <div class="card">{user.name}</div>
+func (p *parserState) parseFragment() (Page, error) {
+	page := Page{Method: "GET"}
+
+	// consume "fragment"
+	p.advance()
+
+	// expect path
+	if p.current().Type != lexer.TokenPath {
+		return page, fmt.Errorf("line %d: expected path after 'fragment'", p.current().Line)
+	}
+	page.Path = p.advance().Value
+
+	// parse optional modifiers
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
+		tok := p.current()
+		if (tok.Type == lexer.TokenKeyword || tok.Type == lexer.TokenIdentifier) && tok.Value == "requires" {
+			p.advance()
+			page.Auth = true
+			if p.current().Type == lexer.TokenIdentifier {
+				p.advance()
+			}
+		} else {
+			p.advance()
+		}
+	}
+
+	p.skipNewlines()
+
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		page.Body = p.parseBody()
+	}
+
+	return page, nil
+}
+
+// parseRespondNode parses:
+//
+//	respond fragment ".user-row" with query: SELECT * FROM user WHERE id = :id
+//	respond fragment delete
+func (p *parserState) parseRespondNode() Node {
+	node := Node{Type: NodeRespond}
+
+	respondLine := p.current().Line
+
+	// consume "respond"
+	p.advance()
+
+	// expect "fragment"
+	if (p.current().Type == lexer.TokenKeyword || p.current().Type == lexer.TokenIdentifier) && p.current().Value == "fragment" {
+		p.advance()
+	}
+
+	// "delete" = empty response (htmx will remove the element)
+	if p.current().Type == lexer.TokenIdentifier && p.current().Value == "delete" {
+		node.RespondSwap = "delete"
+		p.advance()
+		p.skipToEndOfLine()
+		return node
+	}
+
+	// target selector (string like ".user-row" or identifier)
+	if p.current().Type == lexer.TokenString {
+		node.RespondTarget = p.advance().Value
+	} else if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		node.RespondTarget = p.advance().Value
+	}
+
+	// "with query: SQL" or "with" followed by body
+	if p.current().Type == lexer.TokenKeyword && p.current().Value == "with" {
+		p.advance()
+		if p.current().Type == lexer.TokenKeyword && p.current().Value == "query" {
+			p.advance()
+			if p.current().Type == lexer.TokenColon {
+				p.advance()
+			}
+			// Extract SQL from the line
+			if respondLine >= 1 && respondLine <= len(p.lines) {
+				line := p.lines[respondLine-1]
+				idx := strings.Index(line, "query:")
+				if idx >= 0 {
+					node.QuerySQL = strings.TrimSpace(line[idx+len("query:"):])
+				}
+			}
+		}
+	}
+
+	p.skipToEndOfLine()
+	return node
+}
+
+// parseHTMLNode parses an html block with raw HTML content.
+// The content is extracted from source lines to preserve all characters.
+//
+//	html
+//	  <div class="card">{user.name}</div>
+func (p *parserState) parseHTMLNode() Node {
+	node := Node{Type: NodeHTML}
+
+	// consume "html"
+	p.advance()
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	// Collect indented lines as raw HTML
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		var htmlLines []string
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+			// Get raw line from source
+			lineNum := p.current().Line
+			if lineNum >= 1 && lineNum <= len(p.lines) {
+				htmlLines = append(htmlLines, strings.TrimSpace(p.lines[lineNum-1]))
+			}
+			// Skip all tokens on this line
+			currentLine := p.current().Line
+			for !p.isEOF() && p.current().Line == currentLine &&
+				p.current().Type != lexer.TokenNewline &&
+				p.current().Type != lexer.TokenDedent {
+				p.advance()
+			}
+		}
+		node.HTMLContent = strings.Join(htmlLines, "\n")
+	}
+
 	return node
 }

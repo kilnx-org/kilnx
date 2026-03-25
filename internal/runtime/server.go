@@ -73,6 +73,16 @@ func (s *Server) Start() error {
 			}
 		}
 
+		// Match fragments (partial HTML, no page wrapper)
+		for _, frag := range app.Fragments {
+			if matchPath(frag.Path, r.URL.Path) {
+				content := s.renderFragment(frag, r)
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Write([]byte(content))
+				return
+			}
+		}
+
 		// Find matching page (GET)
 		for _, page := range app.Pages {
 			if matchPath(page.Path, r.URL.Path) {
@@ -177,6 +187,10 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 
 		case parser.NodeForm:
 			body.WriteString(renderForm(node, s.getApp(), s.db, r))
+
+		case parser.NodeHTML:
+			htmlContent := interpolate(node.HTMLContent, ctx)
+			body.WriteString("    " + htmlContent + "\n")
 		}
 	}
 
@@ -344,6 +358,57 @@ func render404(path string, pages []parser.Page) string {
 `, nav, html.EscapeString(path))
 }
 
+// renderFragment renders a fragment (partial HTML, no page wrapper)
+func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
+	ctx := &renderContext{
+		queries:  make(map[string][]database.Row),
+		paginate: make(map[string]PaginateInfo),
+	}
+
+	// Get path params
+	pathParams := matchPathParams(frag.Path, r.URL.Path)
+
+	var body strings.Builder
+
+	for _, node := range frag.Body {
+		switch node.Type {
+		case parser.NodeQuery:
+			if s.db != nil {
+				rows, err := s.db.QueryRowsWithParams(node.SQL, pathParams)
+				if err != nil {
+					body.WriteString(fmt.Sprintf("<p style=\"color:red\">Query error: %s</p>",
+						html.EscapeString(err.Error())))
+					continue
+				}
+				name := node.Name
+				if name == "" {
+					name = "_last"
+				}
+				ctx.queries[name] = rows
+			}
+
+		case parser.NodeText:
+			text := interpolate(node.Value, ctx)
+			body.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
+
+		case parser.NodeList:
+			body.WriteString(renderList(node, ctx))
+
+		case parser.NodeTable:
+			body.WriteString(renderTable(node, ctx, frag.Path))
+
+		case parser.NodeAlert:
+			body.WriteString(renderAlert(node, ctx))
+
+		case parser.NodeHTML:
+			htmlContent := interpolate(node.HTMLContent, ctx)
+			body.WriteString(htmlContent + "\n")
+		}
+	}
+
+	return body.String()
+}
+
 // handleAction processes a POST/PUT/DELETE request
 func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action parser.Page, app *parser.App) {
 	formData := extractFormData(r)
@@ -403,7 +468,54 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			for k, v := range formData {
 				path = strings.ReplaceAll(path, ":"+k, v)
 			}
-			http.Redirect(w, r, path, http.StatusSeeOther)
+			// If htmx request, use HX-Redirect header
+			if r.Header.Get("HX-Request") == "true" {
+				w.Header().Set("HX-Redirect", path)
+				w.WriteHeader(http.StatusOK)
+			} else {
+				http.Redirect(w, r, path, http.StatusSeeOther)
+			}
+			return
+
+		case parser.NodeRespond:
+			// respond fragment delete -> empty body, htmx removes element
+			if node.RespondSwap == "delete" {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("HX-Reswap", "delete")
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(""))
+				return
+			}
+
+			// respond fragment with query: SQL
+			if node.QuerySQL != "" && s.db != nil {
+				rows, err := s.db.QueryRowsWithParams(node.QuerySQL, formData)
+				if err != nil {
+					http.Error(w, "Query error: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+				ctx := &renderContext{
+					queries: map[string][]database.Row{"_result": rows},
+				}
+				// If there's a target, set HX-Retarget
+				if node.RespondTarget != "" {
+					w.Header().Set("HX-Retarget", node.RespondTarget)
+				}
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				// Render as simple list of values
+				var result strings.Builder
+				for _, row := range rows {
+					for _, val := range row {
+						result.WriteString(html.EscapeString(val))
+					}
+				}
+				_ = ctx
+				w.Write([]byte(result.String()))
+				return
+			}
+
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
 			return
 		}
 	}

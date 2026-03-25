@@ -19,7 +19,7 @@ page / title "Dashboard"
   "Users: {stats.users} | Posts: {post_stats.posts}"
 
 page /users title "Users"
-  query users: SELECT id, name, email, role, created FROM user ORDER BY created DESC paginate 5
+  query users: SELECT id, name, email, role FROM user ORDER BY id DESC paginate 10
   table users
     columns: name, email, role
     row action: edit /users/:id/edit
@@ -41,9 +41,18 @@ action /users/:id/edit
   query: UPDATE user SET name = :name, email = :email, role = :role WHERE id = :id
   redirect /users
 
-action /users/:id/delete
+action /users/:id/delete method POST
   query: DELETE FROM user WHERE id = :id
-  redirect /users
+  respond fragment delete
+
+fragment /users/:id/card
+  query user: SELECT name, email, role FROM user WHERE id = :id
+  html
+    <div class="kilnx-card" id="user-{user.id}">
+      <strong>{user.name}</strong>
+      <span>{user.email}</span>
+      <span class="kilnx-badge">{user.role}</span>
+    </div>
 
 page /about title "About"
   alert success "Kilnx is running."
