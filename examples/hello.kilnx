@@ -1,0 +1,6 @@
+page /
+  "Hello World"
+
+page /about
+  "About Kilnx"
+  "The backend language for the htmx era."
