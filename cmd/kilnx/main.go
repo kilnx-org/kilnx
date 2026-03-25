@@ -11,6 +11,7 @@ import (
 	"github.com/kilnx-org/kilnx/internal/build"
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/lexer"
+	"github.com/kilnx-org/kilnx/internal/optimizer"
 	"github.com/kilnx-org/kilnx/internal/parser"
 	"github.com/kilnx-org/kilnx/internal/runtime"
 )
@@ -111,6 +112,8 @@ func cmdRun(filename string) error {
 		}
 	}
 
+	optimizer.Optimize(app)
+
 	// Resolve config
 	port := 8080
 	dbPath := dbPathFor(filename)
@@ -204,6 +207,8 @@ func cmdTest(filename string) error {
 			return fmt.Errorf("static analysis found errors")
 		}
 	}
+
+	optimizer.Optimize(app)
 
 	if len(app.Tests) == 0 {
 		fmt.Println("No tests found.")

@@ -75,6 +75,7 @@ import (
 	"github.com/kilnx-org/kilnx/internal/analyzer"
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/lexer"
+	"github.com/kilnx-org/kilnx/internal/optimizer"
 	"github.com/kilnx-org/kilnx/internal/parser"
 	"github.com/kilnx-org/kilnx/internal/runtime"
 )
@@ -104,6 +105,8 @@ func main() {
 			os.Exit(1)
 		}
 	}
+
+	optimizer.Optimize(app)
 
 	port := 8080
 	dbPath := "app.db"
