@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	crand "crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net/smtp"
 	"os"
@@ -96,7 +98,9 @@ func SendEmail(to, subject, body string) error {
 func SendEmailWithAttachment(to, subject, body, attachPath string) error {
 	cfg := loadEmailConfig()
 
-	boundary := "KilnxBoundary" + fmt.Sprintf("%d", os.Getpid())
+	randBytes := make([]byte, 16)
+	crand.Read(randBytes)
+	boundary := "KilnxBoundary" + hex.EncodeToString(randBytes)
 
 	var msg strings.Builder
 	msg.WriteString(fmt.Sprintf("From: %s\r\n", cfg.From))

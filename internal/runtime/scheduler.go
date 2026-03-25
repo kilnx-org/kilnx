@@ -279,7 +279,12 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) {
 				fmt.Printf("  pdf generation error: %v\n", err)
 				continue
 			}
-			tmpFile.Write(pdfBytes)
+			if _, err := tmpFile.Write(pdfBytes); err != nil {
+				fmt.Printf("  pdf write error: %v\n", err)
+				tmpFile.Close()
+				os.Remove(tmpFile.Name())
+				continue
+			}
 			tmpFile.Close()
 			params["_generated_pdf"] = tmpFile.Name()
 			fmt.Printf("  generated pdf: %s\n", tmpFile.Name())

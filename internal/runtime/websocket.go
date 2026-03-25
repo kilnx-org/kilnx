@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
@@ -48,9 +49,28 @@ func (room *Room) remove(conn net.Conn) {
 
 func (room *Room) broadcast(message []byte) {
 	room.mu.RLock()
-	defer room.mu.RUnlock()
+	clients := make([]net.Conn, 0, len(room.clients))
 	for conn := range room.clients {
-		writeWSFrame(conn, message)
+		clients = append(clients, conn)
+	}
+	room.mu.RUnlock()
+
+	var dead []net.Conn
+	for _, conn := range clients {
+		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if err := writeWSFrame(conn, message); err != nil {
+			dead = append(dead, conn)
+		}
+		conn.SetWriteDeadline(time.Time{})
+	}
+
+	if len(dead) > 0 {
+		room.mu.Lock()
+		for _, conn := range dead {
+			delete(room.clients, conn)
+			conn.Close()
+		}
+		room.mu.Unlock()
 	}
 }
 
@@ -281,7 +301,7 @@ func readWSFrame(reader *bufio.Reader) ([]byte, error) {
 	return payload, nil
 }
 
-func writeWSFrame(conn net.Conn, data []byte) {
+func writeWSFrame(conn net.Conn, data []byte) error {
 	frame := make([]byte, 0, 2+len(data))
 	frame = append(frame, 0x81) // text frame, FIN
 
@@ -300,5 +320,6 @@ func writeWSFrame(conn net.Conn, data []byte) {
 	}
 
 	frame = append(frame, data...)
-	conn.Write(frame)
+	_, err := conn.Write(frame)
+	return err
 }
