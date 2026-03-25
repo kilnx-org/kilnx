@@ -8,11 +8,24 @@ import (
 )
 
 type App struct {
-	Models    []Model
-	Pages     []Page
-	Actions   []Page      // actions share the same structure as pages but handle POST/PUT/DELETE
-	Fragments []Page      // fragments return partial HTML (no page wrapper)
-	Auth      *AuthConfig // nil if no auth block defined
+	Models     []Model
+	Pages      []Page
+	Actions    []Page       // actions share the same structure as pages but handle POST/PUT/DELETE
+	Fragments  []Page       // fragments return partial HTML (no page wrapper)
+	Auth       *AuthConfig  // nil if no auth block defined
+	Layouts    []Layout
+	Components []Component
+}
+
+type Layout struct {
+	Name        string
+	HTMLContent string // raw HTML with {page.title}, {page.content}, {nav}
+}
+
+type Component struct {
+	Name   string
+	Params []string          // declared param names
+	Body   []Node            // component body nodes
 }
 
 type AuthConfig struct {
@@ -81,6 +94,7 @@ const (
 	NodeValidate       // validate { name: required, email: required }
 	NodeRespond        // respond fragment ".selector" with query: SQL
 	NodeHTML           // html { raw html content }
+	NodeComponent      // user-card with name: "Alice", email: "alice@test.com"
 )
 
 type Node struct {
@@ -98,6 +112,8 @@ type Node struct {
 	RespondTarget string            // for respond: CSS selector target
 	RespondSwap   string            // for respond: htmx swap strategy
 	HTMLContent   string            // for html: raw HTML content
+	ComponentName string            // for component usage: which component
+	ComponentArgs map[string]string // for component usage: param values
 }
 
 type Validation struct {
@@ -163,6 +179,12 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 				return nil, err
 			}
 			app.Auth = &authCfg
+		case "layout":
+			layout := p.parseLayout()
+			app.Layouts = append(app.Layouts, layout)
+		case "component":
+			comp := p.parseComponent()
+			app.Components = append(app.Components, comp)
 		default:
 			p.advance()
 		}
@@ -1195,4 +1217,129 @@ func (p *parserState) parseAuth() (AuthConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+// parseLayout parses:
+//
+//	layout main
+//	  html
+//	    <html>
+//	    <head><title>{page.title}</title></head>
+//	    <body>{nav}{page.content}</body>
+//	    </html>
+func (p *parserState) parseLayout() Layout {
+	layout := Layout{}
+
+	// consume "layout"
+	p.advance()
+
+	// layout name
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		layout.Name = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	// The layout body is an html block
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+			// Look for "html" keyword/identifier to start raw HTML capture
+			if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "html" {
+				node := p.parseHTMLNode()
+				layout.HTMLContent = node.HTMLContent
+				continue
+			}
+			p.advance()
+		}
+	}
+
+	return layout
+}
+
+// parseComponent parses:
+//
+//	component user-card
+//	  param: name, email, avatar
+//	  html
+//	    <div class="card">
+//	      <strong>{name}</strong>
+//	      <span>{email}</span>
+//	    </div>
+func (p *parserState) parseComponent() Component {
+	comp := Component{}
+
+	// consume "component"
+	p.advance()
+
+	// component name
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		comp.Name = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+
+			tok := p.current()
+
+			// param: name, email, avatar
+			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "param" {
+				p.advance()
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+				for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+					if p.current().Type == lexer.TokenComma {
+						p.advance()
+						continue
+					}
+					if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+						comp.Params = append(comp.Params, p.advance().Value)
+					} else {
+						p.advance()
+					}
+				}
+				continue
+			}
+
+			// html block or other body nodes
+			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "html" {
+				node := p.parseHTMLNode()
+				comp.Body = append(comp.Body, node)
+				continue
+			}
+
+			// Other body nodes (alert, text, etc.)
+			if tok.Type == lexer.TokenString {
+				comp.Body = append(comp.Body, Node{Type: NodeText, Value: tok.Value})
+				p.advance()
+				continue
+			}
+
+			p.advance()
+		}
+	}
+
+	return comp
 }
