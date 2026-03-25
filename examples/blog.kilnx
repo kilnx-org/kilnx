@@ -113,6 +113,30 @@ limit /api/*
 limit /login
   requests: 5 per minute per ip
 
+log
+  level: info
+  queries: slow > 100ms
+  requests: all
+  errors: all
+
+translations
+  en
+    welcome: "Welcome back"
+    about_title: "About this blog"
+    built_with: "Built with kilnx."
+  pt
+    welcome: "Bem vindo de volta"
+    about_title: "Sobre este blog"
+    built_with: "Feito com kilnx."
+
 page /about title "About" layout main
-  alert success "Kilnx is running."
-  "A blog engine built with kilnx."
+  alert success "{t.built_with}"
+  "{t.about_title}"
+
+test "about page loads"
+  visit /about
+  expect page /about contains "kilnx"
+
+test "registration works"
+  visit /register
+  expect page /register contains "Register"

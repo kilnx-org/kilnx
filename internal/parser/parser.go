@@ -19,10 +19,31 @@ type App struct {
 	Webhooks    []Webhook    // external event receivers
 	Sockets     []Socket     // bidirectional websockets
 	RateLimits  []RateLimit  // rate limiting rules
-	Auth        *AuthConfig  // nil if no auth block defined
-	Permissions []Permission // role-based access rules
-	Layouts     []Layout
-	Components  []Component
+	Auth         *AuthConfig   // nil if no auth block defined
+	Permissions  []Permission  // role-based access rules
+	Layouts      []Layout
+	Components   []Component
+	Tests        []Test
+	LogConfig    *LogConfig
+	Translations map[string]map[string]string // lang -> key -> value
+}
+
+type Test struct {
+	Name  string
+	Steps []TestStep
+}
+
+type TestStep struct {
+	Action string // "visit", "fill", "submit", "expect", "as"
+	Target string // field name, URL, or selector
+	Value  string // value to fill or expected value
+}
+
+type LogConfig struct {
+	Level         string // "debug", "info", "warn", "error"
+	SlowQueryMs   int    // log queries slower than this (ms)
+	LogRequests   bool
+	LogErrors     bool
 }
 
 type Webhook struct {
@@ -287,6 +308,25 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 		case "component":
 			comp := p.parseComponent()
 			app.Components = append(app.Components, comp)
+		case "test":
+			t := p.parseTest()
+			app.Tests = append(app.Tests, t)
+		case "log":
+			cfg := p.parseLogConfig()
+			app.LogConfig = &cfg
+		case "translations":
+			trans := p.parseTranslations()
+			if app.Translations == nil {
+				app.Translations = make(map[string]map[string]string)
+			}
+			for lang, entries := range trans {
+				if app.Translations[lang] == nil {
+					app.Translations[lang] = make(map[string]string)
+				}
+				for k, v := range entries {
+					app.Translations[lang][k] = v
+				}
+			}
 		default:
 			p.advance()
 		}
@@ -2186,4 +2226,258 @@ func (p *parserState) parseRateLimit() RateLimit {
 	}
 
 	return rl
+}
+
+// parseTest parses:
+//
+//	test "user can create post"
+//	  as user with role editor
+//	  visit /posts/new
+//	  fill title with "Test Post"
+//	  submit
+//	  expect page /posts contains "Test Post"
+func (p *parserState) parseTest() Test {
+	t := Test{}
+
+	// consume "test"
+	p.advance()
+
+	// test name (string)
+	if p.current().Type == lexer.TokenString {
+		t.Name = p.advance().Value
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+
+			// Read the raw line for the step
+			lineNum := p.current().Line
+			rawLine := ""
+			if lineNum >= 1 && lineNum <= len(p.lines) {
+				rawLine = strings.TrimSpace(p.lines[lineNum-1])
+			}
+
+			step := parseTestStep(rawLine)
+			if step.Action != "" {
+				t.Steps = append(t.Steps, step)
+			}
+
+			p.skipToEndOfLine()
+		}
+	}
+
+	return t
+}
+
+func parseTestStep(line string) TestStep {
+	parts := strings.Fields(line)
+	if len(parts) == 0 {
+		return TestStep{}
+	}
+
+	step := TestStep{Action: parts[0]}
+
+	switch parts[0] {
+	case "visit":
+		if len(parts) > 1 {
+			step.Target = parts[1]
+		}
+	case "fill":
+		// fill fieldName with "value"
+		if len(parts) > 1 {
+			step.Target = parts[1]
+		}
+		// Extract quoted value after "with"
+		idx := strings.Index(line, "with ")
+		if idx >= 0 {
+			rest := strings.TrimSpace(line[idx+5:])
+			step.Value = strings.Trim(rest, "\"")
+		}
+	case "submit":
+		// no args needed
+	case "expect":
+		// expect page /path contains "text"
+		// expect query: SQL returns N
+		step.Target = strings.Join(parts[1:], " ")
+		idx := strings.Index(line, "contains ")
+		if idx >= 0 {
+			rest := strings.TrimSpace(line[idx+9:])
+			step.Value = strings.Trim(rest, "\"")
+		}
+		idx = strings.Index(line, "returns ")
+		if idx >= 0 {
+			step.Value = strings.TrimSpace(line[idx+8:])
+		}
+	case "as":
+		// as user with role editor
+		step.Target = strings.Join(parts[1:], " ")
+	}
+
+	return step
+}
+
+// parseLogConfig parses:
+//
+//	log
+//	  level: info
+//	  queries: slow > 100ms
+//	  requests: all
+//	  errors: all
+func (p *parserState) parseLogConfig() LogConfig {
+	cfg := LogConfig{
+		Level:       "info",
+		SlowQueryMs: 100,
+		LogRequests: true,
+		LogErrors:   true,
+	}
+
+	// consume "log"
+	p.advance()
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+
+			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+				key := p.advance().Value
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+
+				// Read the raw value from source line
+				lineNum := p.current().Line
+				rawVal := ""
+				if lineNum >= 1 && lineNum <= len(p.lines) {
+					line := p.lines[lineNum-1]
+					idx := strings.Index(line, ":")
+					if idx >= 0 {
+						rawVal = strings.TrimSpace(line[idx+1:])
+					}
+				}
+
+				switch key {
+				case "level":
+					cfg.Level = rawVal
+				case "queries":
+					// "slow > 100ms"
+					if strings.Contains(rawVal, ">") {
+						ms := 0
+						fmt.Sscanf(rawVal, "slow > %dms", &ms)
+						if ms > 0 {
+							cfg.SlowQueryMs = ms
+						}
+					}
+				case "requests":
+					cfg.LogRequests = rawVal == "all"
+				case "errors":
+					cfg.LogErrors = rawVal == "all" || rawVal == "all with stacktrace"
+				}
+
+				p.skipToEndOfLine()
+			} else {
+				p.advance()
+			}
+		}
+	}
+
+	return cfg
+}
+
+// parseTranslations parses:
+//
+//	translations
+//	  en
+//	    welcome: "Welcome back"
+//	    users: "Users"
+//	  pt
+//	    welcome: "Bem vindo de volta"
+//	    users: "Usuários"
+func (p *parserState) parseTranslations() map[string]map[string]string {
+	result := make(map[string]map[string]string)
+
+	// consume "translations"
+	p.advance()
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type != lexer.TokenIndent {
+		return result
+	}
+	p.advance()
+
+	for !p.isEOF() {
+		if p.current().Type == lexer.TokenDedent {
+			p.advance()
+			break
+		}
+		if p.current().Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		// Language code: en, pt, es, etc.
+		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			lang := p.advance().Value
+			result[lang] = make(map[string]string)
+
+			p.skipToEndOfLine()
+			p.skipNewlines()
+
+			// Parse key-value pairs
+			if p.current().Type == lexer.TokenIndent {
+				p.advance()
+				for !p.isEOF() {
+					if p.current().Type == lexer.TokenDedent {
+						p.advance()
+						break
+					}
+					if p.current().Type == lexer.TokenNewline {
+						p.advance()
+						continue
+					}
+
+					if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+						key := p.advance().Value
+						if p.current().Type == lexer.TokenColon {
+							p.advance()
+						}
+						if p.current().Type == lexer.TokenString {
+							result[lang][key] = p.advance().Value
+						}
+						p.skipToEndOfLine()
+					} else {
+						p.advance()
+					}
+				}
+			}
+		} else {
+			p.advance()
+		}
+	}
+
+	return result
 }

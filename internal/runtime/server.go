@@ -24,6 +24,8 @@ type Server struct {
 	sessions    *SessionStore
 	jobQueue    *JobQueue
 	rateLimiter *RateLimiter
+	logger      *Logger
+	i18n        *I18n
 	mu          sync.RWMutex
 	port        int
 }
@@ -32,6 +34,8 @@ func NewServer(app *parser.App, db *database.DB, port int) *Server {
 	s := &Server{app: app, db: db, sessions: NewSessionStore(), port: port}
 	s.jobQueue = NewJobQueue(s)
 	s.rateLimiter = NewRateLimiter(app.RateLimits)
+	s.logger = NewLogger(app.LogConfig)
+	s.i18n = NewI18n(app.Translations, "en")
 	return s
 }
 
@@ -286,7 +290,8 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 			}
 
 		case parser.NodeText:
-			text := interpolate(node.Value, ctx)
+			text := s.i18n.TranslateAll(node.Value, r)
+			text = interpolate(text, ctx)
 			body.WriteString(fmt.Sprintf("    <p>%s</p>\n", html.EscapeString(text)))
 
 		case parser.NodeList:

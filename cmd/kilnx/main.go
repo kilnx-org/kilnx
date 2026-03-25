@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/lexer"
@@ -37,8 +38,17 @@ func main() {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "test":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: kilnx test <file.kilnx>")
+			os.Exit(1)
+		}
+		if err := cmdTest(os.Args[2]); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "version":
-		fmt.Println("kilnx v0.2.0")
+		fmt.Println("kilnx v0.3.0")
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -121,6 +131,65 @@ func cmdMigrate(filename string) error {
 	return nil
 }
 
+func cmdTest(filename string) error {
+	app, err := loadApp(filename)
+	if err != nil {
+		return err
+	}
+
+	if len(app.Tests) == 0 {
+		fmt.Println("No tests found.")
+		return nil
+	}
+
+	// Setup: migrate DB, start server in background
+	dbPath := dbPathFor(filename) + ".test"
+	// Clean test DB
+	os.Remove(dbPath)
+
+	db, err := database.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		db.Close()
+		os.Remove(dbPath)
+	}()
+
+	if len(app.Models) > 0 {
+		stmts, err := db.Migrate(app.Models)
+		if err != nil {
+			return err
+		}
+		if len(stmts) > 0 {
+			fmt.Printf("Test DB: %d table(s) created\n", len(stmts))
+		}
+	}
+
+	// Start server on a test port
+	srv := runtime.NewServer(app, db, 9999)
+	go srv.Start()
+
+	// Give server time to start
+	fmt.Println()
+	fmt.Printf("Running %d test(s):\n", len(app.Tests))
+
+	// Small delay for server startup
+	time.Sleep(500 * time.Millisecond)
+
+	passed, failed := runtime.RunTests(app, db, "http://localhost:9999")
+
+	fmt.Println()
+	if failed == 0 {
+		fmt.Printf("All %d test(s) passed.\n", passed)
+	} else {
+		fmt.Printf("%d passed, %d failed.\n", passed, failed)
+		os.Exit(1)
+	}
+
+	return nil
+}
+
 func loadApp(filename string) (*parser.App, error) {
 	source, err := os.ReadFile(filename)
 	if err != nil {
@@ -144,5 +213,6 @@ func printUsage() {
 	fmt.Println("Commands:")
 	fmt.Println("  run <file.kilnx>      Start the server (auto-migrates)")
 	fmt.Println("  migrate <file.kilnx>  Apply database migrations")
+	fmt.Println("  test <file.kilnx>     Run declarative tests")
 	fmt.Println("  version               Print version")
 }
