@@ -333,7 +333,59 @@ func analyzeSQL(sql string, schema *Schema, context string) []Diagnostic {
 		diags = append(diags, checkUpdateSetTypes(tokens, tbl, schema, context)...)
 	}
 
+	// Subquery validation
+	for _, sub := range extractSubqueries(tokens) {
+		diags = append(diags, analyzeSQL(sub, schema, context)...)
+	}
+
 	return diags
+}
+
+// extractSubqueries finds inner SELECT statements inside WHERE ... IN (SELECT ...) clauses
+// and returns them as raw SQL strings for independent validation.
+func extractSubqueries(tokens []sqlToken) []string {
+	var subs []string
+	for i := 0; i < len(tokens); i++ {
+		// Look for IN ( SELECT pattern
+		if tokens[i].typ != stKeyword || tokens[i].lower != "in" {
+			continue
+		}
+		if i+2 >= len(tokens) {
+			continue
+		}
+		if tokens[i+1].typ != stPunct || tokens[i+1].value != "(" {
+			continue
+		}
+		if tokens[i+2].typ != stKeyword || tokens[i+2].lower != "select" {
+			continue
+		}
+		// Found a subquery. Extract tokens from SELECT until matching closing paren.
+		depth := 1
+		start := i + 2
+		j := start
+		for j < len(tokens) && depth > 0 {
+			j++
+			if j >= len(tokens) {
+				break
+			}
+			if tokens[j].typ == stPunct && tokens[j].value == "(" {
+				depth++
+			}
+			if tokens[j].typ == stPunct && tokens[j].value == ")" {
+				depth--
+			}
+		}
+		// Rebuild the subquery SQL from tokens
+		var parts []string
+		for k := start; k < j; k++ {
+			parts = append(parts, tokens[k].value)
+		}
+		if len(parts) > 0 {
+			subs = append(subs, strings.Join(parts, " "))
+		}
+		i = j
+	}
+	return subs
 }
 
 func checkSelectColumns(tokens []sqlToken, tableRefs []tableRef, aliasToTable map[string]string, schema *Schema, context string) []Diagnostic {
@@ -368,6 +420,27 @@ func checkSelectColumns(tokens []sqlToken, tableRefs []tableRef, aliasToTable ma
 						Context: context,
 					})
 				}
+			}
+		} else if len(tableRefs) > 1 {
+			found := false
+			for _, ref := range tableRefs {
+				if info, ok := schema.Tables[ref.name]; ok {
+					if _, colExists := info.Columns[col.column]; colExists {
+						found = true
+						break
+					}
+				}
+			}
+			if !found {
+				var tableNames []string
+				for _, ref := range tableRefs {
+					tableNames = append(tableNames, ref.name)
+				}
+				diags = append(diags, Diagnostic{
+					Level:   "error",
+					Message: fmt.Sprintf("column '%s' does not exist in any of the referenced models (%s)", col.column, strings.Join(tableNames, ", ")),
+					Context: context,
+				})
 			}
 		}
 	}
