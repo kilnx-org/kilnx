@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
@@ -21,23 +20,32 @@ var staticFS embed.FS
 var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}`)
 
 type Server struct {
-	app         *parser.App
-	db          *database.DB
-	sessions    *SessionStore
-	jobQueue    *JobQueue
-	rateLimiter *RateLimiter
-	logger      *Logger
-	i18n        *I18n
-	mu          sync.RWMutex
-	port        int
+	app          *parser.App
+	db           *database.DB
+	sessions     *SessionStore
+	jobQueue     *JobQueue
+	rateLimiter  *RateLimiter
+	logger       *Logger
+	i18n         *I18n
+	mu           sync.RWMutex
+	port         int
+	scheduleStop chan struct{}
 }
 
 func NewServer(app *parser.App, db *database.DB, port int) *Server {
 	s := &Server{app: app, db: db, sessions: NewSessionStore(), port: port}
+	// Attach DB to session store for persistence
+	if db != nil {
+		s.sessions.SetDB(db)
+	}
 	s.jobQueue = NewJobQueue(s)
 	s.rateLimiter = NewRateLimiter(app.RateLimits)
 	s.logger = NewLogger(app.LogConfig)
-	s.i18n = NewI18n(app.Translations, "en")
+	defaultLang := "en"
+	if app.Config != nil && app.Config.DefaultLanguage != "" {
+		defaultLang = app.Config.DefaultLanguage
+	}
+	s.i18n = NewI18n(app.Translations, defaultLang)
 	return s
 }
 
@@ -86,20 +94,18 @@ func (s *Server) Start() error {
 
 		// Rate limiting
 		if exceeded, rule := s.rateLimiter.CheckWithRule(r, s.getSession(r)); exceeded {
-			// Apply delay if configured
-			if rule != nil && rule.DelaySecs > 0 {
-				delay := time.Duration(rule.DelaySecs) * time.Second
-				if delay > 5*time.Second {
-					delay = 5 * time.Second
-				}
-				time.Sleep(delay)
-			}
 			msg := "Too many requests"
-			if rule != nil && rule.Message != "" {
-				msg = rule.Message
+			retryAfter := "60"
+			if rule != nil {
+				if rule.Message != "" {
+					msg = rule.Message
+				}
+				if rule.DelaySecs > 0 {
+					retryAfter = fmt.Sprintf("%d", rule.DelaySecs)
+				}
 			}
 			w.Header().Set("Content-Type", "text/plain")
-			w.Header().Set("Retry-After", "60")
+			w.Header().Set("Retry-After", retryAfter)
 			w.WriteHeader(http.StatusTooManyRequests)
 			w.Write([]byte(msg))
 			return
@@ -141,6 +147,10 @@ func (s *Server) Start() error {
 		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete {
 			for _, action := range app.Actions {
 				if matchPath(action.Path, r.URL.Path) {
+					// Enforce declared HTTP method
+					if action.Method != "" && !strings.EqualFold(action.Method, r.Method) {
+						continue
+					}
 					if !s.requireAuth(w, r, action) {
 						return
 					}
@@ -171,7 +181,11 @@ func (s *Server) Start() error {
 		// Match API endpoints (JSON)
 		for _, api := range app.APIs {
 			if matchPath(api.Path, r.URL.Path) {
-				if !s.requireAuth(w, r, api) {
+				// Enforce declared HTTP method
+				if api.Method != "" && !strings.EqualFold(api.Method, r.Method) {
+					continue
+				}
+				if !s.requireAPIAuth(w, r, api) {
 					return
 				}
 				s.handleAPI(w, r, api)
@@ -521,21 +535,49 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 
 	var body strings.Builder
 
+	// Get current page number for pagination
+	pageNum := 1
+	if pg := r.URL.Query().Get("page"); pg != "" {
+		fmt.Sscanf(pg, "%d", &pageNum)
+		if pageNum < 1 {
+			pageNum = 1
+		}
+	}
+
 	for _, node := range frag.Body {
 		switch node.Type {
 		case parser.NodeQuery:
 			if s.db != nil {
-				rows, err := s.db.QueryRowsWithParams(node.SQL, pathParams)
+				sql := node.SQL
+				queryName := node.Name
+				if queryName == "" {
+					queryName = "_last"
+				}
+				// Handle pagination in fragments
+				if node.Paginate > 0 {
+					countSQL := fmt.Sprintf("SELECT COUNT(*) as _count FROM (%s)", sql)
+					countRows, countErr := s.db.QueryRowsWithParams(countSQL, pathParams)
+					total := 0
+					if countErr == nil && len(countRows) > 0 {
+						fmt.Sscanf(countRows[0]["_count"], "%d", &total)
+					}
+					offset := (pageNum - 1) * node.Paginate
+					sql = fmt.Sprintf("%s LIMIT %d OFFSET %d", sql, node.Paginate, offset)
+					ctx.paginate[queryName] = PaginateInfo{
+						Page:    pageNum,
+						PerPage: node.Paginate,
+						Total:   total,
+						HasPrev: pageNum > 1,
+						HasNext: offset+node.Paginate < total,
+					}
+				}
+				rows, err := s.db.QueryRowsWithParams(sql, pathParams)
 				if err != nil {
 					body.WriteString(fmt.Sprintf("<p style=\"color:red\">Query error: %s</p>",
 						html.EscapeString(err.Error())))
 					continue
 				}
-				name := node.Name
-				if name == "" {
-					name = "_last"
-				}
-				ctx.queries[name] = rows
+				ctx.queries[queryName] = rows
 			}
 
 		case parser.NodeText:
@@ -592,7 +634,8 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 	return body.String()
 }
 
-// handleAction processes a POST/PUT/DELETE request
+// handleAction processes a POST/PUT/DELETE request.
+// All mutation queries within an action are wrapped in an implicit transaction.
 func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action parser.Page, app *parser.App) {
 	formData := extractFormData(r)
 
@@ -618,6 +661,18 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 		formData["current_user_role"] = session.Role
 	}
 
+	// Start implicit transaction for atomicity
+	var tx *database.TxHandle
+	if s.db != nil {
+		var err error
+		tx, err = s.db.BeginTxHandle()
+		if err != nil {
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
+		defer tx.Rollback() // no-op if already committed
+	}
+
 	// Track last query result for `on` branching
 	lastQueryOk := true
 	lastQueryNotFound := false
@@ -639,34 +694,32 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 							errorHTML.WriteString(fmt.Sprintf("<div class=\"kilnx-alert kilnx-alert-error\">%s</div>", html.EscapeString(e)))
 						}
 						w.Write([]byte(errorHTML.String()))
-						return
+						return // tx.Rollback via defer
 					}
 				}
 				continue
 			}
 			errors := validateFormData(modelName, app, formData)
 			if len(errors) > 0 {
-				// Re-render the referring page with errors
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.WriteHeader(http.StatusUnprocessableEntity)
 				referer := r.Header.Get("Referer")
 				if referer == "" {
 					referer = "/"
 				}
-				// Simple error response
 				var errorHTML strings.Builder
 				for _, e := range errors {
 					errorHTML.WriteString(fmt.Sprintf("<div class=\"kilnx-alert kilnx-alert-error\">%s</div>", html.EscapeString(e)))
 				}
 				w.Write([]byte(errorHTML.String()))
-				return
+				return // tx.Rollback via defer
 			}
 
 		case parser.NodeQuery:
-			if s.db != nil {
+			if tx != nil {
 				trimmed := strings.TrimSpace(strings.ToUpper(node.SQL))
 				if strings.HasPrefix(trimmed, "SELECT") {
-					rows, err := s.db.QueryRowsWithParams(node.SQL, formData)
+					rows, err := tx.QueryRowsWithParams(node.SQL, formData)
 					if err != nil {
 						lastQueryOk = false
 						lastQueryNotFound = false
@@ -674,7 +727,6 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 					}
 					lastQueryOk = true
 					lastQueryNotFound = len(rows) == 0
-					// Store results for interpolation
 					name := node.Name
 					if name == "" {
 						name = "_last"
@@ -685,12 +737,12 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 						}
 					}
 				} else {
-					err := s.db.ExecWithParams(node.SQL, formData)
+					err := tx.ExecWithParams(node.SQL, formData)
 					if err != nil {
 						lastQueryOk = false
 						lastQueryNotFound = false
 						http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
-						return
+						return // tx.Rollback via defer
 					}
 					lastQueryOk = true
 					lastQueryNotFound = false
@@ -708,29 +760,40 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			case "not found":
 				shouldExecute = lastQueryNotFound
 			case "forbidden":
-				// Check if the current user's role doesn't match the action's RequiresRole
 				sess := s.getSession(r)
 				if sess == nil {
-					shouldExecute = true // no session means forbidden
+					shouldExecute = true
 				} else if action.RequiresRole != "" && action.RequiresRole != "auth" {
 					shouldExecute = sess.Role != action.RequiresRole &&
 						!s.hasPermission(sess.Role, action.RequiresRole, app.Permissions)
 				}
 			}
 			if shouldExecute {
+				if tx != nil {
+					tx.Commit()
+				}
 				s.handleActionNodes(w, r, node.Children, formData, app)
 				return
 			}
 
 		case parser.NodeSendEmail:
 			recipient := resolveEmailRecipient(node.EmailTo, formData)
+			// Resolve recipient from SQL query if specified
+			if toQuery, ok := node.Props["to_query"]; ok && toQuery != "" && s.db != nil {
+				rows, err := s.db.QueryRowsWithParams(toQuery, formData)
+				if err == nil && len(rows) > 0 {
+					for _, v := range rows[0] {
+						recipient = v
+						break
+					}
+				}
+			}
 			subject := node.EmailSubject
 			emailBody := node.Props["body"]
 			if emailBody == "" {
 				emailBody = subject
 			}
 			templateName := node.EmailTemplate
-			// Fire and forget (don't block the request)
 			go func(to, subj, body, tmpl string, params map[string]string) {
 				if err := SendEmailWithTemplate(to, subj, body, tmpl, params); err != nil {
 					fmt.Printf("  email error: %v\n", err)
@@ -739,7 +802,6 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 
 		case parser.NodeEnqueue:
 			if s.jobQueue != nil {
-				// Resolve param values from formData
 				resolvedParams := make(map[string]string)
 				for k, v := range node.JobParams {
 					if strings.HasPrefix(v, ":") {
@@ -761,7 +823,9 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			for k, v := range formData {
 				path = strings.ReplaceAll(path, ":"+k, url.PathEscape(v))
 			}
-			// If htmx request, use HX-Redirect header
+			if tx != nil {
+				tx.Commit()
+			}
 			if r.Header.Get("HX-Request") == "true" {
 				w.Header().Set("HX-Redirect", path)
 				w.WriteHeader(http.StatusOK)
@@ -771,15 +835,19 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			return
 
 		case parser.NodeRespond:
-			// respond status N
 			if node.StatusCode > 0 {
+				if tx != nil {
+					tx.Commit()
+				}
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.WriteHeader(node.StatusCode)
 				return
 			}
 
-			// respond fragment delete -> empty body, htmx removes element
 			if node.RespondSwap == "delete" {
+				if tx != nil {
+					tx.Commit()
+				}
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.Header().Set("HX-Reswap", "delete")
 				w.WriteHeader(http.StatusOK)
@@ -787,37 +855,68 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				return
 			}
 
-			// respond fragment with query: SQL
-			if node.QuerySQL != "" && s.db != nil {
-				rows, err := s.db.QueryRowsWithParams(node.QuerySQL, formData)
+			if node.QuerySQL != "" && tx != nil {
+				rows, err := tx.QueryRowsWithParams(node.QuerySQL, formData)
 				if err != nil {
 					http.Error(w, "Query error: "+err.Error(), http.StatusInternalServerError)
 					return
 				}
+				tx.Commit()
 				ctx := &renderContext{
 					queries: map[string][]database.Row{"_result": rows},
 				}
-				// If there's a target, set HX-Retarget
 				if node.RespondTarget != "" {
 					w.Header().Set("HX-Retarget", node.RespondTarget)
 				}
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				// Render as simple list of values
-				var result strings.Builder
-				for _, row := range rows {
-					for _, val := range row {
-						result.WriteString(html.EscapeString(val))
+				// Try to find and render the matching fragment
+				if node.RespondTarget != "" {
+					for _, frag := range app.Fragments {
+						fragName := strings.TrimPrefix(frag.Path, "/")
+						if fragName == node.RespondTarget {
+							fragParams := make(map[string]string)
+							for k, v := range formData {
+								fragParams[k] = v
+							}
+							// Add query result fields to params
+							if len(rows) > 0 {
+								for k, v := range rows[0] {
+									fragParams[k] = v
+								}
+							}
+							rendered := s.renderFragmentWithParams(frag, fragParams)
+							w.Write([]byte(rendered))
+							return
+						}
 					}
 				}
-				_ = ctx
-				w.Write([]byte(result.String()))
+				// Fallback: render rows as structured HTML using the template engine
+				var result strings.Builder
+				result.WriteString("{{each _result}}")
+				for _, row := range rows {
+					for key := range row {
+						result.WriteString(fmt.Sprintf("<span class=\"%s\">{%s}</span> ", key, key))
+					}
+					break // only need first row for template structure
+				}
+				result.WriteString("{{end}}")
+				rendered := renderHTML(result.String(), ctx)
+				w.Write([]byte(rendered))
 				return
 			}
 
+			if tx != nil {
+				tx.Commit()
+			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+	}
+
+	// Commit transaction before default redirect
+	if tx != nil {
+		tx.Commit()
 	}
 
 	// Default: redirect back to referer or /
@@ -828,7 +927,8 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 	http.Redirect(w, r, referer, http.StatusSeeOther)
 }
 
-// handleActionNodes processes a subset of action nodes (used by `on` branching)
+// handleActionNodes processes action nodes inside `on` branches.
+// Supports redirect, respond, send email, query execution, and job enqueue.
 func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes []parser.Node, formData map[string]string, app *parser.App) {
 	for _, node := range nodes {
 		switch node.Type {
@@ -852,6 +952,68 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
 			return
+		case parser.NodeSendEmail:
+			recipient := resolveEmailRecipient(node.EmailTo, formData)
+			if toQuery, ok := node.Props["to_query"]; ok && toQuery != "" && s.db != nil {
+				rows, err := s.db.QueryRowsWithParams(toQuery, formData)
+				if err == nil && len(rows) > 0 {
+					for _, v := range rows[0] {
+						recipient = v
+						break
+					}
+				}
+			}
+			subject := node.EmailSubject
+			emailBody := node.Props["body"]
+			if emailBody == "" {
+				emailBody = subject
+			}
+			templateName := node.EmailTemplate
+			go func(to, subj, body, tmpl string, params map[string]string) {
+				if err := SendEmailWithTemplate(to, subj, body, tmpl, params); err != nil {
+					fmt.Printf("  email error: %v\n", err)
+				}
+			}(recipient, subject, emailBody, templateName, formData)
+		case parser.NodeQuery:
+			if s.db != nil {
+				trimmed := strings.TrimSpace(strings.ToUpper(node.SQL))
+				if strings.HasPrefix(trimmed, "SELECT") {
+					rows, err := s.db.QueryRowsWithParams(node.SQL, formData)
+					if err != nil {
+						continue
+					}
+					name := node.Name
+					if name == "" {
+						name = "_last"
+					}
+					for _, row := range rows {
+						for k, v := range row {
+							formData[name+"."+k] = v
+						}
+					}
+				} else {
+					if err := s.db.ExecWithParams(node.SQL, formData); err != nil {
+						fmt.Printf("  on-branch query error: %v\n", err)
+					}
+				}
+			}
+		case parser.NodeEnqueue:
+			if s.jobQueue != nil {
+				resolvedParams := make(map[string]string)
+				for k, v := range node.JobParams {
+					if strings.HasPrefix(v, ":") {
+						paramName := strings.TrimPrefix(v, ":")
+						if val, ok := formData[paramName]; ok {
+							resolvedParams[k] = val
+							continue
+						}
+					}
+					resolvedParams[k] = v
+				}
+				if err := s.jobQueue.Enqueue(node.JobName, resolvedParams); err != nil {
+					fmt.Printf("  enqueue error: %v\n", err)
+				}
+			}
 		}
 	}
 }

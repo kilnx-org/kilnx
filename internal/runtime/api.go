@@ -4,19 +4,46 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
-// handleAPI processes an API endpoint and returns JSON
+// handleAPI processes an API endpoint and returns JSON.
+// For mutation methods (POST/PUT/DELETE), supports validate, transactions, and redirect.
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint parser.Page) {
+	// CORS headers for cross-origin API access
+	w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	pathParams := matchPathParams(endpoint.Path, r.URL.Path)
 
 	// Merge query string params
 	for key, vals := range r.URL.Query() {
 		if len(vals) > 0 {
 			pathParams[key] = vals[0]
+		}
+	}
+
+	// For mutation methods, extract form/JSON body data
+	isMutation := r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete
+	if isMutation {
+		formData := extractFormData(r)
+		for k, v := range formData {
+			pathParams[k] = v
+		}
+		// Add current_user fields
+		session := s.getSession(r)
+		if session != nil {
+			pathParams["current_user_id"] = session.UserID
+			pathParams["current_user_identity"] = session.Identity
+			pathParams["current_user_role"] = session.Role
 		}
 	}
 
@@ -33,13 +60,52 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 
 	statusCode := http.StatusOK
 
+	// Use a transaction for mutations
+	var tx *database.TxHandle
+	if isMutation && s.db != nil {
+		var err error
+		tx, err = s.db.BeginTxHandle()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "Internal error",
+			})
+			return
+		}
+		defer tx.Rollback()
+	}
+
+	app := s.getApp()
+
 	for _, node := range endpoint.Body {
 		switch node.Type {
+		case parser.NodeValidate:
+			modelName := node.ModelName
+			if modelName == "" {
+				if len(node.Validations) > 0 {
+					errors := validateInlineRules(node.Validations, pathParams)
+					if len(errors) > 0 {
+						writeJSON(w, http.StatusUnprocessableEntity, map[string]interface{}{
+							"errors": errors,
+						})
+						return
+					}
+				}
+				continue
+			}
+			errors := validateFormData(modelName, app, pathParams)
+			if len(errors) > 0 {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]interface{}{
+					"errors": errors,
+				})
+				return
+			}
+
 		case parser.NodeRespond:
 			if node.StatusCode > 0 {
 				statusCode = node.StatusCode
 			}
 			continue
+
 		case parser.NodeQuery:
 			if s.db == nil {
 				continue
@@ -59,7 +125,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 				offset := (pageNum - 1) * node.Paginate
 				sql = fmt.Sprintf("%s LIMIT %d OFFSET %d", sql, node.Paginate, offset)
 
-				totalPages := (total + node.Paginate - 1) / node.Paginate
 				paginateInfo = &PaginateInfo{
 					Page:    pageNum,
 					PerPage: node.Paginate,
@@ -67,18 +132,66 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 					HasPrev: pageNum > 1,
 					HasNext: offset+node.Paginate < total,
 				}
-				_ = totalPages
 			}
 
-			rows, err := s.db.QueryRowsWithParams(sql, pathParams)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{
-					"error": err.Error(),
-				})
-				return
+			trimmed := strings.TrimSpace(strings.ToUpper(sql))
+			if tx != nil && !strings.HasPrefix(trimmed, "SELECT") {
+				// Mutation query within transaction
+				err := tx.ExecWithParams(sql, pathParams)
+				if err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{
+						"error": err.Error(),
+					})
+					return
+				}
+			} else if tx != nil {
+				rows, err := tx.QueryRowsWithParams(sql, pathParams)
+				if err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{
+						"error": err.Error(),
+					})
+					return
+				}
+				allRows = rows
+				// Merge SELECT results into params for subsequent queries
+				name := node.Name
+				if name == "" {
+					name = "_last"
+				}
+				for _, row := range rows {
+					for k, v := range row {
+						pathParams[name+"."+k] = v
+					}
+				}
+			} else {
+				rows, err := s.db.QueryRowsWithParams(sql, pathParams)
+				if err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{
+						"error": err.Error(),
+					})
+					return
+				}
+				allRows = rows
 			}
-			allRows = rows
+
+		case parser.NodeRedirect:
+			if tx != nil {
+				tx.Commit()
+			}
+			path := node.Value
+			for k, v := range pathParams {
+				path = strings.ReplaceAll(path, ":"+k, v)
+			}
+			writeJSON(w, statusCode, map[string]string{
+				"redirect": path,
+			})
+			return
 		}
+	}
+
+	// Commit transaction
+	if tx != nil {
+		tx.Commit()
 	}
 
 	// Build response

@@ -247,9 +247,19 @@ func collectNamedQueries(nodes []parser.Node, entries *[]queryEntry, baseIndex i
 }
 
 func renameConsumerRefs(nodes []parser.Node, oldName, newName string) {
+	oldPattern := "{" + oldName + "."
+	newPattern := "{" + newName + "."
+	oldEach := "{{each " + oldName + "}}"
+	newEach := "{{each " + newName + "}}"
 	for i := range nodes {
 		node := &nodes[i]
-		if node.Type == parser.NodeOn {
+		switch node.Type {
+		case parser.NodeText:
+			node.Value = strings.ReplaceAll(node.Value, oldPattern, newPattern)
+		case parser.NodeHTML:
+			node.HTMLContent = strings.ReplaceAll(node.HTMLContent, oldPattern, newPattern)
+			node.HTMLContent = strings.ReplaceAll(node.HTMLContent, oldEach, newEach)
+		case parser.NodeOn:
 			renameConsumerRefs(node.Children, oldName, newName)
 		}
 	}

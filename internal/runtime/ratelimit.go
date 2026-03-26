@@ -20,19 +20,40 @@ type RateLimiter struct {
 	rules   []parser.RateLimit
 }
 
+const maxRateLimitEntries = 100_000
+
 func NewRateLimiter(rules []parser.RateLimit) *RateLimiter {
 	rl := &RateLimiter{
 		entries: make(map[string]*rateLimitEntry),
 		rules:   rules,
 	}
-	// Cleanup expired entries periodically
+	// Adaptive cleanup: interval based on shortest configured window
+	interval := rl.minWindow() / 2
+	if interval < time.Second {
+		interval = time.Second
+	}
+	if interval > 60*time.Second {
+		interval = 60 * time.Second
+	}
 	go func() {
 		for {
-			time.Sleep(60 * time.Second)
+			time.Sleep(interval)
 			rl.cleanup()
 		}
 	}()
 	return rl
+}
+
+// minWindow returns the shortest window duration across all rules
+func (rl *RateLimiter) minWindow() time.Duration {
+	min := time.Hour
+	for _, rule := range rl.rules {
+		w := windowDuration(rule.Window)
+		if w < min {
+			min = w
+		}
+	}
+	return min
 }
 
 // CheckWithRule returns (exceeded bool, matched rule) for the request.
@@ -143,6 +164,18 @@ func (rl *RateLimiter) cleanup() {
 	for key, entry := range rl.entries {
 		if now.After(entry.expiresAt) {
 			delete(rl.entries, key)
+		}
+	}
+	// Safety valve: prevent unbounded memory growth under DDoS
+	if len(rl.entries) > maxRateLimitEntries {
+		count := 0
+		evictTarget := len(rl.entries) / 10
+		for key := range rl.entries {
+			if count >= evictTarget {
+				break
+			}
+			delete(rl.entries, key)
+			count++
 		}
 	}
 }

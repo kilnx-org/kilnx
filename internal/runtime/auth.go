@@ -3,6 +3,7 @@ package runtime
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -44,10 +45,11 @@ type Session struct {
 	Data      database.Row // full user row
 }
 
-// SessionStore manages sessions in memory
+// SessionStore manages sessions with in-memory fast path and SQLite persistence
 type SessionStore struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
+	db       *database.DB
 }
 
 func NewSessionStore() *SessionStore {
@@ -56,17 +58,43 @@ func NewSessionStore() *SessionStore {
 	return ss
 }
 
+// SetDB attaches a database for session persistence and loads existing sessions
+func (ss *SessionStore) SetDB(db *database.DB) {
+	ss.db = db
+	ss.loadFromDB()
+}
+
 func (ss *SessionStore) Create(user database.Row, identityField string) string {
 	id := generateSessionID()
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	ss.sessions[id] = &Session{
+	expiresAt := time.Now().Add(24 * time.Hour)
+	sess := &Session{
 		UserID:    user["id"],
 		Identity:  user[identityField],
 		Role:      user["role"],
-		ExpiresAt: time.Now().Add(24 * time.Hour),
+		ExpiresAt: expiresAt,
 		Data:      user,
 	}
+
+	ss.mu.Lock()
+	ss.sessions[id] = sess
+	ss.mu.Unlock()
+
+	// Persist to SQLite
+	if ss.db != nil {
+		dataJSON, _ := json.Marshal(user)
+		ss.db.ExecWithParams(
+			`INSERT OR REPLACE INTO _kilnx_sessions (token, user_id, identity, role, data, expires_at)
+			 VALUES (:token, :user_id, :identity, :role, :data, :expires_at)`,
+			map[string]string{
+				"token":      id,
+				"user_id":    sess.UserID,
+				"identity":   sess.Identity,
+				"role":       sess.Role,
+				"data":       string(dataJSON),
+				"expires_at": expiresAt.Format(time.RFC3339),
+			})
+	}
+
 	return id
 }
 
@@ -82,11 +110,64 @@ func (ss *SessionStore) Get(id string) *Session {
 
 func (ss *SessionStore) Delete(id string) {
 	ss.mu.Lock()
-	defer ss.mu.Unlock()
 	delete(ss.sessions, id)
+	ss.mu.Unlock()
+
+	// Remove from SQLite
+	if ss.db != nil {
+		ss.db.ExecWithParams(
+			`DELETE FROM _kilnx_sessions WHERE token = :token`,
+			map[string]string{"token": id})
+	}
 }
 
-// cleanupLoop periodically removes expired sessions (#3 fix)
+// loadFromDB restores non-expired sessions from SQLite on startup
+func (ss *SessionStore) loadFromDB() {
+	if ss.db == nil {
+		return
+	}
+	rows, err := ss.db.QueryRows(
+		`SELECT token, user_id, identity, role, data, expires_at FROM _kilnx_sessions WHERE expires_at > datetime('now')`)
+	if err != nil {
+		return
+	}
+
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	loaded := 0
+	for _, row := range rows {
+		expiresAt, err := time.Parse(time.RFC3339, row["expires_at"])
+		if err != nil {
+			expiresAt, err = time.Parse("2006-01-02 15:04:05", row["expires_at"])
+			if err != nil {
+				continue
+			}
+		}
+
+		var data database.Row
+		if err := json.Unmarshal([]byte(row["data"]), &data); err != nil {
+			data = database.Row{
+				"id":   row["user_id"],
+				"role": row["role"],
+			}
+		}
+
+		ss.sessions[row["token"]] = &Session{
+			UserID:    row["user_id"],
+			Identity:  row["identity"],
+			Role:      row["role"],
+			ExpiresAt: expiresAt,
+			Data:      data,
+		}
+		loaded++
+	}
+	if loaded > 0 {
+		fmt.Printf("Restored %d session(s) from database\n", loaded)
+	}
+}
+
+// cleanupLoop periodically removes expired sessions
 func (ss *SessionStore) cleanupLoop() {
 	for {
 		time.Sleep(5 * time.Minute)
@@ -98,6 +179,13 @@ func (ss *SessionStore) cleanupLoop() {
 			}
 		}
 		ss.mu.Unlock()
+
+		// Cleanup SQLite too
+		if ss.db != nil {
+			ss.db.ExecWithParams(
+				`DELETE FROM _kilnx_sessions WHERE expires_at < :now`,
+				map[string]string{"now": time.Now().Format(time.RFC3339)})
+		}
 	}
 }
 
@@ -171,6 +259,39 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request, page parser
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
 	w.Write([]byte(renderForbidden(app.Pages, session)))
+	return false
+}
+
+// requireAPIAuth checks auth for API endpoints, returning JSON 401 instead of HTML redirect.
+func (s *Server) requireAPIAuth(w http.ResponseWriter, r *http.Request, page parser.Page) bool {
+	if !page.Auth {
+		return true
+	}
+	app := s.getApp()
+	if app.Auth == nil {
+		return true
+	}
+
+	session := s.getSession(r)
+	if session == nil {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"unauthorized"}`))
+		return false
+	}
+
+	role := page.RequiresRole
+	if role == "" || role == "auth" {
+		return true
+	}
+
+	if session.Role == role || s.hasPermission(session.Role, role, app.Permissions) {
+		return true
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	w.Write([]byte(`{"error":"forbidden"}`))
 	return false
 }
 
@@ -363,12 +484,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := s.sessions.Create(user, app.Auth.Identity)
+	isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{
 		Name:     "_kilnx_session",
 		Value:    sessionID,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   isSecure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   86400,
 	})

@@ -86,8 +86,9 @@ import (
 const embeddedSource = ` + "`" + escaped + "`" + `
 
 func main() {
-	tokens := lexer.Tokenize(embeddedSource)
-	app, err := parser.Parse(tokens, embeddedSource)
+	source := lexer.StripComments(embeddedSource)
+	tokens := lexer.Tokenize(source)
+	app, err := parser.Parse(tokens, source)
 	if err != nil {
 		fmt.Printf("Parse error: %v\n", err)
 		os.Exit(1)
@@ -147,6 +148,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+
+	// Create internal tables for sessions and jobs
+	if err := db.MigrateInternal(); err != nil {
+		fmt.Printf("Internal migration error: %v\n", err)
+		os.Exit(1)
+	}
 
 	if len(app.Models) > 0 {
 		stmts, _ := db.Migrate(app.Models)

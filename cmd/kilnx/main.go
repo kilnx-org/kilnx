@@ -11,6 +11,7 @@ import (
 	"github.com/kilnx-org/kilnx/internal/build"
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/lexer"
+	"github.com/kilnx-org/kilnx/internal/lsp"
 	"github.com/kilnx-org/kilnx/internal/optimizer"
 	"github.com/kilnx-org/kilnx/internal/parser"
 	"github.com/kilnx-org/kilnx/internal/runtime"
@@ -72,6 +73,8 @@ func main() {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "lsp":
+		lsp.Serve()
 	case "version":
 		fmt.Println("kilnx v1.0.0")
 	default:
@@ -143,6 +146,11 @@ func cmdRun(filename string) error {
 		return err
 	}
 	defer db.Close()
+
+	// Create internal tables (sessions, jobs)
+	if err := db.MigrateInternal(); err != nil {
+		return err
+	}
 
 	// Auto-migrate if models exist
 	if len(app.Models) > 0 {
@@ -278,13 +286,14 @@ func cmdTest(filename string) error {
 }
 
 func loadApp(filename string) (*parser.App, error) {
-	source, err := os.ReadFile(filename)
+	raw, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", filename, err)
 	}
 
-	tokens := lexer.Tokenize(string(source))
-	return parser.Parse(tokens, string(source))
+	source := lexer.StripComments(string(raw))
+	tokens := lexer.Tokenize(source)
+	return parser.Parse(tokens, source)
 }
 
 func dbPathFor(kilnxFile string) string {
@@ -320,5 +329,6 @@ func printUsage() {
 	fmt.Println("  build <file.kilnx> [-o] Compile to standalone binary")
 	fmt.Println("  migrate <file.kilnx>    Apply database migrations")
 	fmt.Println("  test <file.kilnx>       Run declarative tests")
+	fmt.Println("  lsp                     Start Language Server Protocol server")
 	fmt.Println("  version                 Print version")
 }

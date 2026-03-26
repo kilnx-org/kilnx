@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
@@ -32,19 +35,22 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request, wh parser
 	// Verify signature if secret is configured
 	if wh.SecretEnv != "" {
 		secret := os.Getenv(wh.SecretEnv)
-		if secret != "" {
-			sig := r.Header.Get("X-Signature-256")
-			if sig == "" {
-				sig = r.Header.Get("X-Hub-Signature-256")
-			}
-			if sig == "" {
-				sig = r.Header.Get("Stripe-Signature")
-			}
-			if !verifySignature(body, sig, secret) {
-				fmt.Printf("  webhook %s: invalid signature\n", wh.Path)
-				http.Error(w, "Invalid signature", http.StatusUnauthorized)
-				return
-			}
+		if secret == "" {
+			fmt.Printf("  webhook %s: secret env %s is empty, rejecting request\n", wh.Path, wh.SecretEnv)
+			http.Error(w, "Webhook misconfigured", http.StatusInternalServerError)
+			return
+		}
+		sig := r.Header.Get("X-Signature-256")
+		if sig == "" {
+			sig = r.Header.Get("X-Hub-Signature-256")
+		}
+		if sig == "" {
+			sig = r.Header.Get("Stripe-Signature")
+		}
+		if !verifySignature(body, sig, secret) {
+			fmt.Printf("  webhook %s: invalid signature\n", wh.Path)
+			http.Error(w, "Invalid signature", http.StatusUnauthorized)
+			return
 		}
 	}
 
@@ -66,7 +72,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request, wh parser
 	// Find matching event handler
 	for _, event := range wh.Events {
 		if event.Name == eventType || event.Name == "*" {
-			s.executeNodes(event.Body, params)
+			_ = s.executeNodes(event.Body, params)
 			break
 		}
 	}
@@ -110,6 +116,16 @@ func verifyStripeSignature(payload []byte, header, secret string) bool {
 		}
 	}
 	if timestamp == "" || sig == "" {
+		return false
+	}
+
+	// Reject events older than 5 minutes to prevent replay attacks
+	ts, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return false
+	}
+	age := math.Abs(float64(time.Now().Unix() - ts))
+	if age > 300 {
 		return false
 	}
 

@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -103,8 +105,12 @@ func validateFormData(modelName string, app *parser.App, formData map[string]str
 		if field.Min != "" && val != "" {
 			var min int
 			fmt.Sscanf(field.Min, "%d", &min)
-			if len(val) < min {
-				label := strings.ToUpper(field.Name[:1]) + field.Name[1:]
+			label := strings.ToUpper(field.Name[:1]) + field.Name[1:]
+			if field.Type == parser.FieldInt || field.Type == parser.FieldFloat {
+				if n, err := strconv.ParseFloat(val, 64); err == nil && n < float64(min) {
+					errors = append(errors, fmt.Sprintf("%s must be at least %d", label, min))
+				}
+			} else if len(val) < min {
 				errors = append(errors, fmt.Sprintf("%s must be at least %d characters", label, min))
 			}
 		}
@@ -112,8 +118,12 @@ func validateFormData(modelName string, app *parser.App, formData map[string]str
 		if field.Max != "" && val != "" {
 			var max int
 			fmt.Sscanf(field.Max, "%d", &max)
-			if max > 0 && len(val) > max {
-				label := strings.ToUpper(field.Name[:1]) + field.Name[1:]
+			label := strings.ToUpper(field.Name[:1]) + field.Name[1:]
+			if field.Type == parser.FieldInt || field.Type == parser.FieldFloat {
+				if n, err := strconv.ParseFloat(val, 64); err == nil && max > 0 && n > float64(max) {
+					errors = append(errors, fmt.Sprintf("%s must be at most %d", label, max))
+				}
+			} else if max > 0 && len(val) > max {
 				errors = append(errors, fmt.Sprintf("%s must be at most %d characters", label, max))
 			}
 		}
@@ -231,8 +241,10 @@ func extractFormData(r *http.Request) map[string]string {
 
 					// Determine uploads directory
 					uploadsDir := "uploads"
-					fileName := fmt.Sprintf("%d_%s", time.Now().UnixNano(), fileHeaders[0].Filename)
-					filePath := uploadsDir + "/" + fileName
+					// Sanitize filename to prevent path traversal
+					safeName := filepath.Base(fileHeaders[0].Filename)
+					fileName := fmt.Sprintf("%d_%s", time.Now().UnixNano(), safeName)
+					filePath := filepath.Join(uploadsDir, fileName)
 
 					// Create uploads directory if needed
 					os.MkdirAll(uploadsDir, 0755)

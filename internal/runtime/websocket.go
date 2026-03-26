@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -91,11 +93,11 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 		return
 	}
 
-	// Origin validation (#11 fix)
+	// Origin validation: parse URL and compare host component
 	origin := r.Header.Get("Origin")
 	if origin != "" {
-		host := r.Host
-		if !strings.Contains(origin, host) {
+		originURL, err := url.Parse(origin)
+		if err != nil || originURL.Host != r.Host {
 			http.Error(w, "Forbidden: origin mismatch", http.StatusForbidden)
 			return
 		}
@@ -143,6 +145,29 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 
 	fmt.Printf("  ws connected: %s (%s)\n", roomName, conn.RemoteAddr())
 
+	// Start ping/pong heartbeat to detect dead connections.
+	// Sends a ping every 30s. The read loop resets the read deadline on every
+	// received frame (data or pong). If no frame arrives within 60s the
+	// read will timeout and the connection is cleaned up.
+	connDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+				if err := writeWSPing(conn); err != nil {
+					return
+				}
+				conn.SetWriteDeadline(time.Time{})
+			case <-connDone:
+				return
+			}
+		}
+	}()
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+
 	// Execute on connect and send history
 	if len(sock.OnConnect) > 0 {
 		// Execute on connect nodes and check for query results to send as history
@@ -165,15 +190,23 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 				}
 			}
 		}
-		s.executeNodes(sock.OnConnect, pathParams)
+		_ = s.executeNodes(sock.OnConnect, pathParams)
 	}
 
 	// Read loop
 	reader := bufio.NewReader(conn)
 	for {
-		msg, err := readWSFrame(reader)
+		msg, opcode, err := readWSFrame(reader)
 		if err != nil {
 			break
+		}
+
+		// Reset read deadline on any received frame
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+
+		// Pong frame (0xA): heartbeat response, no further processing needed
+		if opcode == 0xA {
+			continue
 		}
 
 		if len(sock.OnMessage) > 0 {
@@ -184,7 +217,7 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 			params["body"] = string(msg)
 			params["message"] = string(msg)
 
-			s.executeNodes(sock.OnMessage, params)
+			_ = s.executeNodes(sock.OnMessage, params)
 
 			// Check for broadcast nodes
 			hasBroadcast := false
@@ -231,10 +264,11 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 		}
 	}
 
+	close(connDone)
 	fmt.Printf("  ws disconnected: %s (%s)\n", roomName, conn.RemoteAddr())
 
 	if len(sock.OnDisconnect) > 0 {
-		s.executeNodes(sock.OnDisconnect, pathParams)
+		_ = s.executeNodes(sock.OnDisconnect, pathParams)
 	}
 }
 
@@ -246,44 +280,46 @@ func computeAcceptKey(key string) string {
 
 const maxWSFrameSize = 1 << 20 // 1 MB max frame size (#4 fix)
 
-func readWSFrame(reader *bufio.Reader) ([]byte, error) {
+// readWSFrame reads a WebSocket frame and returns the payload, opcode, and any error.
+func readWSFrame(reader *bufio.Reader) ([]byte, byte, error) {
 	header := make([]byte, 2)
-	if _, err := reader.Read(header); err != nil {
-		return nil, err
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return nil, 0, err
 	}
 
+	opcode := header[0] & 0x0F
 	masked := (header[1] & 0x80) != 0
 	length := int(header[1] & 0x7F)
 
 	if length == 126 {
 		ext := make([]byte, 2)
-		if _, err := reader.Read(ext); err != nil {
-			return nil, err
+		if _, err := io.ReadFull(reader, ext); err != nil {
+			return nil, 0, err
 		}
 		length = int(binary.BigEndian.Uint16(ext))
 	} else if length == 127 {
 		ext := make([]byte, 8)
-		if _, err := reader.Read(ext); err != nil {
-			return nil, err
+		if _, err := io.ReadFull(reader, ext); err != nil {
+			return nil, 0, err
 		}
 		length = int(binary.BigEndian.Uint64(ext))
 	}
 
 	if length > maxWSFrameSize {
-		return nil, fmt.Errorf("frame too large: %d bytes", length)
+		return nil, 0, fmt.Errorf("frame too large: %d bytes", length)
 	}
 
 	var maskKey []byte
 	if masked {
 		maskKey = make([]byte, 4)
-		if _, err := reader.Read(maskKey); err != nil {
-			return nil, err
+		if _, err := io.ReadFull(reader, maskKey); err != nil {
+			return nil, 0, err
 		}
 	}
 
 	payload := make([]byte, length)
-	if _, err := reader.Read(payload); err != nil {
-		return nil, err
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		return nil, 0, err
 	}
 
 	if masked {
@@ -292,13 +328,18 @@ func readWSFrame(reader *bufio.Reader) ([]byte, error) {
 		}
 	}
 
-	// Check opcode: 0x8 = close
-	opcode := header[0] & 0x0F
+	// Close frame
 	if opcode == 0x8 {
-		return nil, fmt.Errorf("close frame")
+		return nil, opcode, fmt.Errorf("close frame")
 	}
 
-	return payload, nil
+	return payload, opcode, nil
+}
+
+// writeWSPing sends a WebSocket ping frame (opcode 0x9) with no payload.
+func writeWSPing(conn net.Conn) error {
+	_, err := conn.Write([]byte{0x89, 0x00}) // FIN + ping opcode, zero length
+	return err
 }
 
 func writeWSFrame(conn net.Conn, data []byte) error {

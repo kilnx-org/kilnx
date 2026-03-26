@@ -16,6 +16,48 @@ type DB struct {
 	path string
 }
 
+// TxHandle wraps a sql.Tx with named parameter support
+type TxHandle struct {
+	tx        *sql.Tx
+	committed bool
+}
+
+// BeginTxHandle starts a new transaction wrapped in a TxHandle
+func (db *DB) BeginTxHandle() (*TxHandle, error) {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return nil, err
+	}
+	return &TxHandle{tx: tx}, nil
+}
+
+// ExecWithParams executes a mutation within the transaction
+func (th *TxHandle) ExecWithParams(sqlStr string, params map[string]string) error {
+	return ExecWithParamsTx(th.tx, sqlStr, params)
+}
+
+// QueryRowsWithParams executes a SELECT within the transaction
+func (th *TxHandle) QueryRowsWithParams(sqlStr string, params map[string]string) ([]Row, error) {
+	return QueryRowsWithParamsTx(th.tx, sqlStr, params)
+}
+
+// Commit commits the transaction
+func (th *TxHandle) Commit() error {
+	if th.committed {
+		return nil
+	}
+	th.committed = true
+	return th.tx.Commit()
+}
+
+// Rollback rolls back the transaction (no-op if already committed)
+func (th *TxHandle) Rollback() error {
+	if th.committed {
+		return nil
+	}
+	return th.tx.Rollback()
+}
+
 func Open(path string) (*DB, error) {
 	conn, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -235,6 +277,38 @@ func fieldToDefault(f parser.Field) string {
 		}
 	}
 	return ""
+}
+
+// MigrateInternal creates internal kilnx tables for sessions and jobs
+func (db *DB) MigrateInternal() error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS _kilnx_sessions (
+			token TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			identity TEXT NOT NULL,
+			role TEXT NOT NULL DEFAULT '',
+			data TEXT NOT NULL DEFAULT '{}',
+			expires_at DATETIME NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS _kilnx_jobs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			params TEXT NOT NULL DEFAULT '{}',
+			state TEXT NOT NULL DEFAULT 'available',
+			attempts INTEGER NOT NULL DEFAULT 0,
+			max_attempts INTEGER NOT NULL DEFAULT 1,
+			scheduled_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			started_at DATETIME,
+			completed_at DATETIME,
+			last_error TEXT
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.conn.Exec(stmt); err != nil {
+			return fmt.Errorf("creating internal table: %w", err)
+		}
+	}
+	return nil
 }
 
 func isValidIdentifier(name string) bool {

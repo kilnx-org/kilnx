@@ -455,3 +455,93 @@ func TestRenderHTML_EachInsideIf(t *testing.T) {
 		t.Errorf("each inside if should work, got %s", result)
 	}
 }
+
+// --- Logical operator tests (and/or) ---
+
+func TestRenderHTML_IfAnd_BothTrue(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"role": "admin", "active": "1"}}
+
+	result := renderHTML(`{{if user.role == "admin" and user.active}}<p>Admin active</p>{{end}}`, ctx)
+	if !strings.Contains(result, "Admin active") {
+		t.Errorf("both conditions true, expected 'Admin active', got %s", result)
+	}
+}
+
+func TestRenderHTML_IfAnd_OneFalse(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"role": "viewer", "active": "1"}}
+
+	result := renderHTML(`{{if user.role == "admin" and user.active}}<p>Admin active</p>{{end}}`, ctx)
+	if strings.Contains(result, "Admin active") {
+		t.Errorf("first condition false, should not render, got %s", result)
+	}
+}
+
+func TestRenderHTML_IfOr_OneTrue(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"role": "admin"}}
+
+	result := renderHTML(`{{if user.role == "admin" or user.role == "editor"}}<p>Can edit</p>{{end}}`, ctx)
+	if !strings.Contains(result, "Can edit") {
+		t.Errorf("first condition true, expected 'Can edit', got %s", result)
+	}
+}
+
+func TestRenderHTML_IfOr_BothFalse(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"role": "viewer"}}
+
+	result := renderHTML(`{{if user.role == "admin" or user.role == "editor"}}<p>Can edit</p>{{end}}`, ctx)
+	if strings.Contains(result, "Can edit") {
+		t.Errorf("both conditions false, should not render, got %s", result)
+	}
+}
+
+func TestRenderHTML_IfAndOr_Combined(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"role": "editor", "active": "1"}}
+
+	// "or" has lower precedence: (role == admin) or (role == editor and active)
+	result := renderHTML(`{{if user.role == "admin" or user.role == "editor" and user.active}}<p>OK</p>{{end}}`, ctx)
+	if !strings.Contains(result, "OK") {
+		t.Errorf("expected OK for editor+active, got %s", result)
+	}
+}
+
+func TestRenderHTML_IfAnd_InsideEach(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["deals"] = []database.Row{
+		{"stage": "closed_won", "value": "1000"},
+		{"stage": "lead", "value": "500"},
+	}
+
+	result := renderHTML(`{{each deals}}{{if stage == "closed_won" and value > 0}}<span>Big win: {value}</span>{{end}}{{end}}`, ctx)
+	if !strings.Contains(result, "Big win: 1000") {
+		t.Errorf("expected 'Big win: 1000', got %s", result)
+	}
+	if strings.Contains(result, "Big win: 500") {
+		t.Errorf("lead should not match, got %s", result)
+	}
+}
+
+func TestRenderHTML_IfOr_WithElse(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"role": "viewer"}}
+
+	result := renderHTML(`{{if user.role == "admin" or user.role == "editor"}}<p>Privileged</p>{{else}}<p>Basic</p>{{end}}`, ctx)
+	if !strings.Contains(result, "Basic") {
+		t.Errorf("expected 'Basic' for viewer, got %s", result)
+	}
+}
+
+func TestRenderHTML_IfAndQuotedString(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["item"] = []database.Row{{"name": "foo and bar", "active": "1"}}
+
+	// "and" inside a quoted string should NOT be treated as logical operator
+	result := renderHTML(`{{if item.name == "foo and bar"}}<p>Match</p>{{end}}`, ctx)
+	if !strings.Contains(result, "Match") {
+		t.Errorf("'and' inside quotes should not split condition, got %s", result)
+	}
+}

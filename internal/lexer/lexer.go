@@ -68,6 +68,35 @@ func IsFieldConstraint(s string) bool {
 	return fieldConstraints[s]
 }
 
+// StripComments removes # comments from source code.
+// Full-line comments (lines starting with #) are replaced with blank lines to preserve line numbers.
+// Inline comments (# after code) are stripped, respecting quoted strings.
+func StripComments(source string) string {
+	lines := strings.Split(source, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if trimmed[0] == '#' {
+			lines[i] = ""
+			continue
+		}
+		// Strip inline comment, but respect quoted strings
+		inQuote := false
+		for j := 0; j < len(line); j++ {
+			if line[j] == '"' {
+				inQuote = !inQuote
+			}
+			if !inQuote && line[j] == '#' {
+				lines[i] = line[:j]
+				break
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 func Tokenize(source string) []Token {
 	var tokens []Token
 	lines := strings.Split(source, "\n")

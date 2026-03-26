@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/kilnx-org/kilnx/internal/lexer"
@@ -97,8 +98,9 @@ type Schedule struct {
 }
 
 type Job struct {
-	Name string
-	Body []Node // query, send email, etc.
+	Name       string
+	Body       []Node // query, send email, etc.
+	MaxRetries int    // from "retry N" declaration (default 1 = no retry)
 }
 
 type Stream struct {
@@ -245,37 +247,49 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 		case "model":
 			model, err := p.parseModel(app)
 			if err != nil {
-				return nil, err
+				p.addError(err)
+				p.synchronize()
+				continue
 			}
 			app.Models = append(app.Models, model)
 		case "page":
 			page, err := p.parsePage()
 			if err != nil {
-				return nil, err
+				p.addError(err)
+				p.synchronize()
+				continue
 			}
 			app.Pages = append(app.Pages, page)
 		case "action":
 			action, err := p.parseAction()
 			if err != nil {
-				return nil, err
+				p.addError(err)
+				p.synchronize()
+				continue
 			}
 			app.Actions = append(app.Actions, action)
 		case "fragment":
 			frag, err := p.parseFragment()
 			if err != nil {
-				return nil, err
+				p.addError(err)
+				p.synchronize()
+				continue
 			}
 			app.Fragments = append(app.Fragments, frag)
 		case "api":
 			apiEndpoint, err := p.parseAPI()
 			if err != nil {
-				return nil, err
+				p.addError(err)
+				p.synchronize()
+				continue
 			}
 			app.APIs = append(app.APIs, apiEndpoint)
 		case "stream":
 			stream, err := p.parseStream()
 			if err != nil {
-				return nil, err
+				p.addError(err)
+				p.synchronize()
+				continue
 			}
 			app.Streams = append(app.Streams, stream)
 		case "schedule":
@@ -299,7 +313,9 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 		case "auth":
 			authCfg, err := p.parseAuth()
 			if err != nil {
-				return nil, err
+				p.addError(err)
+				p.synchronize()
+				continue
 			}
 			app.Auth = &authCfg
 		case "permissions":
@@ -364,15 +380,86 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 		for i := range app.APIs {
 			resolveNamedQueries(app.APIs[i].Body)
 		}
+		for i := range app.Schedules {
+			resolveNamedQueries(app.Schedules[i].Body)
+		}
+		for i := range app.Jobs {
+			resolveNamedQueries(app.Jobs[i].Body)
+		}
+		for i := range app.Webhooks {
+			for j := range app.Webhooks[i].Events {
+				resolveNamedQueries(app.Webhooks[i].Events[j].Body)
+			}
+		}
+		for i := range app.Sockets {
+			resolveNamedQueries(app.Sockets[i].OnConnect)
+			resolveNamedQueries(app.Sockets[i].OnMessage)
+			resolveNamedQueries(app.Sockets[i].OnDisconnect)
+		}
 	}
 
+	if len(p.errors) > 0 {
+		return app, multiError(p.errors)
+	}
 	return app, nil
 }
 
 type parserState struct {
-	tokens []lexer.Token
-	pos    int
-	lines  []string // original source lines for raw text extraction
+	tokens   []lexer.Token
+	pos      int
+	lines    []string // original source lines for raw text extraction
+	errors   []error  // collected parse errors for multi-error reporting
+	recovery bool     // true when skipping tokens to synchronize
+}
+
+// addError records a parse error and enters recovery mode
+func (p *parserState) addError(err error) {
+	p.errors = append(p.errors, err)
+	p.recovery = true
+}
+
+// synchronize advances to the next top-level keyword (indent level 0).
+// This allows the parser to recover from errors and continue parsing.
+func (p *parserState) synchronize() {
+	depth := 0
+	for !p.isEOF() {
+		tok := p.current()
+		if tok.Type == lexer.TokenIndent {
+			depth++
+			p.advance()
+			continue
+		}
+		if tok.Type == lexer.TokenDedent {
+			depth--
+			if depth < 0 {
+				depth = 0
+			}
+			p.advance()
+			continue
+		}
+		if tok.Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+		// A keyword at depth 0 is a synchronization point
+		if depth == 0 && tok.Type == lexer.TokenKeyword {
+			p.recovery = false
+			return
+		}
+		p.advance()
+	}
+	p.recovery = false
+}
+
+// multiError joins multiple errors into a single error
+type multiError []error
+
+func (me multiError) Error() string {
+	var msgs []string
+	for _, e := range me {
+		msgs = append(msgs, e.Error())
+	}
+	return strings.Join(msgs, "\n")
 }
 
 func (p *parserState) current() lexer.Token {
@@ -1591,7 +1678,7 @@ func (p *parserState) parseSchedule() Schedule {
 //	  send email to :requested_by
 //	    subject: "Your report is ready"
 func (p *parserState) parseJob() Job {
-	job := Job{}
+	job := Job{MaxRetries: 1}
 
 	// consume "job"
 	p.advance()
@@ -1606,6 +1693,19 @@ func (p *parserState) parseJob() Job {
 
 	if p.current().Type == lexer.TokenIndent {
 		p.advance()
+
+		// Check for "retry N" as first line in job body
+		if p.current().Type == lexer.TokenIdentifier && p.current().Value == "retry" {
+			p.advance()
+			if p.current().Type == lexer.TokenNumber {
+				if n, err := strconv.Atoi(p.advance().Value); err == nil && n > 0 {
+					job.MaxRetries = n
+				}
+			}
+			p.skipToEndOfLine()
+			p.skipNewlines()
+		}
+
 		job.Body = p.parseBody()
 	}
 
@@ -1635,8 +1735,45 @@ func (p *parserState) parseSendEmailNode() Node {
 		p.advance()
 	}
 
-	// recipient: :param, identifier, or string
-	if p.current().Type == lexer.TokenColon {
+	// recipient: query: SQL, :param, identifier, or string
+	if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "query" {
+		// "send email to query: SELECT email FROM ..."
+		queryLine := p.current().Line
+		p.advance() // consume "query"
+		if p.current().Type == lexer.TokenColon {
+			p.advance() // consume ":"
+		}
+		// Extract SQL from the source line (may be multi-line)
+		if queryLine >= 1 && queryLine <= len(p.lines) {
+			line := p.lines[queryLine-1]
+			idx := strings.Index(line, "query:")
+			if idx >= 0 {
+				sql := strings.TrimSpace(line[idx+len("query:"):])
+				// Collect continuation lines
+				for queryLine < len(p.lines) {
+					nextLine := p.lines[queryLine]
+					trimmed := strings.TrimSpace(nextLine)
+					if trimmed == "" || (!strings.HasPrefix(nextLine, " ") && !strings.HasPrefix(nextLine, "\t")) {
+						break
+					}
+					// Stop if next line starts a new keyword block (subject:, template:, etc.)
+					if strings.Contains(trimmed, ":") && !strings.HasPrefix(strings.ToUpper(trimmed), "SELECT") &&
+						!strings.HasPrefix(strings.ToUpper(trimmed), "WHERE") &&
+						!strings.HasPrefix(strings.ToUpper(trimmed), "AND") &&
+						!strings.HasPrefix(strings.ToUpper(trimmed), "OR") &&
+						!strings.HasPrefix(strings.ToUpper(trimmed), "JOIN") &&
+						!strings.HasPrefix(strings.ToUpper(trimmed), "LEFT") &&
+						!strings.HasPrefix(strings.ToUpper(trimmed), "ORDER") &&
+						!strings.HasPrefix(strings.ToUpper(trimmed), "GROUP") {
+						break
+					}
+					sql += " " + trimmed
+					queryLine++
+				}
+				node.Props["to_query"] = sql
+			}
+		}
+	} else if p.current().Type == lexer.TokenColon {
 		p.advance() // consume ':'
 		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
 			node.EmailTo = ":" + p.advance().Value
@@ -1981,6 +2118,36 @@ func (p *parserState) parseRateLimit() RateLimit {
 				continue
 			}
 
+			// on exceeded: status 429 message "Too many requests"
+			if tok.Type == lexer.TokenKeyword && tok.Value == "on" {
+				p.advance()
+				if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "exceeded" {
+					p.advance()
+					if p.current().Type == lexer.TokenColon {
+						p.advance()
+					}
+					// Parse inline: status N message "text"
+					for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+						cur := p.current()
+						if (cur.Type == lexer.TokenIdentifier || cur.Type == lexer.TokenKeyword) && cur.Value == "status" {
+							p.advance()
+							if p.current().Type == lexer.TokenNumber {
+								p.advance() // consume status code (always 429 for rate limiting)
+							}
+						} else if (cur.Type == lexer.TokenIdentifier || cur.Type == lexer.TokenKeyword) && cur.Value == "message" {
+							p.advance()
+							if p.current().Type == lexer.TokenString {
+								rl.Message = p.advance().Value
+							}
+						} else {
+							p.advance()
+						}
+					}
+				}
+				p.skipToEndOfLine()
+				continue
+			}
+
 			p.skipToEndOfLine()
 		}
 	}
@@ -2070,6 +2237,8 @@ func parseTestStep(line string) TestStep {
 	case "expect":
 		// expect page /path contains "text"
 		// expect query: SQL returns N
+		// expect status 200
+		// expect redirect to /path
 		step.Target = strings.Join(parts[1:], " ")
 		idx := strings.Index(line, "contains ")
 		if idx >= 0 {

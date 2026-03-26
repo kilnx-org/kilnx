@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"html"
 	"net/smtp"
 	"os"
 	"path/filepath"
@@ -53,9 +54,9 @@ func LoadEmailTemplate(templateName string, params map[string]string) string {
 	}
 
 	content := string(data)
-	// Interpolate {key} placeholders
+	// Interpolate {key} placeholders with HTML escaping to prevent XSS in emails
 	for k, v := range params {
-		content = strings.ReplaceAll(content, "{"+k+"}", v)
+		content = strings.ReplaceAll(content, "{"+k+"}", html.EscapeString(v))
 	}
 	return content
 }

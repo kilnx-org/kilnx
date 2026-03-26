@@ -1,8 +1,8 @@
 # Kilnx Grammar Reference
 
-Kilnx has 29 keywords. The entire language fits on a single page.
+Kilnx has 22 keywords. The entire language fits on a single page.
 
-For comparison: Python has 35 keywords and does none of these things without importing libraries. JavaScript has 64. Java has 67. Kilnx has 29 and delivers a complete web app from database to browser.
+For comparison: Python has 35 keywords and does none of these things without importing libraries. JavaScript has 64. Java has 67. Kilnx has 22 and delivers a complete web app from database to browser.
 
 ## Hello World
 
@@ -109,9 +109,13 @@ GET route that returns full HTML. The basic unit of the language.
 ```kilnx
 page /users layout main title "Users"
   query users: select name, email from user
-  list users
-    title: name
-    subtitle: email
+  html
+    {{each users}}
+    <div class="user">
+      <strong>{name}</strong>
+      <span>{email}</span>
+    </div>
+    {{end}}
 ```
 
 With auth:
@@ -183,20 +187,6 @@ socket /chat/:room requires auth
         body: :body
         author: :current_user.name
         created: now()
-```
-
-### component
-
-Custom declarative UI blocks.
-
-```kilnx
-component user-card
-  param: name, email, avatar
-  card
-    image: avatar
-    title: name
-    subtitle: email
-    action: edit /users/:id
 ```
 
 ### api
@@ -281,9 +271,13 @@ queries
 
 page /users
   query users: active-users
-  list users
-    title: name
-    subtitle: "{orders} orders"
+  html
+    {{each users}}
+    <div class="user">
+      <strong>{name}</strong>
+      <span>{orders} orders</span>
+    </div>
+    {{end}}
 ```
 
 ### validate
@@ -299,21 +293,6 @@ action /users/new method POST
   redirect /users
 ```
 
-### search
-
-Full-text search with htmx integration.
-
-```kilnx
-page /posts
-  search posts in title, body
-  query posts: select title, author.name from post
-               where status = published
-               order by published_at desc
-               paginate 20
-  table posts
-    columns: title, author.name
-```
-
 ### paginate
 
 Automatic pagination. The language generates pagination controls with htmx.
@@ -324,20 +303,13 @@ page /posts
                where status = published
                order by published_at desc
                paginate 20
-  table posts
-    columns: title, author.name
-```
-
-### form
-
-Auto-generated from a model.
-
-```kilnx
-page /users/new
-  form user
-
-page /users/:id/edit
-  form user with query: select * from user where id = :id
+  html
+    {{each posts}}
+    <article>
+      <h2>{title}</h2>
+      <span>{author.name}</span>
+    </article>
+    {{end}}
 ```
 
 ### send email
@@ -477,23 +449,6 @@ socket /chat/:room requires auth
 
 ---
 
-## Built-in Components
-
-The language ships with built-in UI components that render semantic HTML:
-
-- **list** - renders items with title, subtitle, actions
-- **table** - renders tabular data with columns, row actions
-- **card** - renders a card with image, title, subtitle, actions
-- **form** - auto-generated from a model
-- **alert** - success/error/warning messages
-- **nav** - navigation component
-- **modal** - modal dialog
-- **chart** - basic charts
-
-Custom components are created with the `component` keyword.
-
----
-
 ## Complete App Example
 
 ```kilnx
@@ -536,17 +491,31 @@ layout main
     </html>
 
 page /tasks layout main requires auth
-  search tasks in title
   query tasks: select id, title, done from task
                where owner = :current_user.id
                order by created desc
                paginate 20
-  table tasks
-    columns: title, done
-    row action: delete /tasks/:id/delete
+  html
+    <input type="search" name="q" placeholder="Search tasks..."
+           hx-get="/tasks" hx-trigger="keyup changed delay:300ms"
+           hx-target="#task-list">
+    <table id="task-list">
+      <tr><th>Title</th><th>Done</th><th></th></tr>
+      {{each tasks}}
+      <tr>
+        <td>{title}</td>
+        <td>{{if done}}Yes{{end}}</td>
+        <td><button hx-post="/tasks/{id}/delete" hx-target="closest tr" hx-swap="outerHTML">Delete</button></td>
+      </tr>
+      {{end}}
+    </table>
 
 page /tasks/new layout main requires auth
-  form task
+  html
+    <form method="POST" action="/tasks/create">
+      <label>Title <input type="text" name="title" required></label>
+      <button type="submit">Create</button>
+    </form>
 
 action /tasks/create method POST requires auth
   validate task

@@ -28,13 +28,14 @@ func WatchAndServe(filename string, db *database.DB, port int) error {
 }
 
 func loadApp(filename string) (*parser.App, error) {
-	source, err := os.ReadFile(filename)
+	raw, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", filename, err)
 	}
 
-	tokens := lexer.Tokenize(string(source))
-	app, err := parser.Parse(tokens, string(source))
+	source := lexer.StripComments(string(raw))
+	tokens := lexer.Tokenize(source)
+	app, err := parser.Parse(tokens, source)
 	if err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", filename, err)
 	}
@@ -68,6 +69,9 @@ func watchFile(filename string, srv *Server) {
 			}
 
 			srv.Reload(app)
+			// Restart schedulers and update job queue with new definitions
+			srv.StartScheduler()
+			srv.RefreshJobQueue()
 			fmt.Printf("  reloaded %s (%d pages)\n", filename, len(app.Pages))
 			printRoutes(app)
 		}

@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -11,21 +13,41 @@ import (
 	"github.com/kilnx-org/kilnx/internal/pdf"
 )
 
-// StartScheduler launches goroutines for each schedule defined in the app
+// StartScheduler launches goroutines for each schedule defined in the app.
+// It stops any previously running schedule goroutines before starting new ones.
 func (s *Server) StartScheduler() {
+	s.StopScheduler()
+
 	app := s.getApp()
+	if len(app.Schedules) == 0 {
+		return
+	}
+
+	stop := make(chan struct{})
+	s.mu.Lock()
+	s.scheduleStop = stop
+	s.mu.Unlock()
+
 	for _, sched := range app.Schedules {
-		go s.runSchedule(sched)
+		go s.runSchedule(sched, stop)
 	}
-	if len(app.Schedules) > 0 {
-		fmt.Printf("Started %d schedule(s)\n", len(app.Schedules))
-	}
+	fmt.Printf("Started %d schedule(s)\n", len(app.Schedules))
 }
 
-func (s *Server) runSchedule(sched parser.Schedule) {
+// StopScheduler signals all running schedule goroutines to exit.
+func (s *Server) StopScheduler() {
+	s.mu.Lock()
+	if s.scheduleStop != nil {
+		close(s.scheduleStop)
+		s.scheduleStop = nil
+	}
+	s.mu.Unlock()
+}
+
+func (s *Server) runSchedule(sched parser.Schedule, stop <-chan struct{}) {
 	// If it's a cron-style schedule (e.g., "every monday at 9:00")
 	if sched.Cron != "" {
-		s.runCronSchedule(sched)
+		s.runCronSchedule(sched, stop)
 		return
 	}
 
@@ -35,13 +57,20 @@ func (s *Server) runSchedule(sched parser.Schedule) {
 
 	fmt.Printf("  schedule '%s' running every %s\n", sched.Name, interval)
 
-	for range ticker.C {
-		s.executeNodes(sched.Body, nil)
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			if err := s.executeNodes(sched.Body, nil); err != nil {
+				fmt.Printf("  schedule '%s' error: %v\n", sched.Name, err)
+			}
+		}
 	}
 }
 
 // runCronSchedule handles "every monday at 9:00" style expressions
-func (s *Server) runCronSchedule(sched parser.Schedule) {
+func (s *Server) runCronSchedule(sched parser.Schedule, stop <-chan struct{}) {
 	fmt.Printf("  schedule '%s' cron: %s\n", sched.Name, sched.Cron)
 
 	for {
@@ -52,8 +81,17 @@ func (s *Server) runCronSchedule(sched parser.Schedule) {
 		}
 		delay := time.Until(next)
 		fmt.Printf("  schedule '%s' next run at %s (in %s)\n", sched.Name, next.Format("2006-01-02 15:04"), delay.Round(time.Second))
-		time.Sleep(delay)
-		s.executeNodes(sched.Body, nil)
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-stop:
+			timer.Stop()
+			return
+		case <-timer.C:
+			if err := s.executeNodes(sched.Body, nil); err != nil {
+				fmt.Printf("  schedule '%s' error: %v\n", sched.Name, err)
+			}
+		}
 	}
 }
 
@@ -108,23 +146,16 @@ func nextCronOccurrence(expr string) time.Time {
 	return next
 }
 
-// JobQueue manages async background jobs
+// JobQueue manages async background jobs with SQLite persistence and retry support
 type JobQueue struct {
 	server *Server
 	jobs   map[string]parser.Job
-	queue  chan jobRequest
-}
-
-type jobRequest struct {
-	Name   string
-	Params map[string]string
 }
 
 func NewJobQueue(server *Server) *JobQueue {
 	jq := &JobQueue{
 		server: server,
 		jobs:   make(map[string]parser.Job),
-		queue:  make(chan jobRequest, 100),
 	}
 
 	app := server.getApp()
@@ -136,37 +167,180 @@ func NewJobQueue(server *Server) *JobQueue {
 }
 
 func (jq *JobQueue) Start() {
-	go jq.processQueue()
+	jq.recoverOrphanedJobs()
+	go jq.pollQueue()
 	if len(jq.jobs) > 0 {
 		fmt.Printf("Job queue ready (%d job type(s))\n", len(jq.jobs))
 	}
 }
 
+// recoverOrphanedJobs resets jobs stuck in 'executing' state back to 'available'.
+// This handles the case where the server was restarted while jobs were running.
+func (jq *JobQueue) recoverOrphanedJobs() {
+	db := jq.server.db
+	if db == nil {
+		return
+	}
+
+	rows, err := db.QueryRows(
+		`SELECT id, name FROM _kilnx_jobs WHERE state = 'executing'`)
+	if err != nil || len(rows) == 0 {
+		return
+	}
+
+	for _, row := range rows {
+		db.ExecWithParams(
+			`UPDATE _kilnx_jobs SET state = 'available', scheduled_at = datetime('now') WHERE id = :id`,
+			map[string]string{"id": row["id"]})
+	}
+	fmt.Printf("Recovered %d orphaned job(s)\n", len(rows))
+}
+
+// RefreshJobQueue updates the job definitions from the current app (for hot-reload)
+func (s *Server) RefreshJobQueue() {
+	app := s.getApp()
+	for _, job := range app.Jobs {
+		s.jobQueue.jobs[job.Name] = job
+	}
+}
+
+// Enqueue persists a job to the _kilnx_jobs table
 func (jq *JobQueue) Enqueue(name string, params map[string]string) error {
-	if _, ok := jq.jobs[name]; !ok {
+	job, ok := jq.jobs[name]
+	if !ok {
 		return fmt.Errorf("unknown job: %s", name)
 	}
-	jq.queue <- jobRequest{Name: name, Params: params}
+
+	db := jq.server.db
+	if db == nil {
+		return fmt.Errorf("no database for job persistence")
+	}
+
+	paramsJSON, _ := json.Marshal(params)
+	maxAttempts := job.MaxRetries
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+
+	err := db.ExecWithParams(
+		`INSERT INTO _kilnx_jobs (name, params, state, max_attempts) VALUES (:name, :params, 'available', :max_attempts)`,
+		map[string]string{
+			"name":         name,
+			"params":       string(paramsJSON),
+			"max_attempts": fmt.Sprintf("%d", maxAttempts),
+		})
+	if err != nil {
+		return fmt.Errorf("enqueue error: %w", err)
+	}
+
 	fmt.Printf("  enqueued job '%s'\n", name)
 	return nil
 }
 
-func (jq *JobQueue) processQueue() {
-	for req := range jq.queue {
-		job, ok := jq.jobs[req.Name]
-		if !ok {
-			fmt.Printf("  job '%s' not found, skipping\n", req.Name)
-			continue
-		}
-
-		fmt.Printf("  running job '%s'\n", req.Name)
-		jq.server.executeNodes(job.Body, req.Params)
-		fmt.Printf("  job '%s' completed\n", req.Name)
+// pollQueue continuously polls _kilnx_jobs for available work
+func (jq *JobQueue) pollQueue() {
+	for {
+		time.Sleep(1 * time.Second)
+		jq.processNextJob()
 	}
 }
 
-// executeNodes runs a list of nodes (for schedules and jobs)
-func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) {
+func (jq *JobQueue) processNextJob() {
+	db := jq.server.db
+	if db == nil {
+		return
+	}
+
+	// Fetch next available job
+	rows, err := db.QueryRows(
+		`SELECT id, name, params, attempts, max_attempts FROM _kilnx_jobs
+		 WHERE state = 'available' AND scheduled_at <= datetime('now')
+		 ORDER BY id LIMIT 1`)
+	if err != nil || len(rows) == 0 {
+		return
+	}
+
+	row := rows[0]
+	jobID := row["id"]
+	jobName := row["name"]
+
+	job, ok := jq.jobs[jobName]
+	if !ok {
+		db.ExecWithParams(
+			`UPDATE _kilnx_jobs SET state = 'discarded', last_error = 'unknown job type' WHERE id = :id`,
+			map[string]string{"id": jobID})
+		return
+	}
+
+	// Mark as executing
+	db.ExecWithParams(
+		`UPDATE _kilnx_jobs SET state = 'executing', started_at = datetime('now') WHERE id = :id`,
+		map[string]string{"id": jobID})
+
+	// Deserialize params
+	var params map[string]string
+	if err := json.Unmarshal([]byte(row["params"]), &params); err != nil {
+		params = make(map[string]string)
+	}
+
+	fmt.Printf("  running job '%s' (id=%s)\n", jobName, jobID)
+
+	// Execute with panic recovery
+	execErr := jq.safeExecuteNodes(job.Body, params)
+
+	if execErr != nil {
+		attempts := 1
+		fmt.Sscanf(row["attempts"], "%d", &attempts)
+		attempts++
+		maxAttempts := 1
+		fmt.Sscanf(row["max_attempts"], "%d", &maxAttempts)
+
+		if attempts < maxAttempts {
+			// Retry with exponential backoff
+			backoffSecs := int(math.Pow(2, float64(attempts)))
+			db.ExecWithParams(
+				`UPDATE _kilnx_jobs SET state = 'available', attempts = :attempts,
+				 last_error = :error, scheduled_at = datetime('now', '+' || :backoff || ' seconds')
+				 WHERE id = :id`,
+				map[string]string{
+					"id":       jobID,
+					"attempts": fmt.Sprintf("%d", attempts),
+					"error":    execErr.Error(),
+					"backoff":  fmt.Sprintf("%d", backoffSecs),
+				})
+			fmt.Printf("  job '%s' failed, retry %d/%d in %ds\n", jobName, attempts, maxAttempts, backoffSecs)
+		} else {
+			db.ExecWithParams(
+				`UPDATE _kilnx_jobs SET state = 'discarded', attempts = :attempts,
+				 last_error = :error, completed_at = datetime('now') WHERE id = :id`,
+				map[string]string{
+					"id":       jobID,
+					"attempts": fmt.Sprintf("%d", attempts),
+					"error":    execErr.Error(),
+				})
+			fmt.Printf("  job '%s' discarded after %d attempts\n", jobName, attempts)
+		}
+	} else {
+		db.ExecWithParams(
+			`UPDATE _kilnx_jobs SET state = 'completed', completed_at = datetime('now') WHERE id = :id`,
+			map[string]string{"id": jobID})
+		fmt.Printf("  job '%s' completed\n", jobName)
+	}
+}
+
+// safeExecuteNodes runs nodes with panic recovery, returning any error
+func (jq *JobQueue) safeExecuteNodes(nodes []parser.Node, params map[string]string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return jq.server.executeNodes(nodes, params)
+}
+
+// executeNodes runs a list of nodes (for schedules and jobs).
+// Returns the first error encountered during query execution.
+func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) error {
 	if params == nil {
 		params = make(map[string]string)
 	}
@@ -191,7 +365,7 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) {
 				rows, err := s.db.QueryRowsWithParams(sql, params)
 				if err != nil {
 					fmt.Printf("  schedule/job query error: %v\n", err)
-					continue
+					return fmt.Errorf("query error: %w", err)
 				}
 				name := node.Name
 				if name == "" {
@@ -202,11 +376,22 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) {
 				err := s.db.ExecWithParams(sql, params)
 				if err != nil {
 					fmt.Printf("  schedule/job exec error: %v\n", err)
+					return fmt.Errorf("exec error: %w", err)
 				}
 			}
 
 		case parser.NodeSendEmail:
 			recipient := resolveEmailRecipient(node.EmailTo, params)
+			// Resolve recipient from SQL query if specified
+			if toQuery, ok := node.Props["to_query"]; ok && toQuery != "" && s.db != nil {
+				rows, err := s.db.QueryRowsWithParams(toQuery, params)
+				if err == nil && len(rows) > 0 {
+					for _, v := range rows[0] {
+						recipient = v
+						break
+					}
+				}
+			}
 			subject := node.EmailSubject
 			body := node.Props["body"]
 			if body == "" {
@@ -228,10 +413,12 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) {
 				}
 				if err := SendEmailWithAttachment(recipient, subject, body, attach); err != nil {
 					fmt.Printf("  email error: %v\n", err)
+					return fmt.Errorf("email error: %w", err)
 				}
 			} else {
 				if err := SendEmail(recipient, subject, body); err != nil {
 					fmt.Printf("  email error: %v\n", err)
+					return fmt.Errorf("email error: %w", err)
 				}
 			}
 
@@ -240,7 +427,7 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) {
 				errors := validateInlineRules(node.Validations, params)
 				if len(errors) > 0 {
 					fmt.Printf("  validation failed: %v\n", errors)
-					return // skip remaining nodes
+					return fmt.Errorf("validation failed: %v", errors)
 				}
 			}
 
@@ -277,17 +464,19 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) {
 			tmpFile, err := os.CreateTemp("", "kilnx-*.pdf")
 			if err != nil {
 				fmt.Printf("  pdf generation error: %v\n", err)
-				continue
+				return fmt.Errorf("pdf generation error: %w", err)
 			}
 			if _, err := tmpFile.Write(pdfBytes); err != nil {
 				fmt.Printf("  pdf write error: %v\n", err)
 				tmpFile.Close()
 				os.Remove(tmpFile.Name())
-				continue
+				return fmt.Errorf("pdf write error: %w", err)
 			}
 			tmpFile.Close()
 			params["_generated_pdf"] = tmpFile.Name()
 			fmt.Printf("  generated pdf: %s\n", tmpFile.Name())
 		}
 	}
+
+	return nil
 }

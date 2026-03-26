@@ -5,9 +5,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kilnx-org/kilnx/internal/database"
 )
@@ -25,6 +27,241 @@ import (
 
 var rawFilterRe = regexp.MustCompile(`\{([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)\s*\|\s*raw\}`)
 
+// filterRe matches {expr | filter} or {expr | filter1 | filter2: arg}
+var filterRe = regexp.MustCompile(`\{([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)\s*\|([^}]+)\}`)
+
+// parsedFilter represents a single filter in a chain
+type parsedFilter struct {
+	Name string
+	Args []string
+}
+
+// parseFilterChain splits "upcase | truncate: 30 | default: N/A" into filters
+func parseFilterChain(chain string) []parsedFilter {
+	parts := strings.Split(chain, "|")
+	var filters []parsedFilter
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		colonIdx := strings.Index(part, ":")
+		if colonIdx < 0 {
+			filters = append(filters, parsedFilter{Name: part})
+		} else {
+			name := strings.TrimSpace(part[:colonIdx])
+			argStr := strings.TrimSpace(part[colonIdx+1:])
+			var args []string
+			for _, a := range strings.Split(argStr, ",") {
+				a = strings.TrimSpace(a)
+				a = strings.Trim(a, "\"'")
+				args = append(args, a)
+			}
+			filters = append(filters, parsedFilter{Name: name, Args: args})
+		}
+	}
+	return filters
+}
+
+// builtinFilters maps filter names to functions
+var builtinFilters = map[string]func(string, []string) string{
+	"raw": func(v string, _ []string) string { return v },
+	"upcase": func(v string, _ []string) string {
+		return strings.ToUpper(v)
+	},
+	"downcase": func(v string, _ []string) string {
+		return strings.ToLower(v)
+	},
+	"capitalize": func(v string, _ []string) string {
+		if len(v) == 0 {
+			return v
+		}
+		return strings.ToUpper(v[:1]) + v[1:]
+	},
+	"truncate": func(v string, args []string) string {
+		n := 50
+		if len(args) > 0 {
+			if parsed, err := strconv.Atoi(args[0]); err == nil {
+				n = parsed
+			}
+		}
+		runes := []rune(v)
+		if len(runes) <= n {
+			return v
+		}
+		return string(runes[:n]) + "..."
+	},
+	"default": func(v string, args []string) string {
+		if v == "" || v == "<nil>" {
+			if len(args) > 0 {
+				return args[0]
+			}
+			return ""
+		}
+		return v
+	},
+	"date": func(v string, args []string) string {
+		format := "Jan 02, 2006"
+		if len(args) > 0 {
+			format = goDateFormat(args[0])
+		}
+		for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"} {
+			if t, err := time.Parse(layout, v); err == nil {
+				return t.Format(format)
+			}
+		}
+		return v
+	},
+	"timeago": func(v string, _ []string) string {
+		for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"} {
+			if t, err := time.Parse(layout, v); err == nil {
+				return timeAgo(t)
+			}
+		}
+		return v
+	},
+	"currency": func(v string, args []string) string {
+		symbol := "$"
+		if len(args) > 0 {
+			symbol = args[0]
+		}
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return v
+		}
+		return symbol + formatNumber(f, 2)
+	},
+	"number": func(v string, args []string) string {
+		decimals := 0
+		if len(args) > 0 {
+			if d, err := strconv.Atoi(args[0]); err == nil {
+				decimals = d
+			}
+		}
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return v
+		}
+		return formatNumber(f, decimals)
+	},
+	"pluralize": func(v string, args []string) string {
+		singular := "item"
+		plural := "items"
+		if len(args) >= 2 {
+			singular = args[0]
+			plural = args[1]
+		} else if len(args) == 1 {
+			singular = args[0]
+			plural = args[0] + "s"
+		}
+		n, err := strconv.ParseFloat(v, 64)
+		if err != nil || n != 1 {
+			return plural
+		}
+		return singular
+	},
+	"replace": func(v string, args []string) string {
+		if len(args) >= 2 {
+			return strings.ReplaceAll(v, args[0], args[1])
+		}
+		return v
+	},
+	"strip": func(v string, _ []string) string {
+		return strings.TrimSpace(v)
+	},
+}
+
+// applyFilters runs a filter chain on a value, returns (result, isRaw)
+func applyFilters(value string, chain string) (string, bool) {
+	filters := parseFilterChain(chain)
+	isRaw := false
+	for _, f := range filters {
+		if f.Name == "raw" {
+			isRaw = true
+			continue
+		}
+		if fn, ok := builtinFilters[f.Name]; ok {
+			value = fn(value, f.Args)
+		}
+	}
+	return value, isRaw
+}
+
+// goDateFormat converts strftime-like format to Go layout
+func goDateFormat(format string) string {
+	r := strings.NewReplacer(
+		"%Y", "2006", "%m", "01", "%d", "02",
+		"%H", "15", "%M", "04", "%S", "05",
+		"%b", "Jan", "%B", "January",
+		"%a", "Mon", "%A", "Monday",
+		"%p", "PM", "%I", "03",
+	)
+	return r.Replace(format)
+}
+
+// timeAgo returns a human-readable relative time string
+func timeAgo(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		m := int(d.Minutes())
+		if m == 1 {
+			return "1 minute ago"
+		}
+		return fmt.Sprintf("%d minutes ago", m)
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		if h == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", h)
+	case d < 30*24*time.Hour:
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "1 day ago"
+		}
+		return fmt.Sprintf("%d days ago", days)
+	default:
+		months := int(d.Hours() / 24 / 30)
+		if months <= 1 {
+			return "1 month ago"
+		}
+		return fmt.Sprintf("%d months ago", months)
+	}
+}
+
+// formatNumber formats a float with thousand separators and given decimal places
+func formatNumber(f float64, decimals int) string {
+	neg := ""
+	if f < 0 {
+		neg = "-"
+		f = math.Abs(f)
+	}
+	intPart := int64(f)
+	fracPart := f - float64(intPart)
+
+	// Format integer part with commas
+	s := fmt.Sprintf("%d", intPart)
+	if len(s) > 3 {
+		var parts []string
+		for len(s) > 3 {
+			parts = append([]string{s[len(s)-3:]}, parts...)
+			s = s[:len(s)-3]
+		}
+		parts = append([]string{s}, parts...)
+		s = strings.Join(parts, ",")
+	}
+
+	if decimals > 0 {
+		frac := fmt.Sprintf("%.*f", decimals, fracPart)
+		s += frac[1:] // skip the leading "0"
+	}
+
+	return neg + s
+}
+
 // renderHTML is the main template processing function for NodeHTML content.
 // It processes all template directives and returns the final HTML string.
 func renderHTML(content string, ctx *renderContext) string {
@@ -36,24 +273,35 @@ func renderHTML(content string, ctx *renderContext) string {
 		result = strings.Replace(result, "{csrf}", token, 1)
 	}
 
-	// Step 2: Process {field | raw} outside of {{each}} blocks
+	// Step 2: Process {field | filters} outside of {{each}} blocks
 	// Use a random nonce to prevent placeholder collision with user data
 	nonce := generateNonce()
 	rawPlaceholders := make(map[string]string)
 	rawCounter := 0
-	result = rawFilterRe.ReplaceAllStringFunc(result, func(match string) string {
-		parts := rawFilterRe.FindStringSubmatch(match)
-		if len(parts) < 2 {
+
+	// Process all pipe expressions (including raw and other filters)
+	result = filterRe.ReplaceAllStringFunc(result, func(match string) string {
+		parts := filterRe.FindStringSubmatch(match)
+		if len(parts) < 3 {
 			return match
 		}
 		expr := parts[1]
+		chain := strings.TrimSpace(parts[2])
 		val := resolveValue(expr, ctx, nil)
 		if val == "{"+expr+"}" {
 			return match // not resolved, leave unchanged
 		}
-		placeholder := fmt.Sprintf("\x00KILNX_RAW_%s_%d\x00", nonce, rawCounter)
+		filtered, isRaw := applyFilters(val, chain)
+		if isRaw {
+			placeholder := fmt.Sprintf("\x00KILNX_RAW_%s_%d\x00", nonce, rawCounter)
+			rawCounter++
+			rawPlaceholders[placeholder] = filtered
+			return placeholder
+		}
+		// Non-raw filters: escape and return directly
+		placeholder := fmt.Sprintf("\x00KILNX_FILT_%s_%d\x00", nonce, rawCounter)
 		rawCounter++
-		rawPlaceholders[placeholder] = val
+		rawPlaceholders[placeholder] = html.EscapeString(filtered)
 		return placeholder
 	})
 
@@ -139,30 +387,33 @@ func expandEachBlocks(content string, ctx *renderContext, nonce string) string {
 	return result.String()
 }
 
-// processRawInRow handles {field | raw} inside {{each}} blocks where field comes from the current row
+// processRawInRow handles {field | filters} inside {{each}} blocks where field comes from the current row
 func processRawInRow(content string, row database.Row, ctx *renderContext, nonce string) string {
 	counter := 0
 	placeholders := make(map[string]string)
 
-	result := rawFilterRe.ReplaceAllStringFunc(content, func(match string) string {
-		parts := rawFilterRe.FindStringSubmatch(match)
-		if len(parts) < 2 {
+	result := filterRe.ReplaceAllStringFunc(content, func(match string) string {
+		parts := filterRe.FindStringSubmatch(match)
+		if len(parts) < 3 {
 			return match
 		}
 		expr := parts[1]
+		chain := strings.TrimSpace(parts[2])
 		val := resolveValue(expr, ctx, row)
 		if val == "{"+expr+"}" {
 			return match
 		}
+		filtered, isRaw := applyFilters(val, chain)
 		placeholder := fmt.Sprintf("\x00KILNX_RROW_%s_%d\x00", nonce, counter)
 		counter++
-		placeholders[placeholder] = val
+		if isRaw {
+			placeholders[placeholder] = filtered
+		} else {
+			placeholders[placeholder] = html.EscapeString(filtered)
+		}
 		return placeholder
 	})
 
-	// After all other processing, restore these placeholders
-	// But we need to return them embedded so they survive interpolateRow
-	// Store in the result directly since \x00 won't be touched by interpolateRe
 	for placeholder, val := range placeholders {
 		result = strings.ReplaceAll(result, placeholder, val)
 	}
@@ -264,12 +515,71 @@ func expandIfBlocks(content string, ctx *renderContext, currentRow database.Row)
 // evaluateCondition evaluates a condition expression.
 // Supported forms:
 //
-//	field                        -> truthy check (non-empty, non-zero, non-false)
-//	field == "value"             -> equality
-//	field != "value"             -> inequality
-//	queryName.count > 0          -> numeric comparison
-//	queryName.count == 0         -> numeric/string equality
+//	field                                -> truthy check (non-empty, non-zero, non-false)
+//	field == "value"                     -> equality
+//	field != "value"                     -> inequality
+//	queryName.count > 0                  -> numeric comparison
+//	queryName.count == 0                 -> numeric/string equality
+//	expr1 and expr2                      -> logical AND
+//	expr1 or expr2                       -> logical OR
 func evaluateCondition(condition string, ctx *renderContext, currentRow database.Row) bool {
+	// Split on " or " first (lower precedence), respecting quoted strings
+	if parts := splitLogical(condition, " or "); len(parts) > 1 {
+		for _, part := range parts {
+			if evaluateCondition(strings.TrimSpace(part), ctx, currentRow) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Split on " and " (higher precedence)
+	if parts := splitLogical(condition, " and "); len(parts) > 1 {
+		for _, part := range parts {
+			if !evaluateCondition(strings.TrimSpace(part), ctx, currentRow) {
+				return false
+			}
+		}
+		return true
+	}
+
+	return evaluateSingleCondition(condition, ctx, currentRow)
+}
+
+// splitLogical splits a condition string on a logical keyword (" and " or " or "),
+// respecting quoted strings. Returns the original string in a single-element slice
+// if the keyword is not found outside quotes.
+func splitLogical(condition, keyword string) []string {
+	var parts []string
+	inQuote := byte(0)
+	last := 0
+	for i := 0; i < len(condition); i++ {
+		c := condition[i]
+		if c == '"' || c == '\'' {
+			if inQuote == 0 {
+				inQuote = c
+			} else if inQuote == c {
+				inQuote = 0
+			}
+			continue
+		}
+		if inQuote != 0 {
+			continue
+		}
+		if i+len(keyword) <= len(condition) && condition[i:i+len(keyword)] == keyword {
+			parts = append(parts, condition[last:i])
+			last = i + len(keyword)
+			i += len(keyword) - 1
+		}
+	}
+	if len(parts) > 0 {
+		parts = append(parts, condition[last:])
+	}
+	return parts
+}
+
+// evaluateSingleCondition evaluates a single comparison or truthy check.
+func evaluateSingleCondition(condition string, ctx *renderContext, currentRow database.Row) bool {
 	var left, right, op string
 
 	// Find operator, but only OUTSIDE of quoted strings

@@ -10,13 +10,13 @@
   <a href="https://github.com/kilnx-org/kilnx/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
   <a href="https://htmx.org"><img src="https://img.shields.io/badge/htmx-2.x-blue" alt="htmx 2.x"></a>
   <img src="https://img.shields.io/badge/dependencies-2-brightgreen" alt="2 dependencies">
-  <img src="https://img.shields.io/badge/keywords-29-orange" alt="29 keywords">
+  <img src="https://img.shields.io/badge/keywords-22-orange" alt="22 keywords">
   <img src="https://img.shields.io/badge/version-1.0.0-purple" alt="v1.0.0">
 </p>
 
 <p align="center">
   Kilnx is a declarative backend language that compiles to a single binary.<br>
-  29 keywords. Zero framework. SQL is the query language. HTML is the output.<br>
+  22 keywords. Zero framework. SQL is the query language. HTML is the output.<br>
   <strong>htmx completed HTML. Kilnx completes htmx.</strong>
 </p>
 
@@ -58,17 +58,30 @@ auth
   after login: /tasks
 
 page /tasks requires auth
-  search tasks in title
   query tasks: SELECT id, title, done FROM task
                WHERE owner = :current_user.id
                ORDER BY created DESC
                paginate 20
-  table tasks
-    columns: title, done
-    row action: delete /tasks/:id/delete
+  html
+    <input type="search" name="q" placeholder="Search..."
+           hx-get="/tasks" hx-trigger="keyup changed delay:300ms"
+           hx-target="#task-list">
+    <table id="task-list">
+      {{each tasks}}
+      <tr>
+        <td>{title}</td>
+        <td>{{if done}}Yes{{end}}</td>
+        <td><button hx-post="/tasks/{id}/delete" hx-target="closest tr" hx-swap="outerHTML">Delete</button></td>
+      </tr>
+      {{end}}
+    </table>
 
 page /tasks/new requires auth
-  form task
+  html
+    <form method="POST" action="/tasks/new">
+      <label>Title <input type="text" name="title" required></label>
+      <button type="submit">Create</button>
+    </form>
 
 action /tasks/new requires auth
   validate task
@@ -99,7 +112,7 @@ model user
   created: timestamp auto
 ```
 
-Running `kilnx migrate` creates the SQLite table. `form user` generates the full HTML form. `validate user` checks all constraints server-side.
+Running `kilnx migrate` creates the SQLite table. `validate user` checks all constraints server-side. Build forms with `html` blocks using standard HTML inputs and htmx attributes.
 
 ### Declarative Auth
 
@@ -130,8 +143,10 @@ page /dashboard requires auth
                ORDER BY p.created DESC
                paginate 10
   "Total users: {stats.total_users}"
-  table posts
-    columns: title, author
+  html
+    {{each posts}}
+    <article><h3>{title}</h3><span>by {author}</span></article>
+    {{end}}
 ```
 
 ### htmx-Native Fragments
@@ -152,20 +167,25 @@ fragment /users/:id/card
     </div>
 ```
 
-### Built-in Components
+### HTML Blocks
 
-`list`, `table`, `card`, `alert`, `form`, `modal`, `chart` ship with the language. No imports needed.
+Use `html` blocks to render any UI with standard HTML, htmx attributes, `{{each}}` loops, and `{{if}}` conditionals. No proprietary component abstraction.
 
 ```kilnx
 page /users
   query users: SELECT name, email, role FROM user ORDER BY id DESC paginate 10
-  table users
-    columns: name, email, role
-    row action: edit /users/:id/edit
-    row action: delete /users/:id/delete
+  html
+    {{each users}}
+    <div class="user-row" hx-get="/users/{id}" hx-target="#detail">
+      <strong>{name}</strong>
+      <span>{email}</span>
+      <span>{role}</span>
+      <button hx-post="/users/{id}/delete" hx-confirm="Sure?">Delete</button>
+    </div>
+    {{end}}
 ```
 
-Generates a styled HTML table with pagination controls powered by htmx.
+You control the markup. The language handles routing, queries, auth, and htmx wiring.
 
 ### JSON API
 
@@ -321,7 +341,7 @@ ssh server './myapp --port 3000 --db /data/app.db'
 
 The binary contains everything: the HTTP server, htmx.js, SQLite, bcrypt, your app code. Copy it to any Linux/Mac/Windows machine and run. No Docker, no Node, no Python, no runtime.
 
-## The 29 Keywords
+## The 22 Keywords
 
 | Keyword | What it does |
 |---------|-------------|
@@ -330,7 +350,6 @@ The binary contains everything: the HTTP server, htmx.js, SQLite, bcrypt, your a
 | `auth` | Login, register, sessions, bcrypt |
 | `permissions` | Role-based access control |
 | `layout` | Page wrapper with `{page.content}` |
-| `component` | Reusable UI blocks with params |
 | `page` | GET route returning HTML |
 | `action` | POST/PUT/DELETE mutations |
 | `fragment` | Partial HTML for htmx |
@@ -342,9 +361,7 @@ The binary contains everything: the HTTP server, htmx.js, SQLite, bcrypt, your a
 | `job` | Async background work |
 | `query` | Inline SQL |
 | `validate` | Server-side validation |
-| `search` | Full-text search with htmx |
 | `paginate` | Automatic pagination |
-| `form` | Auto-generated from model |
 | `send email` | SMTP with templates |
 | `redirect` | Route redirection |
 | `on` | Result branching |
@@ -379,7 +396,7 @@ app.kilnx --> Lexer --> Tokens --> Parser --> AST
 ```
 
 - **2 dependencies**: SQLite (pure Go) + bcrypt
-- **~10,700 lines** of Go across 30 files
+- **~15,400 lines** of Go across 30 files
 - **Single binary** output (~15MB)
 - **Zero JavaScript** written by the developer
 
