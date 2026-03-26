@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 )
@@ -51,14 +52,10 @@ func Build(kilnxFile, outputPath string) error {
 		return fmt.Errorf("writing main.go: %w", err)
 	}
 
-	// Write go.mod
+	// Write go.mod (derive Go version from the running toolchain)
+	goVer := strings.TrimPrefix(runtime.Version(), "go")
 	modVersion := kilnxModuleVersion()
-	goMod := fmt.Sprintf(`module kilnx-app
-
-go 1.25.0
-
-require github.com/kilnx-org/kilnx %s
-`, modVersion)
+	goMod := fmt.Sprintf("module kilnx-app\n\ngo %s\n\nrequire github.com/kilnx-org/kilnx %s\n", goVer, modVersion)
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0644); err != nil {
 		return fmt.Errorf("writing go.mod: %w", err)
 	}
@@ -71,8 +68,13 @@ require github.com/kilnx-org/kilnx %s
 		if err != nil {
 			return fmt.Errorf("appending to go.mod: %w", err)
 		}
-		f.WriteString(replaceDirective)
-		f.Close()
+		if _, err := f.WriteString(replaceDirective); err != nil {
+			f.Close()
+			return fmt.Errorf("writing replace directive: %w", err)
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("closing go.mod: %w", err)
+		}
 	}
 
 	// Run go mod tidy to resolve dependencies
@@ -164,7 +166,12 @@ func main() {
 
 	// PaaS platforms (Railway, Fly.io, Render, Cloud Run) set PORT env var
 	if envPort := os.Getenv("PORT"); envPort != "" {
-		fmt.Sscanf(envPort, "%d", &port)
+		var p int
+		if n, err := fmt.Sscanf(envPort, "%d", &p); n == 1 && err == nil && p > 0 && p < 65536 {
+			port = p
+		} else {
+			fmt.Fprintf(os.Stderr, "kilnx: invalid PORT=%q, using %d\n", envPort, port)
+		}
 	}
 
 	for i, arg := range os.Args {

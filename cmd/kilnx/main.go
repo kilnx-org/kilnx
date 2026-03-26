@@ -130,7 +130,12 @@ func cmdRun(filename string) error {
 
 	// PaaS platforms (Railway, Fly.io, Render, Cloud Run) set PORT env var
 	if envPort := os.Getenv("PORT"); envPort != "" {
-		fmt.Sscanf(envPort, "%d", &port)
+		var p int
+		if n, err := fmt.Sscanf(envPort, "%d", &p); n == 1 && err == nil && p > 0 && p < 65536 {
+			port = p
+		} else {
+			fmt.Fprintf(os.Stderr, "kilnx: invalid PORT=%q, using %d\n", envPort, port)
+		}
 	}
 
 	db, err := database.Open(dbPath)

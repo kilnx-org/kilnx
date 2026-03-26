@@ -75,10 +75,9 @@ func (s *Server) Start() error {
 		w.Write(data)
 	})
 
-	// Health check for PaaS platforms and load balancers
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	// Health check for PaaS platforms and load balancers (GET only)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
