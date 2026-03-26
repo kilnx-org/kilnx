@@ -1363,6 +1363,7 @@ func (p *parserState) parseRespondNode() Node {
 
 // parseHTMLNode parses an html block with raw HTML content.
 // The content is extracted from source lines to preserve all characters.
+// Supports nested indentation within the html block.
 //
 //	html
 //	  <div class="card">{user.name}</div>
@@ -1378,11 +1379,22 @@ func (p *parserState) parseHTMLNode() Node {
 	// Collect indented lines as raw HTML
 	if p.current().Type == lexer.TokenIndent {
 		p.advance()
+		depth := 1 // track nested indent/dedent within the html block
 		var htmlLines []string
 		for !p.isEOF() {
-			if p.current().Type == lexer.TokenDedent {
+			if p.current().Type == lexer.TokenIndent {
+				depth++
 				p.advance()
-				break
+				continue
+			}
+			if p.current().Type == lexer.TokenDedent {
+				depth--
+				if depth <= 0 {
+					p.advance()
+					break
+				}
+				p.advance()
+				continue
 			}
 			if p.current().Type == lexer.TokenNewline {
 				p.advance()
@@ -1397,7 +1409,8 @@ func (p *parserState) parseHTMLNode() Node {
 			currentLine := p.current().Line
 			for !p.isEOF() && p.current().Line == currentLine &&
 				p.current().Type != lexer.TokenNewline &&
-				p.current().Type != lexer.TokenDedent {
+				p.current().Type != lexer.TokenDedent &&
+				p.current().Type != lexer.TokenIndent {
 				p.advance()
 			}
 		}

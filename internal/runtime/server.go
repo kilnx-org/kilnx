@@ -231,6 +231,8 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		currentUser: s.getSession(r),
 	}
 
+	pathParams := matchPathParams(p.Path, r.URL.Path)
+
 	// Make current_user available as a query result
 	if ctx.currentUser != nil {
 		ctx.queries["current_user"] = []database.Row{ctx.currentUser.Data}
@@ -254,134 +256,181 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		}
 	}
 
+	// Check if page has an html block
+	hasHTMLBlock := false
+	for _, node := range p.Body {
+		if node.Type == parser.NodeHTML {
+			hasHTMLBlock = true
+			break
+		}
+	}
+
+	// Execute all queries first (needed for both modes)
+	for _, node := range p.Body {
+		if node.Type != parser.NodeQuery || s.db == nil {
+			continue
+		}
+		sql := node.SQL
+
+		queryName := node.Name
+		if queryName == "" {
+			queryName = "_last"
+		}
+		var searchParams map[string]string
+		if fields, ok := searchFilters[queryName]; ok && searchTerm != "" {
+			sql, searchParams = injectSearchFilter(sql, fields, searchTerm)
+		}
+
+		// Handle pagination
+		if node.Paginate > 0 {
+			countSQL := fmt.Sprintf("SELECT COUNT(*) as _count FROM (%s)", sql)
+			params := make(map[string]string)
+			for k, v := range pathParams {
+				params[k] = v
+			}
+			for k, v := range searchParams {
+				params[k] = v
+			}
+			var countRows []database.Row
+			var countErr error
+			if len(params) > 0 {
+				countRows, countErr = s.db.QueryRowsWithParams(countSQL, params)
+			} else {
+				countRows, countErr = s.db.QueryRows(countSQL)
+			}
+			total := 0
+			if countErr == nil && len(countRows) > 0 {
+				fmt.Sscanf(countRows[0]["_count"], "%d", &total)
+			}
+
+			offset := (pageNum - 1) * node.Paginate
+			sql = fmt.Sprintf("%s LIMIT %d OFFSET %d", sql, node.Paginate, offset)
+
+			name := node.Name
+			if name == "" {
+				name = "_last"
+			}
+			ctx.paginate[name] = PaginateInfo{
+				Page:    pageNum,
+				PerPage: node.Paginate,
+				Total:   total,
+				HasPrev: pageNum > 1,
+				HasNext: offset+node.Paginate < total,
+			}
+		}
+
+		params := make(map[string]string)
+		for k, v := range pathParams {
+			params[k] = v
+		}
+		for k, v := range searchParams {
+			params[k] = v
+		}
+		var rows []database.Row
+		var err error
+		if len(params) > 0 {
+			rows, err = s.db.QueryRowsWithParams(sql, params)
+		} else {
+			rows, err = s.db.QueryRows(sql)
+		}
+		if err != nil {
+			continue
+		}
+		ctx.queries[queryName] = rows
+	}
+
 	var body strings.Builder
 
-	for _, node := range p.Body {
-		switch node.Type {
-		case parser.NodeQuery:
-			if s.db != nil {
-				sql := node.SQL
-
-				// Apply search filter if this query has a search node
-				queryName := node.Name
-				if queryName == "" {
-					queryName = "_last"
-				}
-				var searchParams map[string]string
-				if fields, ok := searchFilters[queryName]; ok && searchTerm != "" {
-					sql, searchParams = injectSearchFilter(sql, fields, searchTerm)
-				}
-
-				// Handle pagination
-				if node.Paginate > 0 {
-					countSQL := fmt.Sprintf("SELECT COUNT(*) as _count FROM (%s)", sql)
-					var countRows []database.Row
-					var countErr error
-					if searchParams != nil {
-						countRows, countErr = s.db.QueryRowsWithParams(countSQL, searchParams)
-					} else {
-						countRows, countErr = s.db.QueryRows(countSQL)
-					}
-					total := 0
-					if countErr == nil && len(countRows) > 0 {
-						fmt.Sscanf(countRows[0]["_count"], "%d", &total)
-					}
-
-					offset := (pageNum - 1) * node.Paginate
-					sql = fmt.Sprintf("%s LIMIT %d OFFSET %d", sql, node.Paginate, offset)
-
-					name := node.Name
-					if name == "" {
-						name = "_last"
-					}
-					ctx.paginate[name] = PaginateInfo{
-						Page:    pageNum,
-						PerPage: node.Paginate,
-						Total:   total,
-						HasPrev: pageNum > 1,
-						HasNext: offset+node.Paginate < total,
-					}
-				}
-
-				var rows []database.Row
-				var err error
-				if searchParams != nil {
-					rows, err = s.db.QueryRowsWithParams(sql, searchParams)
-				} else {
-					rows, err = s.db.QueryRows(sql)
-				}
-				if err != nil {
-					body.WriteString(fmt.Sprintf("    <p style=\"color:red\">Query error: %s</p>\n",
-						html.EscapeString(err.Error())))
-					continue
-				}
-				name := node.Name
-				if name == "" {
-					name = "_last"
-				}
-				ctx.queries[name] = rows
+	if hasHTMLBlock {
+		// HTML-first mode: developer controls HTML, Kilnx injects components via placeholders
+		for _, node := range p.Body {
+			switch node.Type {
+			case parser.NodeQuery:
+				// Already executed above
+			case parser.NodeHTML:
+				resolved := resolveComponentPlaceholders(node.HTMLContent, p, ctx, s.getApp(), s.db, r, p.Path)
+				body.WriteString(resolved)
+				body.WriteString("\n")
+			case parser.NodeAlert:
+				body.WriteString(renderAlert(node, ctx))
+			case parser.NodeText:
+				text := s.i18n.TranslateAll(node.Value, r)
+				text = interpolate(text, ctx)
+				body.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
+			default:
+				// table, search, form, list, card, chart, etc. are referenced via placeholders
+				// Skip them here
 			}
+		}
+	} else {
+		// Auto mode: Kilnx generates layout sequentially (for simple pages without html blocks)
+		for _, node := range p.Body {
+			switch node.Type {
+			case parser.NodeQuery:
+				// Already executed above
 
-		case parser.NodeText:
-			text := s.i18n.TranslateAll(node.Value, r)
-			text = interpolate(text, ctx)
-			body.WriteString(fmt.Sprintf("    <p>%s</p>\n", html.EscapeString(text)))
+			case parser.NodeText:
+				text := s.i18n.TranslateAll(node.Value, r)
+				text = interpolate(text, ctx)
+				body.WriteString(fmt.Sprintf("    <p>%s</p>\n", html.EscapeString(text)))
 
-		case parser.NodeList:
-			body.WriteString(renderList(node, ctx))
+			case parser.NodeList:
+				body.WriteString(renderList(node, ctx))
 
-		case parser.NodeTable:
-			body.WriteString(renderTable(node, ctx, p.Path))
+			case parser.NodeTable:
+				body.WriteString(renderTable(node, ctx, p.Path))
+				// Auto-append pagination in auto mode
+				if paginateInfo, ok := ctx.paginate[node.Name]; ok {
+					body.WriteString(fmt.Sprintf("    <div class=\"kilnx-pagination\">%s</div>\n", renderPagination(paginateInfo, p.Path)))
+				}
 
-		case parser.NodeAlert:
-			body.WriteString(renderAlert(node, ctx))
+			case parser.NodeAlert:
+				body.WriteString(renderAlert(node, ctx))
 
-		case parser.NodeForm:
-			body.WriteString(renderForm(node, s.getApp(), s.db, r))
+			case parser.NodeForm:
+				body.WriteString(renderForm(node, s.getApp(), s.db, r))
 
-		case parser.NodeSearch:
-			body.WriteString(renderSearch(node, p.Path))
+			case parser.NodeSearch:
+				body.WriteString(fmt.Sprintf("    <div class=\"kilnx-search\">%s</div>\n", renderSearch(node, p.Path)))
 
-		case parser.NodeHTML:
-			htmlContent := interpolate(node.HTMLContent, ctx)
-			body.WriteString("    " + htmlContent + "\n")
+			case parser.NodeHTML:
+				htmlContent := interpolate(node.HTMLContent, ctx)
+				body.WriteString("    " + htmlContent + "\n")
 
-		case parser.NodeComponent:
-			// Find the component definition
-			for _, comp := range s.getApp().Components {
-				if comp.Name == node.ComponentName {
-					// Build args, interpolating from query context
-					args := make(map[string]string)
-					for k, v := range node.ComponentArgs {
-						args[k] = interpolate(v, ctx)
+			case parser.NodeComponent:
+				for _, comp := range s.getApp().Components {
+					if comp.Name == node.ComponentName {
+						args := make(map[string]string)
+						for k, v := range node.ComponentArgs {
+							args[k] = interpolate(v, ctx)
+						}
+						body.WriteString(renderComponent(comp, args))
+						break
 					}
-					body.WriteString(renderComponent(comp, args))
-					break
 				}
-			}
 
-		case parser.NodeCard:
-			body.WriteString(renderCard(node, ctx))
+			case parser.NodeCard:
+				body.WriteString(renderCard(node, ctx))
 
-		case parser.NodeModal:
-			// Render children as modal body content
-			var modalBody strings.Builder
-			for _, child := range node.Children {
-				switch child.Type {
-				case parser.NodeText:
-					text := interpolate(child.Value, ctx)
-					modalBody.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
-				case parser.NodeHTML:
-					htmlContent := interpolate(child.HTMLContent, ctx)
-					modalBody.WriteString(htmlContent + "\n")
-				case parser.NodeForm:
-					modalBody.WriteString(renderForm(child, s.getApp(), s.db, r))
+			case parser.NodeModal:
+				var modalBody strings.Builder
+				for _, child := range node.Children {
+					switch child.Type {
+					case parser.NodeText:
+						text := interpolate(child.Value, ctx)
+						modalBody.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
+					case parser.NodeHTML:
+						htmlContent := interpolate(child.HTMLContent, ctx)
+						modalBody.WriteString(htmlContent + "\n")
+					case parser.NodeForm:
+						modalBody.WriteString(renderForm(child, s.getApp(), s.db, r))
+					}
 				}
-			}
-			body.WriteString(renderModal(node.ModalID, node.ModalTitle, modalBody.String()))
+				body.WriteString(renderModal(node.ModalID, node.ModalTitle, modalBody.String()))
 
-		case parser.NodeChart:
-			body.WriteString(renderChart(node, ctx))
+			case parser.NodeChart:
+				body.WriteString(renderChart(node, ctx))
+			}
 		}
 	}
 

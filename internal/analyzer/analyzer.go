@@ -990,7 +990,8 @@ func extractSelectColumns(tokens []sqlToken) []columnRef {
 		}
 
 		if tokens[i].typ == stIdent {
-			if i+2 < len(tokens) && tokens[i+1].typ == stPunct && tokens[i+1].value == "." && tokens[i+2].typ == stIdent {
+			if i+2 < len(tokens) && tokens[i+1].typ == stPunct && tokens[i+1].value == "." && (tokens[i+2].typ == stIdent || tokens[i+2].typ == stKeyword) {
+				// Handle table.column where column might be a SQL keyword (e.g., a.date, a.type, a.count)
 				cols = append(cols, columnRef{table: tokens[i].lower, column: tokens[i+2].lower})
 				i += 2
 			} else {

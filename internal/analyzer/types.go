@@ -611,20 +611,42 @@ func checkTemplateInterpolations(app *parser.App, schema *Schema) []Diagnostic {
 
 // checkTableColumnRefs validates that columns declared in table components
 // exist in the model referenced by the table's query.
+// extractSelectAliases returns the set of AS aliases defined in a SELECT query.
+// For example, "SELECT count(*) as total, c.name as contact FROM ..." returns {"total", "contact"}.
+func extractSelectAliases(tokens []sqlToken) map[string]bool {
+	aliases := make(map[string]bool)
+	for i := 0; i < len(tokens); i++ {
+		if tokens[i].typ == stKeyword && tokens[i].lower == "as" && i+1 < len(tokens) {
+			next := tokens[i+1]
+			// Accept both identifiers and keywords as alias names (e.g., "count", "date", "type")
+			if next.typ == stIdent || next.typ == stKeyword {
+				aliases[next.lower] = true
+			}
+		}
+	}
+	return aliases
+}
+
 func checkTableColumnRefs(app *parser.App, schema *Schema) []Diagnostic {
 	qMap := queryModelMap(app.Pages, app.Fragments, app.APIs)
 
 	var diags []Diagnostic
 
+	// Store query SQL for alias extraction
+	type queryInfo struct {
+		modelName string
+		sql       string
+	}
+
 	scanNodes := func(nodes []parser.Node, context string) {
-		// Collect local query-to-model mappings.
-		localQueries := make(map[string]string)
+		// Collect local query-to-model mappings and SQL.
+		localQueries := make(map[string]queryInfo)
 		for _, n := range nodes {
 			if n.Type == parser.NodeQuery && n.Name != "" && n.SQL != "" {
 				tokens := tokenizeSQL(n.SQL)
 				refs := extractTableRefs(tokens)
 				if len(refs) > 0 {
-					localQueries[n.Name] = refs[0].name
+					localQueries[n.Name] = queryInfo{modelName: refs[0].name, sql: n.SQL}
 				}
 			}
 		}
@@ -634,9 +656,12 @@ func checkTableColumnRefs(app *parser.App, schema *Schema) []Diagnostic {
 				continue
 			}
 
+			qi, hasLocal := localQueries[n.Name]
 			modelName := ""
-			if mn, ok := localQueries[n.Name]; ok {
-				modelName = mn
+			querySql := ""
+			if hasLocal {
+				modelName = qi.modelName
+				querySql = qi.sql
 			} else if mn, ok := qMap[n.Name]; ok {
 				modelName = mn
 			}
@@ -649,8 +674,31 @@ func checkTableColumnRefs(app *parser.App, schema *Schema) []Diagnostic {
 				continue
 			}
 
+			// Build a set of known columns: model columns + SQL aliases + columns from all joined tables
+			knownCols := make(map[string]bool)
+			for col := range info.Columns {
+				knownCols[col] = true
+			}
+
+			if querySql != "" {
+				tokens := tokenizeSQL(querySql)
+				// Add SQL aliases (e.g., count(*) as total, c.name as contact)
+				for alias := range extractSelectAliases(tokens) {
+					knownCols[alias] = true
+				}
+				// Add columns from all joined tables
+				refs := extractTableRefs(tokens)
+				for _, ref := range refs {
+					if joinInfo, ok := schema.Tables[ref.name]; ok {
+						for col := range joinInfo.Columns {
+							knownCols[col] = true
+						}
+					}
+				}
+			}
+
 			for _, col := range n.Columns {
-				if _, colExists := info.Columns[col.Field]; !colExists {
+				if !knownCols[col.Field] {
 					diags = append(diags, Diagnostic{
 						Level:   "error",
 						Message: fmt.Sprintf("table column '%s' does not exist in model '%s' (query '%s')", col.Field, modelName, n.Name),

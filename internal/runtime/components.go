@@ -3,11 +3,109 @@ package runtime
 import (
 	"fmt"
 	"html"
+	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
+
+var componentPlaceholderRe = regexp.MustCompile(`\{(table|search|form|paginate|list|alert)\s+([^}]*)\}`)
+
+// resolveComponentPlaceholders replaces {table name}, {search name}, {form name},
+// {paginate name} placeholders in HTML content with rendered components.
+func resolveComponentPlaceholders(content string, page parser.Page, ctx *renderContext, app *parser.App, db *database.DB, r *http.Request, pagePath string) string {
+	// First apply data interpolation for {query.field} values
+	result := interpolate(content, ctx)
+
+	// Then resolve component placeholders
+	result = componentPlaceholderRe.ReplaceAllStringFunc(result, func(match string) string {
+		parts := componentPlaceholderRe.FindStringSubmatch(match)
+		if len(parts) < 3 {
+			return match
+		}
+		keyword := parts[1]
+		args := strings.TrimSpace(parts[2])
+		name := args
+		// Extract name (first word) from args
+		if idx := strings.Index(args, " "); idx > 0 {
+			name = args[:idx]
+		}
+
+		switch keyword {
+		case "table":
+			node := findNodeByName(page.Body, parser.NodeTable, name)
+			if node == nil {
+				node = &parser.Node{Type: parser.NodeTable, Name: name}
+			}
+			return renderTable(*node, ctx, pagePath)
+
+		case "search":
+			node := findNodeByName(page.Body, parser.NodeSearch, name)
+			if node == nil {
+				node = &parser.Node{Type: parser.NodeSearch, Name: name}
+			}
+			return renderSearch(*node, pagePath)
+
+		case "form":
+			node := findNodeByModelName(page.Body, parser.NodeForm, name)
+			if node == nil {
+				node = &parser.Node{Type: parser.NodeForm, ModelName: name}
+			}
+			return renderForm(*node, app, db, r)
+
+		case "paginate":
+			if info, ok := ctx.paginate[name]; ok {
+				return renderPagination(info, pagePath)
+			}
+			return ""
+
+		case "list":
+			node := findNodeByName(page.Body, parser.NodeList, name)
+			if node == nil {
+				node = &parser.Node{Type: parser.NodeList, Name: name}
+			}
+			return renderList(*node, ctx)
+
+		case "alert":
+			// {alert info "message"} or {alert error "message"}
+			alertType := name
+			msg := ""
+			if idx := strings.Index(args, " "); idx > 0 {
+				rest := strings.TrimSpace(args[idx+1:])
+				msg = strings.Trim(rest, "\"")
+			}
+			return fmt.Sprintf("<div class=\"kilnx-alert kilnx-alert-%s\">%s</div>\n",
+				html.EscapeString(alertType), html.EscapeString(msg))
+
+		default:
+			return match
+		}
+	})
+
+	return result
+}
+
+// findNodeByName finds a node in the body by type and name
+func findNodeByName(body []parser.Node, nodeType parser.NodeType, name string) *parser.Node {
+	for i := range body {
+		if body[i].Type == nodeType && body[i].Name == name {
+			return &body[i]
+		}
+	}
+	return nil
+}
+
+// findNodeByModelName finds a form node by model name
+func findNodeByModelName(body []parser.Node, nodeType parser.NodeType, modelName string) *parser.Node {
+	for i := range body {
+		if body[i].Type == nodeType && body[i].ModelName == modelName {
+			return &body[i]
+		}
+	}
+	return nil
+}
 
 // renderList renders a list component from query results.
 // Syntax:
@@ -128,13 +226,7 @@ func renderTable(node parser.Node, ctx *renderContext, currentPath string) strin
 
 	b.WriteString("    </table>\n")
 
-	// Pagination controls
-	if paginateInfo, ok := ctx.paginate[node.Name]; ok {
-		b.WriteString(renderPagination(paginateInfo, currentPath))
-	}
 
-	b.WriteString("      </div>\n") // close kilnx-card-content
-	b.WriteString("    </div>\n")   // close kilnx-card
 
 	return b.String()
 }
@@ -167,26 +259,24 @@ func renderPagination(info PaginateInfo, currentPath string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("    <div class=\"kilnx-pagination\">\n")
 
 	if info.HasPrev {
-		b.WriteString(fmt.Sprintf("      <a href=\"%s?page=%d\" hx-get=\"%s?page=%d\" hx-target=\"main\" hx-push-url=\"true\">&laquo; Previous</a>\n",
+		b.WriteString(fmt.Sprintf("<a href=\"%s?page=%d\" hx-get=\"%s?page=%d\" hx-target=\"main\" hx-push-url=\"true\" class=\"kilnx-page-link\">&laquo; Previous</a> ",
 			currentPath, info.Page-1, currentPath, info.Page-1))
 	} else {
-		b.WriteString("      <span class=\"disabled\">&laquo; Previous</span>\n")
+		b.WriteString("<span class=\"disabled\">&laquo; Previous</span> ")
 	}
 
 	totalPages := (info.Total + info.PerPage - 1) / info.PerPage
-	b.WriteString(fmt.Sprintf("      <span class=\"kilnx-page-info\">Page %d of %d</span>\n", info.Page, totalPages))
+	b.WriteString(fmt.Sprintf("<span class=\"kilnx-page-info\">Page %d of %d</span> ", info.Page, totalPages))
 
 	if info.HasNext {
-		b.WriteString(fmt.Sprintf("      <a href=\"%s?page=%d\" hx-get=\"%s?page=%d\" hx-target=\"main\" hx-push-url=\"true\">Next &raquo;</a>\n",
+		b.WriteString(fmt.Sprintf("<a href=\"%s?page=%d\" hx-get=\"%s?page=%d\" hx-target=\"main\" hx-push-url=\"true\" class=\"kilnx-page-link\">Next &raquo;</a>",
 			currentPath, info.Page+1, currentPath, info.Page+1))
 	} else {
-		b.WriteString("      <span class=\"disabled\">Next &raquo;</span>\n")
+		b.WriteString("<span class=\"disabled\">Next &raquo;</span>")
 	}
 
-	b.WriteString("    </div>\n")
 	return b.String()
 }
 
@@ -208,12 +298,10 @@ func renderSearch(node parser.Node, currentPath string) string {
 		placeholder = "Search " + strings.Join(node.SearchFields, ", ")
 	}
 
-	return fmt.Sprintf(`    <div class="kilnx-search">
-      <input type="search" name="q" placeholder="%s"
+	return fmt.Sprintf(`    <input type="search" name="q" placeholder="%s"
         hx-get="%s" hx-trigger="input changed delay:300ms, search"
         hx-target="main" hx-push-url="true"
-        hx-include="this" autocomplete="off">
-    </div>
+        hx-include="this" autocomplete="off" class="kilnx-search-input">
 `, html.EscapeString(placeholder), html.EscapeString(currentPath))
 }
 

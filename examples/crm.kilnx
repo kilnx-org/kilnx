@@ -51,9 +51,12 @@ layout main
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{page.title} - Kilnx CRM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     {kilnx.js}
     <style>
     {kilnx.css}
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
     .pipeline { display: flex; gap: 1rem; }
     .pipeline-col { flex: 1; background: var(--bg-elevated); padding: 1rem; border-radius: 8px; border: 1px solid var(--border); }
     .deal-card { background: var(--bg-subtle); padding: 0.75rem; margin-bottom: 0.5rem; border-radius: 6px; border: 1px solid var(--border); }
@@ -69,11 +72,27 @@ layout main
 page / title "Dashboard" layout main requires auth
   query pipeline: SELECT stage, count(*) as count, COALESCE(sum(value), 0) as total FROM deal GROUP BY stage
   query recent: SELECT d.title, d.value, d.stage, c.name as contact FROM deal d LEFT JOIN contact c ON d.contact_id = c.id ORDER BY d.rowid DESC LIMIT 5
-  alert info "Welcome back, {current_user.name}."
   table pipeline
     columns: stage, count, total
   table recent
     columns: title, contact, value, stage
+
+  html
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)">
+      <h1 style="font-size:1.5rem;font-weight:700;letter-spacing:-0.025em;margin:0">Dashboard</h1>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:1.5rem">
+      <div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border)">
+        <h3 style="font-size:0.9375rem;font-weight:600;margin:0">Pipeline</h3>
+      </div>
+      <div>{table pipeline}</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:1.5rem">
+      <div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border)">
+        <h3 style="font-size:0.9375rem;font-weight:600;margin:0">Recent Deals</h3>
+      </div>
+      <div>{table recent}</div>
+    </div>
 
 page /contacts title "Contacts" layout main requires auth
   search contacts in name, email, company
@@ -83,8 +102,27 @@ page /contacts title "Contacts" layout main requires auth
     row action: edit /contacts/:id/edit
     row action: delete /contacts/:id/delete
 
+  html
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)">
+      <h1 style="font-size:1.5rem;font-weight:700;letter-spacing:-0.025em;margin:0">Contacts</h1>
+      <a href="/contacts/new" style="display:inline-flex;align-items:center;gap:0.5rem;padding:0.5rem 1rem;background:var(--primary);color:var(--primary-foreground);border-radius:var(--radius);font-size:0.875rem;font-weight:500;text-decoration:none">New Contact</a>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+      <div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border)">
+        {search contacts}
+      </div>
+      <div>{table contacts}</div>
+      <div style="padding:0.75rem 1.25rem;border-top:1px solid var(--border)">{paginate contacts}</div>
+    </div>
+
 page /contacts/new title "New Contact" layout main requires auth
   form contact
+
+  html
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)">
+      <h1 style="font-size:1.5rem;font-weight:700;letter-spacing:-0.025em;margin:0">New Contact</h1>
+    </div>
+    {form contact}
 
 action /contacts/new requires auth
   validate contact
@@ -99,9 +137,58 @@ page /contacts/:id title "Contact" layout main requires auth
     columns: title, value, stage
   table activities
     columns: type, description, date
+  form activity
+
+  html
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)">
+      <h1 style="font-size:1.5rem;font-weight:700;letter-spacing:-0.025em;margin:0">{contact.name}</h1>
+      <a href="/contacts/{contact.id}/edit" style="display:inline-flex;align-items:center;gap:0.5rem;padding:0.5rem 1rem;background:var(--secondary);color:var(--foreground);border:1px solid var(--border);border-radius:var(--radius);font-size:0.875rem;font-weight:500;text-decoration:none">Edit</a>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem">
+      <div style="padding:1rem;background:var(--card);border:1px solid var(--border);border-radius:var(--radius)">
+        <p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted-foreground);margin-bottom:0.25rem">Email</p>
+        <p style="margin:0;color:var(--foreground)">{contact.email}</p>
+      </div>
+      <div style="padding:1rem;background:var(--card);border:1px solid var(--border);border-radius:var(--radius)">
+        <p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted-foreground);margin-bottom:0.25rem">Company</p>
+        <p style="margin:0;color:var(--foreground)">{contact.company}</p>
+      </div>
+      <div style="padding:1rem;background:var(--card);border:1px solid var(--border);border-radius:var(--radius)">
+        <p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted-foreground);margin-bottom:0.25rem">Phone</p>
+        <p style="margin:0;color:var(--foreground)">{contact.phone}</p>
+      </div>
+      <div style="padding:1rem;background:var(--card);border:1px solid var(--border);border-radius:var(--radius)">
+        <p style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted-foreground);margin-bottom:0.25rem">Role</p>
+        <p style="margin:0;color:var(--foreground)">{contact.role}</p>
+      </div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:1.5rem">
+      <div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border)">
+        <h3 style="font-size:0.9375rem;font-weight:600;margin:0">Deals</h3>
+      </div>
+      <div>{table deals}</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:1.5rem">
+      <div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border)">
+        <h3 style="font-size:0.9375rem;font-weight:600;margin:0">Activities</h3>
+      </div>
+      <div>{table activities}</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+      <div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border)">
+        <h3 style="font-size:0.9375rem;font-weight:600;margin:0">Log Activity</h3>
+      </div>
+      <div style="padding:1.25rem">{form activity}</div>
+    </div>
 
 page /contacts/:id/edit title "Edit Contact" layout main requires auth
   form contact with query: SELECT * FROM contact WHERE id = :id
+
+  html
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)">
+      <h1 style="font-size:1.5rem;font-weight:700;letter-spacing:-0.025em;margin:0">Edit Contact</h1>
+    </div>
+    {form contact}
 
 action /contacts/:id/edit requires auth
   validate contact
@@ -119,8 +206,27 @@ page /deals title "Deals" layout main requires auth
     columns: title, contact, value, stage
     row action: edit /deals/:id/edit
 
+  html
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)">
+      <h1 style="font-size:1.5rem;font-weight:700;letter-spacing:-0.025em;margin:0">Deals</h1>
+      <a href="/deals/new" style="display:inline-flex;align-items:center;gap:0.5rem;padding:0.5rem 1rem;background:var(--primary);color:var(--primary-foreground);border-radius:var(--radius);font-size:0.875rem;font-weight:500;text-decoration:none">New Deal</a>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+      <div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border)">
+        {search deals}
+      </div>
+      <div>{table deals}</div>
+      <div style="padding:0.75rem 1.25rem;border-top:1px solid var(--border)">{paginate deals}</div>
+    </div>
+
 page /deals/new title "New Deal" layout main requires auth
   form deal
+
+  html
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)">
+      <h1 style="font-size:1.5rem;font-weight:700;letter-spacing:-0.025em;margin:0">New Deal</h1>
+    </div>
+    {form deal}
 
 action /deals/new requires auth
   validate deal
@@ -129,6 +235,12 @@ action /deals/new requires auth
 
 page /deals/:id/edit title "Edit Deal" layout main requires auth
   form deal with query: SELECT * FROM deal WHERE id = :id
+
+  html
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)">
+      <h1 style="font-size:1.5rem;font-weight:700;letter-spacing:-0.025em;margin:0">Edit Deal</h1>
+    </div>
+    {form deal}
 
 action /deals/:id/edit requires auth
   validate deal
@@ -140,8 +252,23 @@ page /activities title "Activities" layout main requires auth
   table activities
     columns: type, contact, description, date
 
+  html
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)">
+      <h1 style="font-size:1.5rem;font-weight:700;letter-spacing:-0.025em;margin:0">Activities</h1>
+      <a href="/activities/new" style="display:inline-flex;align-items:center;gap:0.5rem;padding:0.5rem 1rem;background:var(--primary);color:var(--primary-foreground);border-radius:var(--radius);font-size:0.875rem;font-weight:500;text-decoration:none">Log Activity</a>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+      <div>{table activities}</div>
+    </div>
+
 page /activities/new title "Log Activity" layout main requires auth
   form activity
+
+  html
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)">
+      <h1 style="font-size:1.5rem;font-weight:700;letter-spacing:-0.025em;margin:0">Log Activity</h1>
+    </div>
+    {form activity}
 
 action /activities/new requires auth
   validate activity
