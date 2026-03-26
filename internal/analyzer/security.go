@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/kilnx-org/kilnx/internal/parser"
@@ -124,6 +125,9 @@ func checkPasswordExposure(app *parser.App, schema *Schema) []Diagnostic {
 				passwordTables[m.Name] = append(passwordTables[m.Name], colName)
 			}
 		}
+	}
+	for k := range passwordTables {
+		sort.Strings(passwordTables[k])
 	}
 	if len(passwordTables) == 0 {
 		return nil
