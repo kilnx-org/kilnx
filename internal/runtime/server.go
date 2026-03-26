@@ -440,9 +440,12 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 	}
 	title = interpolate(title, ctx)
 
-	// Prepend page header to body content
-	pageHeader := fmt.Sprintf("    <div class=\"kilnx-page-header\">\n      <div>\n        <h1>%s</h1>\n      </div>\n    </div>\n", html.EscapeString(title))
-	bodyContent := pageHeader + body.String()
+	// Prepend page header only in auto mode (no html block)
+	bodyContent := body.String()
+	if !hasHTMLBlock {
+		pageHeader := fmt.Sprintf("    <div class=\"kilnx-page-header\">\n      <div>\n        <h1>%s</h1>\n      </div>\n    </div>\n", html.EscapeString(title))
+		bodyContent = pageHeader + bodyContent
+	}
 
 	appName := ""
 	app := s.getApp()

@@ -172,18 +172,7 @@ func renderTable(node parser.Node, ctx *renderContext, currentPath string) strin
 		return "    <p style=\"color:#888\">No items found.</p>\n"
 	}
 
-	// Card title: use query name, capitalize first letter
-	cardTitle := node.Name
-	if cardTitle != "" && cardTitle != "_last" {
-		cardTitle = strings.ToUpper(cardTitle[:1]) + cardTitle[1:]
-	} else {
-		cardTitle = "Data"
-	}
-
 	var b strings.Builder
-	b.WriteString("    <div class=\"kilnx-card\">\n")
-	b.WriteString(fmt.Sprintf("      <div class=\"kilnx-card-header\">\n        <h3 class=\"kilnx-card-title\">%s</h3>\n      </div>\n", html.EscapeString(cardTitle)))
-	b.WriteString("      <div class=\"kilnx-card-content\">\n")
 	b.WriteString("    <table class=\"kilnx-table\">\n")
 
 	// Header
