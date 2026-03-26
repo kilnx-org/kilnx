@@ -54,6 +54,10 @@ func Build(kilnxFile, outputPath string) error {
 
 	// Write go.mod (derive Go version from the running toolchain)
 	goVer := strings.TrimPrefix(runtime.Version(), "go")
+	// go.mod wants major.minor only (e.g. "1.24"), not patch level
+	if parts := strings.SplitN(goVer, ".", 3); len(parts) >= 2 {
+		goVer = parts[0] + "." + parts[1]
+	}
 	modVersion := kilnxModuleVersion()
 	goMod := fmt.Sprintf("module kilnx-app\n\ngo %s\n\nrequire github.com/kilnx-org/kilnx %s\n", goVer, modVersion)
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0644); err != nil {

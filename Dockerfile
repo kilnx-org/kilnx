@@ -7,7 +7,7 @@
 # The platform sets PORT env var automatically; the binary reads it.
 
 # Build stage: install kilnx from source, then compile the .kilnx app
-FROM golang:1.25-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /kilnx-src
 

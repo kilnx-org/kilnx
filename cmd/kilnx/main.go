@@ -197,7 +197,11 @@ func cmdMigrate(filename string) error {
 			fmt.Printf("  + Created table '%s'\n", table)
 		} else if strings.HasPrefix(stmt, "ALTER TABLE") {
 			parts := strings.Fields(stmt)
-			fmt.Printf("  + Added column '%s' to '%s'\n", parts[5], parts[2])
+			if len(parts) > 5 {
+				fmt.Printf("  + Added column '%s' to '%s'\n", parts[5], parts[2])
+			} else {
+				fmt.Printf("  %s\n", stmt)
+			}
 		} else {
 			fmt.Printf("  %s\n", stmt)
 		}

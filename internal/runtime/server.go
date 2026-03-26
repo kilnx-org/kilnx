@@ -89,7 +89,11 @@ func (s *Server) Start() error {
 		if exceeded, rule := s.rateLimiter.CheckWithRule(r, s.getSession(r)); exceeded {
 			// Apply delay if configured
 			if rule != nil && rule.DelaySecs > 0 {
-				time.Sleep(time.Duration(rule.DelaySecs) * time.Second)
+				delay := time.Duration(rule.DelaySecs) * time.Second
+				if delay > 5*time.Second {
+					delay = 5 * time.Second
+				}
+				time.Sleep(delay)
 			}
 			msg := "Too many requests"
 			if rule != nil && rule.Message != "" {
