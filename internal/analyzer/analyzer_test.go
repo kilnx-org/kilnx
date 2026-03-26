@@ -1428,3 +1428,322 @@ func TestExtractSubqueries(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckTemplateInterpolations_ValidField(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+				{Name: "email", Type: parser.FieldEmail},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/users",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "users", SQL: "SELECT * FROM user"},
+				{Type: parser.NodeHTML, HTMLContent: `<p>{users.name}</p><p>{users.email}</p>`},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "template reference") {
+			t.Errorf("unexpected template error: %s", d.Message)
+		}
+	}
+}
+
+func TestCheckTemplateInterpolations_InvalidField(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/users",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "users", SQL: "SELECT * FROM user"},
+				{Type: parser.NodeHTML, HTMLContent: `<p>{users.nonexistent}</p>`},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "nonexistent") && strings.Contains(d.Message, "does not exist in model 'user'") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected error for nonexistent field, got: %v", diags)
+	}
+}
+
+func TestCheckTemplateInterpolations_UnknownQuery(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/users",
+			Body: []parser.Node{
+				{Type: parser.NodeHTML, HTMLContent: `<p>{missing.name}</p>`},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "unknown query 'missing'") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected error for unknown query, got: %v", diags)
+	}
+}
+
+func TestCheckTemplateInterpolations_ReservedNames(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/users",
+			Body: []parser.Node{
+				{Type: parser.NodeHTML, HTMLContent: `<title>{page.title}</title>{kilnx.css}{t.greeting}`},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "template reference") {
+			t.Errorf("reserved names should not trigger errors: %s", d.Message)
+		}
+	}
+}
+
+func TestCheckTemplateInterpolations_BuiltinCount(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/users",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "users", SQL: "SELECT * FROM user"},
+				{Type: parser.NodeHTML, HTMLContent: `<span>{users.count} users</span>`},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "count") && strings.Contains(d.Message, "template reference") {
+			t.Errorf(".count is a built-in field and should not trigger error: %s", d.Message)
+		}
+	}
+}
+
+func TestCheckTemplateInterpolations_Fragment(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "post",
+			Fields: []parser.Field{
+				{Name: "title", Type: parser.FieldText},
+				{Name: "body", Type: parser.FieldRichtext},
+			},
+		}},
+		Fragments: []parser.Page{{
+			Path: "/posts/row",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "post", SQL: "SELECT * FROM post WHERE id = :id"},
+				{Type: parser.NodeHTML, HTMLContent: `<div>{post.title}</div><div>{post.missing}</div>`},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	foundMissing := false
+	foundTitle := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "template reference") {
+			if strings.Contains(d.Message, "missing") {
+				foundMissing = true
+			}
+			if strings.Contains(d.Message, "title") {
+				foundTitle = true
+			}
+		}
+	}
+	if !foundMissing {
+		t.Errorf("expected error for {post.missing}, got: %v", diags)
+	}
+	if foundTitle {
+		t.Errorf("should not error for valid {post.title}")
+	}
+}
+
+func TestCheckTableColumnRefs_Valid(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+				{Name: "email", Type: parser.FieldEmail},
+				{Name: "phone", Type: parser.FieldPhone},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/users",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "users", SQL: "SELECT * FROM user"},
+				{Type: parser.NodeTable, Name: "users", Columns: []parser.TableColumn{
+					{Field: "name"},
+					{Field: "email"},
+					{Field: "phone"},
+				}},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "table column") {
+			t.Errorf("unexpected table column error: %s", d.Message)
+		}
+	}
+}
+
+func TestCheckTableColumnRefs_InvalidColumn(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+				{Name: "email", Type: parser.FieldEmail},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/users",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "users", SQL: "SELECT * FROM user"},
+				{Type: parser.NodeTable, Name: "users", Columns: []parser.TableColumn{
+					{Field: "name"},
+					{Field: "email"},
+					{Field: "phone"},
+					{Field: "address"},
+				}},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	foundPhone := false
+	foundAddress := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "table column") {
+			if strings.Contains(d.Message, "'phone'") && strings.Contains(d.Message, "model 'user'") {
+				foundPhone = true
+			}
+			if strings.Contains(d.Message, "'address'") && strings.Contains(d.Message, "model 'user'") {
+				foundAddress = true
+			}
+		}
+	}
+	if !foundPhone {
+		t.Errorf("expected error for phone column, got: %v", diags)
+	}
+	if !foundAddress {
+		t.Errorf("expected error for address column, got: %v", diags)
+	}
+}
+
+func TestCheckTableColumnRefs_IdColumn(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/users",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "users", SQL: "SELECT * FROM user"},
+				{Type: parser.NodeTable, Name: "users", Columns: []parser.TableColumn{
+					{Field: "id"},
+					{Field: "name"},
+				}},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "table column") {
+			t.Errorf("id is auto-generated and should be valid: %s", d.Message)
+		}
+	}
+}
+
+func TestCheckTableColumnRefs_ReferenceField(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{
+			{
+				Name: "user",
+				Fields: []parser.Field{
+					{Name: "name", Type: parser.FieldText},
+				},
+			},
+			{
+				Name: "post",
+				Fields: []parser.Field{
+					{Name: "title", Type: parser.FieldText},
+					{Name: "author", Type: parser.FieldReference, Reference: "user"},
+				},
+			},
+		},
+		Pages: []parser.Page{{
+			Path: "/posts",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "posts", SQL: "SELECT * FROM post"},
+				{Type: parser.NodeTable, Name: "posts", Columns: []parser.TableColumn{
+					{Field: "title"},
+					{Field: "author_id"},
+				}},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "table column") {
+			t.Errorf("author_id should be valid for reference field: %s", d.Message)
+		}
+	}
+}
+
+func TestQueryModelMap(t *testing.T) {
+	pages := []parser.Page{{
+		Path: "/users",
+		Body: []parser.Node{
+			{Type: parser.NodeQuery, Name: "users", SQL: "SELECT * FROM user"},
+			{Type: parser.NodeQuery, Name: "posts", SQL: "SELECT * FROM post WHERE author_id = :id"},
+		},
+	}}
+
+	m := queryModelMap(pages, nil, nil)
+	if m["users"] != "user" {
+		t.Errorf("expected users -> user, got %s", m["users"])
+	}
+	if m["posts"] != "post" {
+		t.Errorf("expected posts -> post, got %s", m["posts"])
+	}
+}
