@@ -5,27 +5,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"runtime/debug"
 	"strings"
 )
 
-// Version is set at build time via ldflags, falls back to debug.ReadBuildInfo.
-var Version = ""
-
-func kilnxModuleVersion() string {
-	if Version != "" {
-		return Version
-	}
-	if info, ok := debug.ReadBuildInfo(); ok {
-		return info.Main.Version
-	}
-	return "latest"
-}
-
 // Build compiles a .kilnx file into a standalone binary.
-// It creates a temporary Go module that imports kilnx packages,
-// so it works without the kilnx source tree being present.
+// It creates a temporary main.go inside the kilnx source tree
+// (cmd/_build/) that embeds the .kilnx source, then compiles it.
+// Requires the kilnx source tree to be present (development, CI, or Docker).
 func Build(kilnxFile, outputPath string) error {
 	source, err := os.ReadFile(kilnxFile)
 	if err != nil {
@@ -37,62 +23,30 @@ func Build(kilnxFile, outputPath string) error {
 		outputPath = strings.TrimSuffix(base, filepath.Ext(base))
 	}
 
-	absOutput, _ := filepath.Abs(outputPath)
-
-	// Create temporary build directory
-	tmpDir, err := os.MkdirTemp("", "kilnx-build-*")
-	if err != nil {
-		return fmt.Errorf("creating temp dir: %w", err)
+	kilnxRoot := findKilnxRoot()
+	if kilnxRoot == "" {
+		return fmt.Errorf("could not find kilnx source tree (looked from CWD and executable path).\n" +
+			"Run from within the kilnx repo, or use Docker:\n" +
+			"  docker build --build-arg KILNX_FILE=app.kilnx -t myapp .")
 	}
-	defer os.RemoveAll(tmpDir)
 
-	// Write main.go
+	// Create a temporary build entry point inside the kilnx tree
+	buildDir := filepath.Join(kilnxRoot, "cmd", "_build")
+	os.MkdirAll(buildDir, 0755)
+	defer os.RemoveAll(buildDir)
+
 	mainGo := generateMainGo(string(source))
-	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(mainGo), 0644); err != nil {
+	mainPath := filepath.Join(buildDir, "main.go")
+	if err := os.WriteFile(mainPath, []byte(mainGo), 0644); err != nil {
 		return fmt.Errorf("writing main.go: %w", err)
 	}
 
-	// Write go.mod (derive Go version from the running toolchain)
-	goVer := strings.TrimPrefix(runtime.Version(), "go")
-	// go.mod wants major.minor only (e.g. "1.24"), not patch level
-	if parts := strings.SplitN(goVer, ".", 3); len(parts) >= 2 {
-		goVer = parts[0] + "." + parts[1]
-	}
-	modVersion := kilnxModuleVersion()
-	goMod := fmt.Sprintf("module kilnx-app\n\ngo %s\n\nrequire github.com/kilnx-org/kilnx %s\n", goVer, modVersion)
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0644); err != nil {
-		return fmt.Errorf("writing go.mod: %w", err)
-	}
-
-	// If running from within the kilnx source tree, use replace directive
-	// so local changes are picked up and no network fetch is needed
-	if kilnxRoot := findKilnxRoot(); kilnxRoot != "" {
-		replaceDirective := fmt.Sprintf("\nreplace github.com/kilnx-org/kilnx => %s\n", kilnxRoot)
-		f, err := os.OpenFile(filepath.Join(tmpDir, "go.mod"), os.O_APPEND|os.O_WRONLY, 0644)
-		if err != nil {
-			return fmt.Errorf("appending to go.mod: %w", err)
-		}
-		if _, err := f.WriteString(replaceDirective); err != nil {
-			f.Close()
-			return fmt.Errorf("writing replace directive: %w", err)
-		}
-		if err := f.Close(); err != nil {
-			return fmt.Errorf("closing go.mod: %w", err)
-		}
-	}
-
-	// Run go mod tidy to resolve dependencies
-	tidy := exec.Command("go", "mod", "tidy")
-	tidy.Dir = tmpDir
-	tidy.Stderr = os.Stderr
-	if err := tidy.Run(); err != nil {
-		return fmt.Errorf("go mod tidy: %w", err)
-	}
+	absOutput, _ := filepath.Abs(outputPath)
 
 	fmt.Printf("Building %s...\n", filepath.Base(absOutput))
 
-	cmd := exec.Command("go", "build", "-o", absOutput, ".")
-	cmd.Dir = tmpDir
+	cmd := exec.Command("go", "build", "-o", absOutput, "./cmd/_build/")
+	cmd.Dir = kilnxRoot
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
