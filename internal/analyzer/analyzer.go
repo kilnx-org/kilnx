@@ -84,6 +84,7 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkAuthRef(app, schema)...)
 	diags = append(diags, checkModelRefs(app, schema)...)
 	diags = append(diags, checkAllSQL(app, schema)...)
+	diags = append(diags, checkSecurity(app, schema)...)
 
 	return diags
 }
