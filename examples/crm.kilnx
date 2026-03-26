@@ -1,0 +1,172 @@
+config
+  database: env DATABASE_URL default "crm.db"
+  port: 3000
+
+auth
+  table: user
+  identity: email
+  password: password
+  login: /login
+  after login: /contacts
+
+model user
+  name: text required min 2
+  email: email unique required
+  password: password required
+  role: option [admin, sales] default sales
+  created: timestamp auto
+
+model contact
+  name: text required max 120
+  email: email unique
+  phone: phone
+  company: text
+  role: text
+  notes: richtext
+  created: timestamp auto
+
+model deal
+  title: text required max 200
+  value: float default 0
+  stage: option [lead, qualified, proposal, negotiation, won, lost] default lead
+  contact: contact required
+  notes: richtext
+  created: timestamp auto
+
+model activity
+  type: option [call, email, meeting, note]
+  description: richtext required
+  date: timestamp auto
+  contact: contact required
+
+permissions
+  admin: all
+  sales: read contact, write contact, read deal, write deal, read activity, write activity
+
+layout main
+  html
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{page.title} - Kilnx CRM</title>
+    {kilnx.js}
+    <style>
+    {kilnx.css}
+    .pipeline { display: flex; gap: 1rem; }
+    .pipeline-col { flex: 1; background: var(--bg-elevated); padding: 1rem; border-radius: 8px; border: 1px solid var(--border); }
+    .deal-card { background: var(--bg-subtle); padding: 0.75rem; margin-bottom: 0.5rem; border-radius: 6px; border: 1px solid var(--border); }
+    </style>
+    </head>
+    <body>
+    {nav}
+    <main>{page.content}</main>
+    <footer style="margin-top:2rem;padding:1rem;font-size:0.8rem;color:#aaa">Built with kilnx.</footer>
+    </body>
+    </html>
+
+page / title "Dashboard" layout main requires auth
+  query pipeline: SELECT stage, count(*) as count, COALESCE(sum(value), 0) as total FROM deal GROUP BY stage
+  query recent: SELECT d.title, d.value, d.stage, c.name as contact FROM deal d LEFT JOIN contact c ON d.contact_id = c.id ORDER BY d.rowid DESC LIMIT 5
+  alert info "Welcome back, {current_user.name}."
+  table pipeline
+    columns: stage, count, total
+  table recent
+    columns: title, contact, value, stage
+
+page /contacts title "Contacts" layout main requires auth
+  search contacts in name, email, company
+  query contacts: SELECT id, name, email, company, phone FROM contact ORDER BY name ASC paginate 25
+  table contacts
+    columns: name, email, company, phone
+    row action: edit /contacts/:id/edit
+    row action: delete /contacts/:id/delete
+
+page /contacts/new title "New Contact" layout main requires auth
+  form contact
+
+action /contacts/new requires auth
+  validate contact
+  query: INSERT INTO contact (name, email, phone, company, role, notes) VALUES (:name, :email, :phone, :company, :role, :notes)
+  redirect /contacts
+
+page /contacts/:id title "Contact" layout main requires auth
+  query contact: SELECT * FROM contact WHERE id = :id
+  query deals: SELECT id, title, value, stage FROM deal WHERE contact_id = :id ORDER BY rowid DESC
+  query activities: SELECT id, type, description, date FROM activity WHERE contact_id = :id ORDER BY rowid DESC LIMIT 10
+  table deals
+    columns: title, value, stage
+  table activities
+    columns: type, description, date
+
+page /contacts/:id/edit title "Edit Contact" layout main requires auth
+  form contact with query: SELECT * FROM contact WHERE id = :id
+
+action /contacts/:id/edit requires auth
+  validate contact
+  query: UPDATE contact SET name = :name, email = :email, phone = :phone, company = :company, role = :role, notes = :notes WHERE id = :id
+  redirect /contacts/:id
+
+action /contacts/:id/delete method POST requires auth
+  query: DELETE FROM contact WHERE id = :id
+  respond fragment delete
+
+page /deals title "Deals" layout main requires auth
+  search deals in title
+  query deals: SELECT d.id, d.title, d.value, d.stage, c.name as contact FROM deal d LEFT JOIN contact c ON d.contact_id = c.id ORDER BY d.value DESC paginate 25
+  table deals
+    columns: title, contact, value, stage
+    row action: edit /deals/:id/edit
+
+page /deals/new title "New Deal" layout main requires auth
+  form deal
+
+action /deals/new requires auth
+  validate deal
+  query: INSERT INTO deal (title, value, stage, contact_id, notes) VALUES (:title, :value, :stage, :contact, :notes)
+  redirect /deals
+
+page /deals/:id/edit title "Edit Deal" layout main requires auth
+  form deal with query: SELECT * FROM deal WHERE id = :id
+
+action /deals/:id/edit requires auth
+  validate deal
+  query: UPDATE deal SET title = :title, value = :value, stage = :stage, notes = :notes WHERE id = :id
+  redirect /deals
+
+page /activities title "Activities" layout main requires auth
+  query activities: SELECT a.id, a.type, a.description, a.date, c.name as contact FROM activity a LEFT JOIN contact c ON a.contact_id = c.id ORDER BY a.rowid DESC paginate 50
+  table activities
+    columns: type, contact, description, date
+
+page /activities/new title "Log Activity" layout main requires auth
+  form activity
+
+action /activities/new requires auth
+  validate activity
+  query: INSERT INTO activity (type, description, contact_id) VALUES (:type, :description, :contact)
+  redirect /activities
+
+stream /stream/deals requires auth
+  query: SELECT id, title, value, stage FROM deal ORDER BY rowid DESC LIMIT 5
+  every 5s
+
+api /api/v1/contacts requires auth
+  query contacts: SELECT id, name, email, company, phone FROM contact ORDER BY name ASC paginate 20
+
+api /api/v1/deals requires auth
+  query deals: SELECT id, title, value, stage FROM deal ORDER BY rowid DESC paginate 20
+
+log
+  level: info
+  requests: all
+  errors: all
+
+test "dashboard loads"
+  visit /
+  expect page / contains "Dashboard"
+
+test "contacts page loads"
+  visit /contacts
+  expect page /contacts contains "Contacts"

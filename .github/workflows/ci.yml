@@ -1,0 +1,165 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build CLI
+        run: go build -o kilnx ./cmd/kilnx/
+
+      - name: Unit tests
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build CLI
+        run: go build -o kilnx ./cmd/kilnx/
+
+      - name: Check examples (hello)
+        run: ./kilnx check examples/hello.kilnx
+
+      - name: Check examples (blog)
+        run: ./kilnx check examples/blog.kilnx
+
+  kilnx-tests:
+    name: Kilnx Declarative Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build CLI
+        run: go build -o kilnx ./cmd/kilnx/
+
+      - name: Run blog tests
+        run: ./kilnx test examples/blog.kilnx
+
+  kilnx-build:
+    name: Build Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build CLI
+        run: go build -o kilnx ./cmd/kilnx/
+
+      - name: Build hello example
+        run: ./kilnx build examples/hello.kilnx -o hello
+
+      - name: Build blog example
+        run: ./kilnx build examples/blog.kilnx -o blog
+
+      - name: Verify binaries exist
+        run: |
+          test -f hello && echo "hello binary OK ($(du -h hello | cut -f1))"
+          test -f blog && echo "blog binary OK ($(du -h blog | cut -f1))"
+
+      - name: Verify hello binary starts and serves /healthz
+        run: |
+          ./hello &
+          PID=$!
+          sleep 2
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/healthz)
+          kill $PID
+          if [ "$STATUS" != "200" ]; then
+            echo "healthz returned $STATUS, expected 200"
+            exit 1
+          fi
+          echo "healthz OK"
+
+      - name: Verify PORT env var
+        run: |
+          PORT=9090 ./hello &
+          PID=$!
+          sleep 2
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9090/healthz)
+          kill $PID
+          if [ "$STATUS" != "200" ]; then
+            echo "PORT=9090 healthz returned $STATUS, expected 200"
+            exit 1
+          fi
+          echo "PORT override OK"
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "Files not formatted:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg KILNX_FILE=examples/hello.kilnx \
+            -t kilnx-test .
+
+      - name: Test Docker image
+        run: |
+          docker run -d -p 8080:8080 -e PORT=8080 --name kilnx-test kilnx-test
+          sleep 2
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/healthz)
+          docker logs kilnx-test
+          docker stop kilnx-test
+          if [ "$STATUS" != "200" ]; then
+            echo "Docker healthz returned $STATUS, expected 200"
+            exit 1
+          fi
+          echo "Docker image OK"
