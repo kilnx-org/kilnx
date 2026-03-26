@@ -5,12 +5,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 )
 
+// Version is set at build time via ldflags, falls back to debug.ReadBuildInfo.
+var Version = ""
+
+func kilnxModuleVersion() string {
+	if Version != "" {
+		return Version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		return info.Main.Version
+	}
+	return "latest"
+}
+
 // Build compiles a .kilnx file into a standalone binary.
-// It creates a small wrapper main.go inside the kilnx source tree
-// that embeds the .kilnx source, then compiles it.
+// It creates a temporary Go module that imports kilnx packages,
+// so it works without the kilnx source tree being present.
 func Build(kilnxFile, outputPath string) error {
 	source, err := os.ReadFile(kilnxFile)
 	if err != nil {
@@ -22,28 +36,57 @@ func Build(kilnxFile, outputPath string) error {
 		outputPath = strings.TrimSuffix(base, filepath.Ext(base))
 	}
 
-	kilnxRoot := findKilnxRoot()
-	if kilnxRoot == "" {
-		return fmt.Errorf("could not find kilnx source tree; run build from within the kilnx project")
+	absOutput, _ := filepath.Abs(outputPath)
+
+	// Create temporary build directory
+	tmpDir, err := os.MkdirTemp("", "kilnx-build-*")
+	if err != nil {
+		return fmt.Errorf("creating temp dir: %w", err)
 	}
+	defer os.RemoveAll(tmpDir)
 
-	// Create a temporary build entry point inside the kilnx tree
-	buildDir := filepath.Join(kilnxRoot, "cmd", "_build")
-	os.MkdirAll(buildDir, 0755)
-	defer os.RemoveAll(buildDir)
-
+	// Write main.go
 	mainGo := generateMainGo(string(source))
-	mainPath := filepath.Join(buildDir, "main.go")
-	if err := os.WriteFile(mainPath, []byte(mainGo), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(mainGo), 0644); err != nil {
 		return fmt.Errorf("writing main.go: %w", err)
 	}
 
-	absOutput, _ := filepath.Abs(outputPath)
+	// Write go.mod
+	modVersion := kilnxModuleVersion()
+	goMod := fmt.Sprintf(`module kilnx-app
 
-	fmt.Printf("Building %s...\n", outputPath)
+go 1.25.0
 
-	cmd := exec.Command("go", "build", "-o", absOutput, "./cmd/_build/")
-	cmd.Dir = kilnxRoot
+require github.com/kilnx-org/kilnx %s
+`, modVersion)
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0644); err != nil {
+		return fmt.Errorf("writing go.mod: %w", err)
+	}
+
+	// If running from within the kilnx source tree, use replace directive
+	// so local changes are picked up and no network fetch is needed
+	if kilnxRoot := findKilnxRoot(); kilnxRoot != "" {
+		replaceDirective := fmt.Sprintf("\nreplace github.com/kilnx-org/kilnx => %s\n", kilnxRoot)
+		f, err := os.OpenFile(filepath.Join(tmpDir, "go.mod"), os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("appending to go.mod: %w", err)
+		}
+		f.WriteString(replaceDirective)
+		f.Close()
+	}
+
+	// Run go mod tidy to resolve dependencies
+	tidy := exec.Command("go", "mod", "tidy")
+	tidy.Dir = tmpDir
+	tidy.Stderr = os.Stderr
+	if err := tidy.Run(); err != nil {
+		return fmt.Errorf("go mod tidy: %w", err)
+	}
+
+	fmt.Printf("Building %s...\n", filepath.Base(absOutput))
+
+	cmd := exec.Command("go", "build", "-o", absOutput, ".")
+	cmd.Dir = tmpDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
@@ -117,6 +160,11 @@ func main() {
 		if app.Config.Database != "" {
 			dbPath = strings.TrimPrefix(app.Config.Database, "sqlite://")
 		}
+	}
+
+	// PaaS platforms (Railway, Fly.io, Render, Cloud Run) set PORT env var
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		fmt.Sscanf(envPort, "%d", &port)
 	}
 
 	for i, arg := range os.Args {

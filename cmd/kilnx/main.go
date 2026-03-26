@@ -128,6 +128,11 @@ func cmdRun(filename string) error {
 		}
 	}
 
+	// PaaS platforms (Railway, Fly.io, Render, Cloud Run) set PORT env var
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		fmt.Sscanf(envPort, "%d", &port)
+	}
+
 	db, err := database.Open(dbPath)
 	if err != nil {
 		return err
