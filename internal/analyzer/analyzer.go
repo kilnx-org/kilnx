@@ -185,7 +185,7 @@ func checkActionParamsNodes(nodes []parser.Node, path string, modelName string, 
 		switch {
 		case node.Type == parser.NodeQuery && node.SQL != "":
 			sql = node.SQL
-		case (node.Type == parser.NodeForm || node.Type == parser.NodeRespond) && node.QuerySQL != "":
+		case node.Type == parser.NodeRespond && node.QuerySQL != "":
 			sql = node.QuerySQL
 		case node.Type == parser.NodeOn:
 			diags = append(diags, checkActionParamsNodes(node.Children, path, modelName, schema, context)...)
@@ -206,19 +206,6 @@ func analyzeNodes(nodes []parser.Node, schema *Schema, context string) []Diagnos
 			if node.SQL != "" {
 				diags = append(diags, analyzeSQL(node.SQL, schema, context)...)
 			}
-		case parser.NodeForm:
-			if node.ModelName != "" {
-				if _, ok := schema.Tables[node.ModelName]; !ok {
-					diags = append(diags, Diagnostic{
-						Level:   "error",
-						Message: fmt.Sprintf("form references model '%s' which is not defined", node.ModelName),
-						Context: context,
-					})
-				}
-			}
-			if node.QuerySQL != "" {
-				diags = append(diags, analyzeSQL(node.QuerySQL, schema, context)...)
-			}
 		case parser.NodeRespond:
 			if node.QuerySQL != "" {
 				diags = append(diags, analyzeSQL(node.QuerySQL, schema, context)...)
@@ -233,8 +220,6 @@ func analyzeNodes(nodes []parser.Node, schema *Schema, context string) []Diagnos
 					})
 				}
 			}
-		case parser.NodeSearch:
-			diags = append(diags, checkSearchFields(node, schema, context)...)
 		case parser.NodeOn:
 			diags = append(diags, analyzeNodes(node.Children, schema, context)...)
 		}
@@ -242,26 +227,6 @@ func analyzeNodes(nodes []parser.Node, schema *Schema, context string) []Diagnos
 	return diags
 }
 
-func checkSearchFields(node parser.Node, schema *Schema, context string) []Diagnostic {
-	var diags []Diagnostic
-	for _, field := range node.SearchFields {
-		found := false
-		for _, table := range schema.Tables {
-			if _, colExists := table.Columns[field]; colExists {
-				found = true
-				break
-			}
-		}
-		if !found {
-			diags = append(diags, Diagnostic{
-				Level:   "warning",
-				Message: fmt.Sprintf("search field '%s' not found in any model", field),
-				Context: context,
-			})
-		}
-	}
-	return diags
-}
 
 // --- SQL analysis ---
 
@@ -397,7 +362,13 @@ func checkSelectColumns(tokens []sqlToken, tableRefs []tableRef, aliasToTable ma
 		return nil
 	}
 
+	// Collect SQL aliases so we skip validation for aliased columns
+	aliases := extractSelectAliases(tokens)
+
 	for _, col := range cols {
+		if aliases[col.column] {
+			continue
+		}
 		if col.table != "" {
 			realTable, ok := aliasToTable[col.table]
 			if !ok {
@@ -481,19 +452,8 @@ func findActionModel(action parser.Page, app *parser.App) string {
 		if n.Type == parser.NodeValidate && n.ModelName != "" {
 			return n.ModelName
 		}
-		if n.Type == parser.NodeForm && n.ModelName != "" {
-			return n.ModelName
-		}
 	}
-	for _, p := range app.Pages {
-		if p.Path == action.Path {
-			for _, n := range p.Body {
-				if n.Type == parser.NodeForm && n.ModelName != "" {
-					return n.ModelName
-				}
-			}
-		}
-	}
+
 	for _, n := range action.Body {
 		if n.Type == parser.NodeQuery && n.SQL != "" {
 			tokens := tokenizeSQL(n.SQL)

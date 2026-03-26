@@ -506,14 +506,36 @@ func checkTemplateInterpolations(app *parser.App, schema *Schema) []Diagnostic {
 	var diags []Diagnostic
 
 	scanNodes := func(nodes []parser.Node, context string) {
-		// First pass: collect query names defined in this scope.
+		// First pass: collect query names defined in this scope and their SQL aliases.
 		localQueries := make(map[string]string)
+		localAliases := make(map[string]map[string]bool) // queryName -> set of aliases
 		for _, n := range nodes {
 			if n.Type == parser.NodeQuery && n.Name != "" && n.SQL != "" {
 				tokens := tokenizeSQL(n.SQL)
 				refs := extractTableRefs(tokens)
 				if len(refs) > 0 {
 					localQueries[n.Name] = refs[0].name
+				}
+				aliases := extractSelectAliases(tokens)
+				if len(aliases) > 0 {
+					localAliases[n.Name] = aliases
+				}
+				// Also add columns from joined tables
+				joinCols := make(map[string]bool)
+				for _, ref := range refs {
+					if info, ok := schema.Tables[ref.name]; ok {
+						for col := range info.Columns {
+							joinCols[col] = true
+						}
+					}
+				}
+				if len(joinCols) > 0 {
+					if localAliases[n.Name] == nil {
+						localAliases[n.Name] = make(map[string]bool)
+					}
+					for col := range joinCols {
+						localAliases[n.Name][col] = true
+					}
 				}
 			}
 		}
@@ -553,6 +575,11 @@ func checkTemplateInterpolations(app *parser.App, schema *Schema) []Diagnostic {
 						Message: fmt.Sprintf("template reference '{%s.%s}' uses unknown query '%s'", queryName, fieldName, queryName),
 						Context: context,
 					})
+					continue
+				}
+
+				// Check if field is a known SQL alias or joined column
+				if aliases, ok := localAliases[queryName]; ok && aliases[fieldName] {
 					continue
 				}
 
@@ -628,93 +655,5 @@ func extractSelectAliases(tokens []sqlToken) map[string]bool {
 }
 
 func checkTableColumnRefs(app *parser.App, schema *Schema) []Diagnostic {
-	qMap := queryModelMap(app.Pages, app.Fragments, app.APIs)
-
-	var diags []Diagnostic
-
-	// Store query SQL for alias extraction
-	type queryInfo struct {
-		modelName string
-		sql       string
-	}
-
-	scanNodes := func(nodes []parser.Node, context string) {
-		// Collect local query-to-model mappings and SQL.
-		localQueries := make(map[string]queryInfo)
-		for _, n := range nodes {
-			if n.Type == parser.NodeQuery && n.Name != "" && n.SQL != "" {
-				tokens := tokenizeSQL(n.SQL)
-				refs := extractTableRefs(tokens)
-				if len(refs) > 0 {
-					localQueries[n.Name] = queryInfo{modelName: refs[0].name, sql: n.SQL}
-				}
-			}
-		}
-
-		for _, n := range nodes {
-			if n.Type != parser.NodeTable || n.Name == "" || len(n.Columns) == 0 {
-				continue
-			}
-
-			qi, hasLocal := localQueries[n.Name]
-			modelName := ""
-			querySql := ""
-			if hasLocal {
-				modelName = qi.modelName
-				querySql = qi.sql
-			} else if mn, ok := qMap[n.Name]; ok {
-				modelName = mn
-			}
-			if modelName == "" {
-				continue // query not found; not our concern here
-			}
-
-			info, ok := schema.Tables[modelName]
-			if !ok {
-				continue
-			}
-
-			// Build a set of known columns: model columns + SQL aliases + columns from all joined tables
-			knownCols := make(map[string]bool)
-			for col := range info.Columns {
-				knownCols[col] = true
-			}
-
-			if querySql != "" {
-				tokens := tokenizeSQL(querySql)
-				// Add SQL aliases (e.g., count(*) as total, c.name as contact)
-				for alias := range extractSelectAliases(tokens) {
-					knownCols[alias] = true
-				}
-				// Add columns from all joined tables
-				refs := extractTableRefs(tokens)
-				for _, ref := range refs {
-					if joinInfo, ok := schema.Tables[ref.name]; ok {
-						for col := range joinInfo.Columns {
-							knownCols[col] = true
-						}
-					}
-				}
-			}
-
-			for _, col := range n.Columns {
-				if !knownCols[col.Field] {
-					diags = append(diags, Diagnostic{
-						Level:   "error",
-						Message: fmt.Sprintf("table column '%s' does not exist in model '%s' (query '%s')", col.Field, modelName, n.Name),
-						Context: context,
-					})
-				}
-			}
-		}
-	}
-
-	for _, p := range app.Pages {
-		scanNodes(p.Body, fmt.Sprintf("page %s", p.Path))
-	}
-	for _, f := range app.Fragments {
-		scanNodes(f.Body, fmt.Sprintf("fragment %s", f.Path))
-	}
-
-	return diags
+	return nil
 }

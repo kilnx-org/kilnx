@@ -18,8 +18,7 @@ import (
 //go:embed static/htmx.min.js static/sse.js
 var staticFS embed.FS
 
-var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\}`)
-var identifierRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}`)
 
 type Server struct {
 	app         *parser.App
@@ -217,11 +216,21 @@ func (s *Server) Start() error {
 	return http.ListenAndServe(addr, s.logger.LoggingMiddleware(mux))
 }
 
+// PaginateInfo holds pagination state for a query
+type PaginateInfo struct {
+	Page    int
+	PerPage int
+	Total   int
+	HasPrev bool
+	HasNext bool
+}
+
 // renderContext holds query results available during template rendering
 type renderContext struct {
 	queries     map[string][]database.Row
 	paginate    map[string]PaginateInfo
 	currentUser *Session
+	queryParams map[string]string // URL query parameters (?key=value)
 }
 
 func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Request) string {
@@ -229,6 +238,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		queries:     make(map[string][]database.Row),
 		paginate:    make(map[string]PaginateInfo),
 		currentUser: s.getSession(r),
+		queryParams: make(map[string]string),
 	}
 
 	pathParams := matchPathParams(p.Path, r.URL.Path)
@@ -238,14 +248,13 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		ctx.queries["current_user"] = []database.Row{ctx.currentUser.Data}
 	}
 
-	// Collect search nodes to apply filters to queries
-	searchFilters := make(map[string][]string) // queryName -> fields to search
-	for _, node := range p.Body {
-		if node.Type == parser.NodeSearch {
-			searchFilters[node.Name] = node.SearchFields
+	// Expose URL query parameters to templates and SQL
+	for key, values := range r.URL.Query() {
+		if len(values) > 0 {
+			ctx.queryParams[key] = values[0]
+			pathParams[key] = values[0]
 		}
 	}
-	searchTerm := r.URL.Query().Get("q")
 
 	// Get current page number from query string
 	pageNum := 1
@@ -256,16 +265,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		}
 	}
 
-	// Check if page has an html block
-	hasHTMLBlock := false
-	for _, node := range p.Body {
-		if node.Type == parser.NodeHTML {
-			hasHTMLBlock = true
-			break
-		}
-	}
-
-	// Execute all queries first (needed for both modes)
+// Execute all queries first (needed for both modes)
 	for _, node := range p.Body {
 		if node.Type != parser.NodeQuery || s.db == nil {
 			continue
@@ -276,19 +276,11 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		if queryName == "" {
 			queryName = "_last"
 		}
-		var searchParams map[string]string
-		if fields, ok := searchFilters[queryName]; ok && searchTerm != "" {
-			sql, searchParams = injectSearchFilter(sql, fields, searchTerm)
-		}
-
 		// Handle pagination
 		if node.Paginate > 0 {
 			countSQL := fmt.Sprintf("SELECT COUNT(*) as _count FROM (%s)", sql)
 			params := make(map[string]string)
 			for k, v := range pathParams {
-				params[k] = v
-			}
-			for k, v := range searchParams {
 				params[k] = v
 			}
 			var countRows []database.Row
@@ -323,9 +315,6 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		for k, v := range pathParams {
 			params[k] = v
 		}
-		for k, v := range searchParams {
-			params[k] = v
-		}
 		var rows []database.Row
 		var err error
 		if len(params) > 0 {
@@ -341,96 +330,18 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 
 	var body strings.Builder
 
-	if hasHTMLBlock {
-		// HTML-first mode: developer controls HTML, Kilnx injects components via placeholders
-		for _, node := range p.Body {
-			switch node.Type {
-			case parser.NodeQuery:
-				// Already executed above
-			case parser.NodeHTML:
-				resolved := resolveComponentPlaceholders(node.HTMLContent, p, ctx, s.getApp(), s.db, r, p.Path)
-				body.WriteString(resolved)
-				body.WriteString("\n")
-			case parser.NodeAlert:
-				body.WriteString(renderAlert(node, ctx))
-			case parser.NodeText:
-				text := s.i18n.TranslateAll(node.Value, r)
-				text = interpolate(text, ctx)
-				body.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
-			default:
-				// table, search, form, list, card, chart, etc. are referenced via placeholders
-				// Skip them here
-			}
-		}
-	} else {
-		// Auto mode: Kilnx generates layout sequentially (for simple pages without html blocks)
-		for _, node := range p.Body {
-			switch node.Type {
-			case parser.NodeQuery:
-				// Already executed above
-
-			case parser.NodeText:
-				text := s.i18n.TranslateAll(node.Value, r)
-				text = interpolate(text, ctx)
-				body.WriteString(fmt.Sprintf("    <p>%s</p>\n", html.EscapeString(text)))
-
-			case parser.NodeList:
-				body.WriteString(renderList(node, ctx))
-
-			case parser.NodeTable:
-				body.WriteString(renderTable(node, ctx, p.Path))
-				// Auto-append pagination in auto mode
-				if paginateInfo, ok := ctx.paginate[node.Name]; ok {
-					body.WriteString(fmt.Sprintf("    <div class=\"kilnx-pagination\">%s</div>\n", renderPagination(paginateInfo, p.Path)))
-				}
-
-			case parser.NodeAlert:
-				body.WriteString(renderAlert(node, ctx))
-
-			case parser.NodeForm:
-				body.WriteString(renderForm(node, s.getApp(), s.db, r))
-
-			case parser.NodeSearch:
-				body.WriteString(fmt.Sprintf("    <div class=\"kilnx-search\">%s</div>\n", renderSearch(node, p.Path)))
-
-			case parser.NodeHTML:
-				htmlContent := interpolate(node.HTMLContent, ctx)
-				body.WriteString("    " + htmlContent + "\n")
-
-			case parser.NodeComponent:
-				for _, comp := range s.getApp().Components {
-					if comp.Name == node.ComponentName {
-						args := make(map[string]string)
-						for k, v := range node.ComponentArgs {
-							args[k] = interpolate(v, ctx)
-						}
-						body.WriteString(renderComponent(comp, args))
-						break
-					}
-				}
-
-			case parser.NodeCard:
-				body.WriteString(renderCard(node, ctx))
-
-			case parser.NodeModal:
-				var modalBody strings.Builder
-				for _, child := range node.Children {
-					switch child.Type {
-					case parser.NodeText:
-						text := interpolate(child.Value, ctx)
-						modalBody.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
-					case parser.NodeHTML:
-						htmlContent := interpolate(child.HTMLContent, ctx)
-						modalBody.WriteString(htmlContent + "\n")
-					case parser.NodeForm:
-						modalBody.WriteString(renderForm(child, s.getApp(), s.db, r))
-					}
-				}
-				body.WriteString(renderModal(node.ModalID, node.ModalTitle, modalBody.String()))
-
-			case parser.NodeChart:
-				body.WriteString(renderChart(node, ctx))
-			}
+	for _, node := range p.Body {
+		switch node.Type {
+		case parser.NodeQuery:
+			// Already executed above
+		case parser.NodeHTML:
+			htmlContent := s.i18n.TranslateAll(node.HTMLContent, r)
+			htmlContent = renderHTML(htmlContent, ctx)
+			body.WriteString(htmlContent + "\n")
+		case parser.NodeText:
+			text := s.i18n.TranslateAll(node.Value, r)
+			text = interpolate(text, ctx)
+			body.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
 		}
 	}
 
@@ -440,12 +351,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 	}
 	title = interpolate(title, ctx)
 
-	// Prepend page header only in auto mode (no html block)
 	bodyContent := body.String()
-	if !hasHTMLBlock {
-		pageHeader := fmt.Sprintf("    <div class=\"kilnx-page-header\">\n      <div>\n        <h1>%s</h1>\n      </div>\n    </div>\n", html.EscapeString(title))
-		bodyContent = pageHeader + bodyContent
-	}
 
 	appName := ""
 	app := s.getApp()
@@ -593,12 +499,25 @@ func render404(path string, pages []parser.Page) string {
 // renderFragment renders a fragment (partial HTML, no page wrapper)
 func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 	ctx := &renderContext{
-		queries:  make(map[string][]database.Row),
-		paginate: make(map[string]PaginateInfo),
+		queries:     make(map[string][]database.Row),
+		paginate:    make(map[string]PaginateInfo),
+		currentUser: s.getSession(r),
+		queryParams: make(map[string]string),
 	}
 
-	// Get path params
+	// Make current_user available in fragments
+	if ctx.currentUser != nil {
+		ctx.queries["current_user"] = []database.Row{ctx.currentUser.Data}
+	}
+
+	// Get path params and merge query params
 	pathParams := matchPathParams(frag.Path, r.URL.Path)
+	for key, values := range r.URL.Query() {
+		if len(values) > 0 {
+			ctx.queryParams[key] = values[0]
+			pathParams[key] = values[0]
+		}
+	}
 
 	var body strings.Builder
 
@@ -620,20 +539,13 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 			}
 
 		case parser.NodeText:
-			text := interpolate(node.Value, ctx)
+			text := s.i18n.TranslateAll(node.Value, r)
+			text = interpolate(text, ctx)
 			body.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
 
-		case parser.NodeList:
-			body.WriteString(renderList(node, ctx))
-
-		case parser.NodeTable:
-			body.WriteString(renderTable(node, ctx, frag.Path))
-
-		case parser.NodeAlert:
-			body.WriteString(renderAlert(node, ctx))
-
 		case parser.NodeHTML:
-			htmlContent := interpolate(node.HTMLContent, ctx)
+			htmlContent := s.i18n.TranslateAll(node.HTMLContent, r)
+			htmlContent = renderHTML(htmlContent, ctx)
 			body.WriteString(htmlContent + "\n")
 		}
 	}
@@ -671,17 +583,8 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 			text := interpolate(node.Value, ctx)
 			body.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
 
-		case parser.NodeList:
-			body.WriteString(renderList(node, ctx))
-
-		case parser.NodeTable:
-			body.WriteString(renderTable(node, ctx, frag.Path))
-
-		case parser.NodeAlert:
-			body.WriteString(renderAlert(node, ctx))
-
 		case parser.NodeHTML:
-			htmlContent := interpolate(node.HTMLContent, ctx)
+			htmlContent := renderHTML(node.HTMLContent, ctx)
 			body.WriteString(htmlContent + "\n")
 		}
 	}
@@ -941,15 +844,6 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 				http.Redirect(w, r, path, http.StatusSeeOther)
 			}
 			return
-		case parser.NodeAlert:
-			level := node.Props["level"]
-			if level == "" {
-				level = "info"
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Write([]byte(fmt.Sprintf("<div class=\"kilnx-alert kilnx-alert-%s\">%s</div>",
-				html.EscapeString(level), html.EscapeString(node.Value))))
-			return
 		case parser.NodeRespond:
 			if node.StatusCode > 0 {
 				w.WriteHeader(node.StatusCode)
@@ -962,29 +856,6 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 	}
 }
 
-// injectSearchFilter wraps a SQL query with a parameterized WHERE LIKE filter.
-// Uses SQLite's || operator for safe LIKE binding: field LIKE '%' || :_search || '%'
-func injectSearchFilter(sql string, fields []string, term string) (string, map[string]string) {
-	params := map[string]string{"_search": term}
-	if len(fields) == 0 || term == "" {
-		return sql, nil
-	}
-
-	var conditions []string
-	for _, f := range fields {
-		if !identifierRe.MatchString(f) {
-			continue
-		}
-		conditions = append(conditions, fmt.Sprintf("\"%s\" LIKE '%%' || :_search || '%%'", f))
-	}
-
-	if len(conditions) == 0 {
-		return sql, nil
-	}
-
-	whereClause := strings.Join(conditions, " OR ")
-	return fmt.Sprintf("SELECT * FROM (%s) WHERE %s", sql, whereClause), params
-}
 
 // matchPath checks if a route pattern matches a URL path.
 // Supports :param segments: /users/:id matches /users/5

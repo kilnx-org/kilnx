@@ -527,25 +527,6 @@ func TestCheckCSRFProtection_RawHTMLForm(t *testing.T) {
 	}
 }
 
-func TestCheckCSRFProtection_FormKeyword(t *testing.T) {
-	app := &parser.App{
-		Actions: []parser.Page{
-			{Path: "/submit", Method: "POST"},
-		},
-		Pages: []parser.Page{
-			{
-				Path: "/submit",
-				Body: []parser.Node{
-					{Type: parser.NodeForm, ModelName: "post"},
-				},
-			},
-		},
-	}
-	diags := checkCSRFProtection(app)
-	if len(diags) != 0 {
-		t.Fatalf("expected 0 diagnostics when form keyword is used, got %d: %v", len(diags), diags)
-	}
-}
 
 func TestCheckCSRFProtection_NoMatchingPage(t *testing.T) {
 	app := &parser.App{
@@ -627,28 +608,3 @@ func TestCheckCSRFProtection_NoActions(t *testing.T) {
 	}
 }
 
-func TestCheckCSRFProtection_BothRawAndFormKeyword(t *testing.T) {
-	// When a page has both a raw HTML form AND a form keyword,
-	// the form keyword provides CSRF for its own form, but the raw HTML form
-	// is still unprotected. However, the presence of the form keyword means
-	// the developer is aware of the form system. We still skip the warning
-	// since the page uses the form keyword.
-	app := &parser.App{
-		Actions: []parser.Page{
-			{Path: "/edit", Method: "POST"},
-		},
-		Pages: []parser.Page{
-			{
-				Path: "/edit",
-				Body: []parser.Node{
-					{Type: parser.NodeForm, ModelName: "post"},
-					{Type: parser.NodeHTML, HTMLContent: `<form method="post"><button>Extra</button></form>`},
-				},
-			},
-		},
-	}
-	diags := checkCSRFProtection(app)
-	if len(diags) != 0 {
-		t.Fatalf("expected 0 diagnostics when form keyword is present alongside raw HTML, got %d", len(diags))
-	}
-}

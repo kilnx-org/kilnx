@@ -258,7 +258,6 @@ func TestAnalyze_ValidApp(t *testing.T) {
 				Path: "/users",
 				Body: []parser.Node{
 					{Type: parser.NodeQuery, Name: "users", SQL: "SELECT id, name, email, role FROM user ORDER BY id DESC"},
-					{Type: parser.NodeSearch, Name: "users", SearchFields: []string{"name", "email"}},
 				},
 			},
 		},
@@ -452,32 +451,6 @@ func TestAnalyze_InvalidReference(t *testing.T) {
 	}
 }
 
-func TestAnalyze_InvalidFormModel(t *testing.T) {
-	app := &parser.App{
-		Models: []parser.Model{
-			{Name: "user", Fields: []parser.Field{{Name: "name", Type: parser.FieldText}}},
-		},
-		Pages: []parser.Page{
-			{
-				Path: "/test",
-				Body: []parser.Node{
-					{Type: parser.NodeForm, ModelName: "account"},
-				},
-			},
-		},
-	}
-
-	diags := Analyze(app)
-	found := false
-	for _, d := range diags {
-		if d.Level == "error" && strings.Contains(d.Message, "account") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected error about form model 'account', got: %v", diags)
-	}
-}
 
 func TestAnalyze_InvalidValidateModel(t *testing.T) {
 	app := &parser.App{
@@ -506,35 +479,6 @@ func TestAnalyze_InvalidValidateModel(t *testing.T) {
 	}
 }
 
-func TestAnalyze_SearchFieldWarning(t *testing.T) {
-	app := &parser.App{
-		Models: []parser.Model{
-			{Name: "user", Fields: []parser.Field{
-				{Name: "name", Type: parser.FieldText},
-				{Name: "email", Type: parser.FieldEmail},
-			}},
-		},
-		Pages: []parser.Page{
-			{
-				Path: "/test",
-				Body: []parser.Node{
-					{Type: parser.NodeSearch, Name: "users", SearchFields: []string{"name", "phone"}},
-				},
-			},
-		},
-	}
-
-	diags := Analyze(app)
-	found := false
-	for _, d := range diags {
-		if d.Level == "warning" && strings.Contains(d.Message, "phone") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected warning about search field 'phone', got: %v", diags)
-	}
-}
 
 func TestAnalyze_NoFalsePositives_AggregatesAndLiterals(t *testing.T) {
 	app := &parser.App{
@@ -1594,141 +1538,6 @@ func TestCheckTemplateInterpolations_Fragment(t *testing.T) {
 	}
 }
 
-func TestCheckTableColumnRefs_Valid(t *testing.T) {
-	app := &parser.App{
-		Models: []parser.Model{{
-			Name: "user",
-			Fields: []parser.Field{
-				{Name: "name", Type: parser.FieldText},
-				{Name: "email", Type: parser.FieldEmail},
-				{Name: "phone", Type: parser.FieldPhone},
-			},
-		}},
-		Pages: []parser.Page{{
-			Path: "/users",
-			Body: []parser.Node{
-				{Type: parser.NodeQuery, Name: "users", SQL: "SELECT * FROM user"},
-				{Type: parser.NodeTable, Name: "users", Columns: []parser.TableColumn{
-					{Field: "name"},
-					{Field: "email"},
-					{Field: "phone"},
-				}},
-			},
-		}},
-	}
-	diags := Analyze(app)
-	for _, d := range diags {
-		if d.Level == "error" && strings.Contains(d.Message, "table column") {
-			t.Errorf("unexpected table column error: %s", d.Message)
-		}
-	}
-}
-
-func TestCheckTableColumnRefs_InvalidColumn(t *testing.T) {
-	app := &parser.App{
-		Models: []parser.Model{{
-			Name: "user",
-			Fields: []parser.Field{
-				{Name: "name", Type: parser.FieldText},
-				{Name: "email", Type: parser.FieldEmail},
-			},
-		}},
-		Pages: []parser.Page{{
-			Path: "/users",
-			Body: []parser.Node{
-				{Type: parser.NodeQuery, Name: "users", SQL: "SELECT * FROM user"},
-				{Type: parser.NodeTable, Name: "users", Columns: []parser.TableColumn{
-					{Field: "name"},
-					{Field: "email"},
-					{Field: "phone"},
-					{Field: "address"},
-				}},
-			},
-		}},
-	}
-	diags := Analyze(app)
-	foundPhone := false
-	foundAddress := false
-	for _, d := range diags {
-		if d.Level == "error" && strings.Contains(d.Message, "table column") {
-			if strings.Contains(d.Message, "'phone'") && strings.Contains(d.Message, "model 'user'") {
-				foundPhone = true
-			}
-			if strings.Contains(d.Message, "'address'") && strings.Contains(d.Message, "model 'user'") {
-				foundAddress = true
-			}
-		}
-	}
-	if !foundPhone {
-		t.Errorf("expected error for phone column, got: %v", diags)
-	}
-	if !foundAddress {
-		t.Errorf("expected error for address column, got: %v", diags)
-	}
-}
-
-func TestCheckTableColumnRefs_IdColumn(t *testing.T) {
-	app := &parser.App{
-		Models: []parser.Model{{
-			Name: "user",
-			Fields: []parser.Field{
-				{Name: "name", Type: parser.FieldText},
-			},
-		}},
-		Pages: []parser.Page{{
-			Path: "/users",
-			Body: []parser.Node{
-				{Type: parser.NodeQuery, Name: "users", SQL: "SELECT * FROM user"},
-				{Type: parser.NodeTable, Name: "users", Columns: []parser.TableColumn{
-					{Field: "id"},
-					{Field: "name"},
-				}},
-			},
-		}},
-	}
-	diags := Analyze(app)
-	for _, d := range diags {
-		if d.Level == "error" && strings.Contains(d.Message, "table column") {
-			t.Errorf("id is auto-generated and should be valid: %s", d.Message)
-		}
-	}
-}
-
-func TestCheckTableColumnRefs_ReferenceField(t *testing.T) {
-	app := &parser.App{
-		Models: []parser.Model{
-			{
-				Name: "user",
-				Fields: []parser.Field{
-					{Name: "name", Type: parser.FieldText},
-				},
-			},
-			{
-				Name: "post",
-				Fields: []parser.Field{
-					{Name: "title", Type: parser.FieldText},
-					{Name: "author", Type: parser.FieldReference, Reference: "user"},
-				},
-			},
-		},
-		Pages: []parser.Page{{
-			Path: "/posts",
-			Body: []parser.Node{
-				{Type: parser.NodeQuery, Name: "posts", SQL: "SELECT * FROM post"},
-				{Type: parser.NodeTable, Name: "posts", Columns: []parser.TableColumn{
-					{Field: "title"},
-					{Field: "author_id"},
-				}},
-			},
-		}},
-	}
-	diags := Analyze(app)
-	for _, d := range diags {
-		if d.Level == "error" && strings.Contains(d.Message, "table column") {
-			t.Errorf("author_id should be valid for reference field: %s", d.Message)
-		}
-	}
-}
 
 func TestQueryModelMap(t *testing.T) {
 	pages := []parser.Page{{

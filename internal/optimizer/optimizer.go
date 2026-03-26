@@ -83,73 +83,6 @@ func collectUsedFields(nodes []parser.Node) map[string]*fieldSet {
 
 	for _, node := range nodes {
 		switch node.Type {
-		case parser.NodeTable:
-			queryName := node.Name
-			if queryName == "" {
-				queryName = "_last"
-			}
-			if len(node.Columns) == 0 {
-				// Auto-detect mode: we can't know which columns are needed
-				// Mark as unknowable so we skip optimization
-				result[queryName] = nil
-				continue
-			}
-			if result[queryName] == nil && !hasKey(result, queryName) {
-				result[queryName] = newFieldSet()
-			}
-			fs := result[queryName]
-			if fs == nil {
-				continue // already marked unknowable
-			}
-			for _, col := range node.Columns {
-				fs.add(col.Field)
-			}
-			// Row actions may interpolate :field from query rows
-			for _, action := range node.RowActions {
-				for _, f := range extractPathParams(action.Path) {
-					fs.add(f)
-				}
-			}
-
-		case parser.NodeList:
-			queryName := node.Name
-			if queryName == "" {
-				queryName = "_last"
-			}
-			if result[queryName] == nil && !hasKey(result, queryName) {
-				result[queryName] = newFieldSet()
-			}
-			fs := result[queryName]
-			if fs == nil {
-				continue
-			}
-			for _, prop := range []string{"title", "subtitle", "image"} {
-				if v, ok := node.Props[prop]; ok && v != "" {
-					fs.add(v)
-				}
-			}
-			if v, ok := node.Props["action_path"]; ok && v != "" {
-				for _, f := range extractPathParams(v) {
-					fs.add(f)
-				}
-			}
-
-		case parser.NodeSearch:
-			queryName := node.Name
-			if queryName == "" {
-				queryName = "_last"
-			}
-			if result[queryName] == nil && !hasKey(result, queryName) {
-				result[queryName] = newFieldSet()
-			}
-			fs := result[queryName]
-			if fs == nil {
-				continue
-			}
-			for _, f := range node.SearchFields {
-				fs.add(f)
-			}
-
 		case parser.NodeText:
 			addInterpolatedFields(result, node.Value)
 
@@ -316,12 +249,6 @@ func collectNamedQueries(nodes []parser.Node, entries *[]queryEntry, baseIndex i
 func renameConsumerRefs(nodes []parser.Node, oldName, newName string) {
 	for i := range nodes {
 		node := &nodes[i]
-		if node.Name == oldName {
-			switch node.Type {
-			case parser.NodeTable, parser.NodeList, parser.NodeSearch:
-				node.Name = newName
-			}
-		}
 		if node.Type == parser.NodeOn {
 			renameConsumerRefs(node.Children, oldName, newName)
 		}

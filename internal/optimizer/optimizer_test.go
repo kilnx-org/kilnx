@@ -7,7 +7,7 @@ import (
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
-func TestRewriteSelectStar_TableWithColumns(t *testing.T) {
+func TestRewriteSelectStar_HTMLWithInterpolation(t *testing.T) {
 	app := &parser.App{
 		Pages: []parser.Page{{
 			Path: "/users",
@@ -18,12 +18,8 @@ func TestRewriteSelectStar_TableWithColumns(t *testing.T) {
 					SQL:  "SELECT * FROM user",
 				},
 				{
-					Type: parser.NodeTable,
-					Name: "users",
-					Columns: []parser.TableColumn{
-						{Field: "name"},
-						{Field: "email"},
-					},
+					Type:        parser.NodeHTML,
+					HTMLContent: "<td>{users.name}</td><td>{users.email}</td>",
 				},
 			},
 		}},
@@ -35,65 +31,6 @@ func TestRewriteSelectStar_TableWithColumns(t *testing.T) {
 	want := "SELECT name, email FROM user"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestRewriteSelectStar_ListWithProps(t *testing.T) {
-	app := &parser.App{
-		Pages: []parser.Page{{
-			Path: "/users",
-			Body: []parser.Node{
-				{
-					Type: parser.NodeQuery,
-					Name: "users",
-					SQL:  "SELECT * FROM user",
-				},
-				{
-					Type: parser.NodeList,
-					Name: "users",
-					Props: map[string]string{
-						"title":    "name",
-						"subtitle": "email",
-					},
-				},
-			},
-		}},
-	}
-
-	Optimize(app)
-
-	got := app.Pages[0].Body[0].SQL
-	want := "SELECT name, email FROM user"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
-func TestNoRewrite_TableWithoutColumns(t *testing.T) {
-	app := &parser.App{
-		Pages: []parser.Page{{
-			Path: "/users",
-			Body: []parser.Node{
-				{
-					Type: parser.NodeQuery,
-					Name: "users",
-					SQL:  "SELECT * FROM user",
-				},
-				{
-					Type:    parser.NodeTable,
-					Name:    "users",
-					Columns: nil, // auto-detect mode
-				},
-			},
-		}},
-	}
-
-	Optimize(app)
-
-	got := app.Pages[0].Body[0].SQL
-	want := "SELECT * FROM user"
-	if got != want {
-		t.Errorf("should not rewrite, got %q", got)
 	}
 }
 
@@ -109,12 +46,8 @@ func TestNoRewrite_ExplicitColumns(t *testing.T) {
 					SQL:  original,
 				},
 				{
-					Type: parser.NodeTable,
-					Name: "users",
-					Columns: []parser.TableColumn{
-						{Field: "name"},
-						{Field: "email"},
-					},
+					Type:        parser.NodeHTML,
+					HTMLContent: "<td>{users.name}</td><td>{users.email}</td>",
 				},
 			},
 		}},
@@ -139,11 +72,8 @@ func TestRewrite_WithDistinct(t *testing.T) {
 					SQL:  "SELECT DISTINCT * FROM user",
 				},
 				{
-					Type: parser.NodeTable,
-					Name: "users",
-					Columns: []parser.TableColumn{
-						{Field: "name"},
-					},
+					Type:        parser.NodeHTML,
+					HTMLContent: "<span>{users.name}</span>",
 				},
 			},
 		}},
@@ -169,11 +99,8 @@ func TestRewrite_MultiLineSQL(t *testing.T) {
 					SQL:  "SELECT * FROM user WHERE active = 1 ORDER BY name",
 				},
 				{
-					Type: parser.NodeList,
-					Name: "users",
-					Props: map[string]string{
-						"title": "name",
-					},
+					Type:        parser.NodeHTML,
+					HTMLContent: "<h1>{users.name}</h1>",
 				},
 			},
 		}},
@@ -188,7 +115,7 @@ func TestRewrite_MultiLineSQL(t *testing.T) {
 	}
 }
 
-func TestRewrite_QueryUsedByMultipleComponents(t *testing.T) {
+func TestRewrite_QueryUsedByMultipleHTMLBlocks(t *testing.T) {
 	app := &parser.App{
 		Pages: []parser.Page{{
 			Path: "/users",
@@ -199,19 +126,12 @@ func TestRewrite_QueryUsedByMultipleComponents(t *testing.T) {
 					SQL:  "SELECT * FROM user",
 				},
 				{
-					Type: parser.NodeList,
-					Name: "users",
-					Props: map[string]string{
-						"title": "name",
-					},
+					Type:        parser.NodeHTML,
+					HTMLContent: "<h2>{users.name}</h2>",
 				},
 				{
-					Type: parser.NodeTable,
-					Name: "users",
-					Columns: []parser.TableColumn{
-						{Field: "email"},
-						{Field: "created"},
-					},
+					Type:        parser.NodeHTML,
+					HTMLContent: "<p>{users.email}</p><small>{users.created}</small>",
 				},
 			},
 		}},
@@ -280,39 +200,6 @@ func TestRewrite_HTMLInterpolation(t *testing.T) {
 	}
 }
 
-func TestRewrite_RowActionsIncludeParams(t *testing.T) {
-	app := &parser.App{
-		Pages: []parser.Page{{
-			Path: "/users",
-			Body: []parser.Node{
-				{
-					Type: parser.NodeQuery,
-					Name: "users",
-					SQL:  "SELECT * FROM user",
-				},
-				{
-					Type: parser.NodeTable,
-					Name: "users",
-					Columns: []parser.TableColumn{
-						{Field: "name"},
-					},
-					RowActions: []parser.RowAction{
-						{Label: "edit", Path: "/users/:id/edit"},
-					},
-				},
-			},
-		}},
-	}
-
-	Optimize(app)
-
-	got := app.Pages[0].Body[0].SQL
-	want := "SELECT name, id FROM user"
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
 func TestRewrite_Fragment(t *testing.T) {
 	app := &parser.App{
 		Fragments: []parser.Page{{
@@ -324,11 +211,8 @@ func TestRewrite_Fragment(t *testing.T) {
 					SQL:  "SELECT * FROM user",
 				},
 				{
-					Type: parser.NodeList,
-					Name: "users",
-					Props: map[string]string{
-						"title": "name",
-					},
+					Type:        parser.NodeHTML,
+					HTMLContent: "<li>{users.name}</li>",
 				},
 			},
 		}},
@@ -405,11 +289,8 @@ func TestRewrite_CaseInsensitive(t *testing.T) {
 					SQL:  "select * from user",
 				},
 				{
-					Type: parser.NodeList,
-					Name: "users",
-					Props: map[string]string{
-						"title": "name",
-					},
+					Type:        parser.NodeHTML,
+					HTMLContent: "<span>{users.name}</span>",
 				},
 			},
 		}},
@@ -435,12 +316,8 @@ func TestRewrite_DedupFields(t *testing.T) {
 					SQL:  "SELECT * FROM user",
 				},
 				{
-					Type: parser.NodeList,
-					Name: "users",
-					Props: map[string]string{
-						"title":    "name",
-						"subtitle": "name",
-					},
+					Type:        parser.NodeHTML,
+					HTMLContent: "<h1>{users.name}</h1><h2>{users.name}</h2>",
 				},
 			},
 		}},
@@ -469,10 +346,8 @@ func TestNoRewrite_MultipleUnnamedQueries(t *testing.T) {
 					SQL:  "SELECT * FROM post",
 				},
 				{
-					Type: parser.NodeTable,
-					Columns: []parser.TableColumn{
-						{Field: "name"},
-					},
+					Type:        parser.NodeHTML,
+					HTMLContent: "<span>{_last.name}</span>",
 				},
 			},
 		}},
@@ -487,38 +362,6 @@ func TestNoRewrite_MultipleUnnamedQueries(t *testing.T) {
 	}
 	if got2 != "SELECT * FROM post" {
 		t.Errorf("should not rewrite second unnamed query, got %q", got2)
-	}
-}
-
-func TestNoRewrite_ActionLabelNotColumn(t *testing.T) {
-	app := &parser.App{
-		Pages: []parser.Page{{
-			Path: "/users",
-			Body: []parser.Node{
-				{
-					Type: parser.NodeQuery,
-					Name: "users",
-					SQL:  "SELECT * FROM user",
-				},
-				{
-					Type: parser.NodeList,
-					Name: "users",
-					Props: map[string]string{
-						"title":        "name",
-						"action_label": "Edit",
-						"action_path":  "/users/:id/edit",
-					},
-				},
-			},
-		}},
-	}
-
-	Optimize(app)
-
-	got := app.Pages[0].Body[0].SQL
-	want := "SELECT name, id FROM user"
-	if got != want {
-		t.Errorf("got %q, want %q (action_label should NOT be a column)", got, want)
 	}
 }
 
@@ -567,16 +410,13 @@ func TestDeduplicate_IdenticalQueries(t *testing.T) {
 			Body: []parser.Node{
 				{Type: parser.NodeQuery, Name: "q1", SQL: "SELECT * FROM user"},
 				{Type: parser.NodeQuery, Name: "q2", SQL: "SELECT * FROM user"},
-				{Type: parser.NodeTable, Name: "q2", Columns: []parser.TableColumn{{Field: "name"}}},
+				{Type: parser.NodeHTML, HTMLContent: "<span>{q2.name}</span>"},
 			},
 		}},
 	}
 	deduplicateQueries(&app.Pages[0])
 	if app.Pages[0].Body[1].SQL != "" {
 		t.Errorf("duplicate query should have SQL cleared, got %q", app.Pages[0].Body[1].SQL)
-	}
-	if app.Pages[0].Body[2].Name != "q1" {
-		t.Errorf("consumer should be renamed to q1, got %q", app.Pages[0].Body[2].Name)
 	}
 }
 
@@ -604,14 +444,14 @@ func TestDeduplicate_ConsumerInOnBlock(t *testing.T) {
 				{Type: parser.NodeQuery, Name: "q1", SQL: "SELECT * FROM user"},
 				{Type: parser.NodeQuery, Name: "q2", SQL: "SELECT * FROM user"},
 				{Type: parser.NodeOn, Children: []parser.Node{
-					{Type: parser.NodeTable, Name: "q2", Columns: []parser.TableColumn{{Field: "name"}}},
+					{Type: parser.NodeHTML, HTMLContent: "<span>{q2.name}</span>"},
 				}},
 			},
 		}},
 	}
 	deduplicateQueries(&app.Pages[0])
-	if app.Pages[0].Body[2].Children[0].Name != "q1" {
-		t.Errorf("consumer inside NodeOn should be renamed, got %q", app.Pages[0].Body[2].Children[0].Name)
+	if app.Pages[0].Body[1].SQL != "" {
+		t.Errorf("duplicate query should have SQL cleared, got %q", app.Pages[0].Body[1].SQL)
 	}
 }
 
@@ -720,40 +560,5 @@ func TestMarkStream_SumAvgMinMax(t *testing.T) {
 		if !strings.Contains(app.Streams[0].SQL, "materialize") {
 			t.Errorf("%s stream should be marked", fn)
 		}
-	}
-}
-
-func TestRewrite_SearchFieldsIncluded(t *testing.T) {
-	app := &parser.App{
-		Pages: []parser.Page{{
-			Path: "/users",
-			Body: []parser.Node{
-				{
-					Type: parser.NodeQuery,
-					Name: "users",
-					SQL:  "SELECT * FROM user",
-				},
-				{
-					Type: parser.NodeTable,
-					Name: "users",
-					Columns: []parser.TableColumn{
-						{Field: "name"},
-					},
-				},
-				{
-					Type:         parser.NodeSearch,
-					Name:         "users",
-					SearchFields: []string{"email", "name"},
-				},
-			},
-		}},
-	}
-
-	Optimize(app)
-
-	got := app.Pages[0].Body[0].SQL
-	want := "SELECT name, email FROM user"
-	if got != want {
-		t.Errorf("got %q, want %q (search fields must be included)", got, want)
 	}
 }

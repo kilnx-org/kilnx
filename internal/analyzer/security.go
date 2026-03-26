@@ -236,10 +236,10 @@ func checkCSRFProtection(app *parser.App) []Diagnostic {
 		if !ok {
 			continue
 		}
-		if hasRawHTMLForm(p.Body) && !hasFormNode(p.Body) {
+		if hasRawHTMLForm(p.Body) {
 			diags = append(diags, Diagnostic{
 				Level:   "warning",
-				Message: fmt.Sprintf("page has a raw HTML <form> targeting a %s action; use the 'form' keyword instead so Kilnx auto-adds a CSRF token", method),
+				Message: fmt.Sprintf("page has a raw HTML <form> targeting a %s action; make sure to include a CSRF token", method),
 				Context: fmt.Sprintf("page %s", p.Path),
 			})
 		}
@@ -263,18 +263,6 @@ func hasRawHTMLForm(nodes []parser.Node) bool {
 	return false
 }
 
-// hasFormNode checks if any node in the tree uses the Kilnx form keyword.
-func hasFormNode(nodes []parser.Node) bool {
-	for _, n := range nodes {
-		if n.Type == parser.NodeForm {
-			return true
-		}
-		if hasFormNode(n.Children) {
-			return true
-		}
-	}
-	return false
-}
 
 // checkNodesForPasswordExposure checks if query nodes expose password columns.
 func checkNodesForPasswordExposure(nodes []parser.Node, passwordTables map[string][]string, schema *Schema, context string) []Diagnostic {

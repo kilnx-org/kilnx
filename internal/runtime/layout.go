@@ -38,37 +38,3 @@ func renderWithLayout(layout parser.Layout, title, nav, content string) string {
 	return result
 }
 
-// renderComponent renders a custom component with given args
-func renderComponent(comp parser.Component, args map[string]string) string {
-	var b strings.Builder
-
-	for _, node := range comp.Body {
-		switch node.Type {
-		case parser.NodeHTML:
-			content := node.HTMLContent
-			// Replace param placeholders
-			for _, param := range comp.Params {
-				placeholder := "{" + param + "}"
-				if val, ok := args[param]; ok {
-					content = strings.ReplaceAll(content, placeholder, html.EscapeString(val))
-				} else {
-					content = strings.ReplaceAll(content, placeholder, "")
-				}
-			}
-			b.WriteString(content)
-			b.WriteString("\n")
-
-		case parser.NodeText:
-			text := node.Value
-			for _, param := range comp.Params {
-				placeholder := "{" + param + "}"
-				if val, ok := args[param]; ok {
-					text = strings.ReplaceAll(text, placeholder, val)
-				}
-			}
-			b.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
-		}
-	}
-
-	return b.String()
-}

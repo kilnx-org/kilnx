@@ -24,7 +24,6 @@ type App struct {
 	Auth         *AuthConfig  // nil if no auth block defined
 	Permissions  []Permission // role-based access rules
 	Layouts      []Layout
-	Components   []Component
 	Tests        []Test
 	LogConfig    *LogConfig
 	Translations map[string]map[string]string // lang -> key -> value
@@ -121,11 +120,6 @@ type Layout struct {
 	HTMLContent string // raw HTML with {page.title}, {page.content}, {nav}
 }
 
-type Component struct {
-	Name   string
-	Params []string // declared param names
-	Body   []Node   // component body nodes
-}
 
 type AuthConfig struct {
 	Table      string // user table name (default: "user")
@@ -186,44 +180,30 @@ type NodeType int
 const (
 	NodeText        NodeType = iota
 	NodeQuery                // query users: select name, email from user
-	NodeList                 // list users { title: name, subtitle: email }
-	NodeTable                // table users { columns: name, email }
-	NodeAlert                // alert success "message"
-	NodeForm                 // form user
 	NodeRedirect             // redirect /users
 	NodeValidate             // validate { name: required, email: required }
 	NodeRespond              // respond fragment ".selector" with query: SQL
 	NodeHTML                 // html { raw html content }
-	NodeComponent            // user-card with name: "Alice", email: "alice@test.com"
-	NodeSearch               // search queryName in field1, field2
 	NodeSendEmail            // send email to :email { subject: "...", body: "..." }
 	NodeEnqueue              // enqueue job-name with param: value
 	NodeOn                   // on success/error/not found branching
 	NodeBroadcast            // broadcast to :room
 	NodeGeneratePDF          // generate pdf from template X with data Y
-	NodeCard                 // card queryName { title: field, subtitle: field }
-	NodeModal                // modal id title { content }
-	NodeChart                // chart queryName { type: bar, label: field, value: field }
 )
 
 type Node struct {
 	Type          NodeType
 	Value         string
-	Name          string            // for query: result var name; for list/table: query name
+	Name          string            // for query: result var name
 	SQL           string            // for query: the raw SQL
-	Props         map[string]string // for list: title, subtitle; for alert: level
-	Columns       []TableColumn     // for table: column definitions
-	RowActions    []RowAction       // for table: row-level actions
+	Props         map[string]string // for on: condition; for send email: body
 	Paginate      int               // for query: items per page (0 = no pagination)
-	ModelName     string            // for form: which model to generate form from
-	QuerySQL      string            // for form with query: pre-fill data
+	ModelName     string            // for validate: which model to validate against
+	QuerySQL      string            // for validate with query: pre-fill data
 	Validations   []Validation      // for validate block
 	RespondTarget string            // for respond: CSS selector target
 	RespondSwap   string            // for respond: htmx swap strategy
 	HTMLContent   string            // for html: raw HTML content
-	ComponentName string            // for component usage: which component
-	ComponentArgs map[string]string // for component usage: param values
-	SearchFields  []string          // for search: fields to search in
 	EmailTo       string            // for send email: recipient (:email or query result)
 	EmailSubject  string            // for send email: subject line
 	EmailTemplate string            // for send email: template name
@@ -236,8 +216,6 @@ type Node struct {
 	TemplateName  string            // for generate pdf: template name
 	DataQueryName string            // for generate pdf: data query name
 	EmailAttach   string            // for send email: attachment file path or param
-	ModalID       string            // for modal: element ID
-	ModalTitle    string            // for modal: title text
 }
 
 type Validation struct {
@@ -245,15 +223,6 @@ type Validation struct {
 	Rules []string // required, is email, min N, max N
 }
 
-type TableColumn struct {
-	Field string // column field name from query result
-	Label string // display label (optional, defaults to field name)
-}
-
-type RowAction struct {
-	Label string // e.g., "edit", "delete", "view"
-	Path  string // e.g., /users/:id/edit
-}
 
 func Parse(tokens []lexer.Token, source string) (*App, error) {
 	lines := strings.Split(source, "\n")
@@ -339,10 +308,7 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 		case "layout":
 			layout := p.parseLayout()
 			app.Layouts = append(app.Layouts, layout)
-		case "component":
-			comp := p.parseComponent()
-			app.Components = append(app.Components, comp)
-		case "test":
+			case "test":
 			t := p.parseTest()
 			app.Tests = append(app.Tests, t)
 		case "log":
@@ -670,26 +636,6 @@ func (p *parserState) parseBody() []Node {
 					nodes = append(nodes, node)
 				}
 				continue
-			case "list":
-				node := p.parseListNode()
-				nodes = append(nodes, node)
-				continue
-			case "table":
-				node := p.parseTableNode()
-				nodes = append(nodes, node)
-				continue
-			case "alert":
-				node := p.parseAlertNode()
-				nodes = append(nodes, node)
-				continue
-			case "form":
-				node := p.parseFormNode()
-				nodes = append(nodes, node)
-				continue
-			case "search":
-				node := p.parseSearchNode()
-				nodes = append(nodes, node)
-				continue
 			case "redirect":
 				node := p.parseRedirectNode()
 				nodes = append(nodes, node)
@@ -732,25 +678,6 @@ func (p *parserState) parseBody() []Node {
 				node := p.parseGeneratePDFNode()
 				nodes = append(nodes, node)
 				continue
-			case "card":
-				node := p.parseCardNode()
-				nodes = append(nodes, node)
-				continue
-			case "modal":
-				node := p.parseModalNode()
-				nodes = append(nodes, node)
-				continue
-			case "chart":
-				node := p.parseChartNode()
-				nodes = append(nodes, node)
-				continue
-			default:
-				// Check if this is a component usage: "component-name with key: val, ..."
-				if p.peekIsComponentUsage() {
-					node := p.parseComponentUsageNode()
-					nodes = append(nodes, node)
-					continue
-				}
 			}
 		}
 
@@ -897,184 +824,7 @@ func extractPaginate(sql string) (string, int) {
 	return strings.TrimSpace(trimmed[:idx]), n
 }
 
-// parseListNode parses:
-//
-//	list queryName
-//	  title: fieldName
-//	  subtitle: fieldName
-func (p *parserState) parseListNode() Node {
-	node := Node{Type: NodeList, Props: make(map[string]string)}
 
-	// consume "list"
-	p.advance()
-
-	// query name to iterate over
-	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-		node.Name = p.advance().Value
-	}
-
-	// skip to newline
-	p.skipToEndOfLine()
-	p.skipNewlines()
-
-	// parse indented props
-	if p.current().Type == lexer.TokenIndent {
-		p.advance()
-		for !p.isEOF() {
-			if p.current().Type == lexer.TokenDedent {
-				p.advance()
-				break
-			}
-			if p.current().Type == lexer.TokenNewline {
-				p.advance()
-				continue
-			}
-
-			// prop: value
-			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-				key := p.advance().Value
-				if p.current().Type == lexer.TokenColon {
-					p.advance()
-				}
-				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-					node.Props[key] = p.advance().Value
-				} else if p.current().Type == lexer.TokenString {
-					node.Props[key] = p.advance().Value
-				}
-				p.skipToEndOfLine()
-			} else {
-				p.advance()
-			}
-		}
-	}
-
-	return node
-}
-
-// parseTableNode parses:
-//
-//	table queryName
-//	  columns: name, email, created
-//	  row action: edit /users/:id/edit
-//	  row action: delete /users/:id/delete
-func (p *parserState) parseTableNode() Node {
-	node := Node{Type: NodeTable, Props: make(map[string]string)}
-
-	// consume "table"
-	p.advance()
-
-	// query name
-	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-		node.Name = p.advance().Value
-	}
-
-	p.skipToEndOfLine()
-	p.skipNewlines()
-
-	// parse indented block
-	if p.current().Type == lexer.TokenIndent {
-		p.advance()
-		for !p.isEOF() {
-			if p.current().Type == lexer.TokenDedent {
-				p.advance()
-				break
-			}
-			if p.current().Type == lexer.TokenNewline {
-				p.advance()
-				continue
-			}
-
-			tok := p.current()
-
-			// columns: name, email as "Email", created
-			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "columns" {
-				p.advance()
-				if p.current().Type == lexer.TokenColon {
-					p.advance()
-				}
-				node.Columns = p.parseColumnList()
-				continue
-			}
-
-			// row action: label /path
-			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "row" {
-				p.advance()
-				// expect "action" (can be keyword or identifier)
-				if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "action" {
-					p.advance()
-				}
-				if p.current().Type == lexer.TokenColon {
-					p.advance()
-				}
-				action := RowAction{}
-				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-					action.Label = p.advance().Value
-				}
-				if p.current().Type == lexer.TokenPath {
-					action.Path = p.advance().Value
-				}
-				node.RowActions = append(node.RowActions, action)
-				p.skipToEndOfLine()
-				continue
-			}
-
-			p.advance()
-		}
-	}
-
-	return node
-}
-
-// parseColumnList parses: name, email as "Email Address", created
-func (p *parserState) parseColumnList() []TableColumn {
-	var cols []TableColumn
-
-	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
-		if p.current().Type == lexer.TokenComma {
-			p.advance()
-			continue
-		}
-
-		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-			col := TableColumn{Field: p.advance().Value}
-
-			// Check for "as" alias
-			if p.current().Type == lexer.TokenIdentifier && p.current().Value == "as" {
-				p.advance()
-				if p.current().Type == lexer.TokenString {
-					col.Label = p.advance().Value
-				}
-			}
-
-			cols = append(cols, col)
-		} else {
-			p.advance()
-		}
-	}
-
-	return cols
-}
-
-// parseAlertNode parses: alert success "message"
-func (p *parserState) parseAlertNode() Node {
-	node := Node{Type: NodeAlert, Props: make(map[string]string)}
-
-	// consume "alert"
-	p.advance()
-
-	// level: success, error, warning, info
-	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-		node.Props["level"] = p.advance().Value
-	}
-
-	// message
-	if p.current().Type == lexer.TokenString {
-		node.Value = p.advance().Value
-	}
-
-	p.skipToEndOfLine()
-	return node
-}
 
 // parseAction parses:
 //
@@ -1131,47 +881,6 @@ func (p *parserState) parseAction() (Page, error) {
 	return page, nil
 }
 
-// parseFormNode parses:
-//
-//	form user
-//	form user with query: SELECT * FROM user WHERE id = :id
-func (p *parserState) parseFormNode() Node {
-	node := Node{Type: NodeForm}
-
-	formLine := p.current().Line
-
-	// consume "form"
-	p.advance()
-
-	// model name
-	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-		node.ModelName = p.advance().Value
-	}
-
-	// optional "with query: SQL"
-	if p.current().Type == lexer.TokenKeyword && p.current().Value == "with" {
-		p.advance()
-		if p.current().Type == lexer.TokenKeyword && p.current().Value == "query" {
-			p.advance()
-			if p.current().Type == lexer.TokenColon {
-				p.advance()
-			}
-			node.QuerySQL = p.extractSQLFromLine(formLine)
-			// extractSQLFromLine finds the first colon; we need the SQL after "with query:"
-			// Re-extract: find "query:" in the line
-			if formLine >= 1 && formLine <= len(p.lines) {
-				line := p.lines[formLine-1]
-				idx := strings.Index(line, "query:")
-				if idx >= 0 {
-					node.QuerySQL = strings.TrimSpace(line[idx+len("query:"):])
-				}
-			}
-		}
-	}
-
-	p.skipToEndOfLine()
-	return node
-}
 
 // parseValidateNode parses:
 //
@@ -1549,83 +1258,6 @@ func (p *parserState) parseLayout() Layout {
 	return layout
 }
 
-// parseComponent parses:
-//
-//	component user-card
-//	  param: name, email, avatar
-//	  html
-//	    <div class="card">
-//	      <strong>{name}</strong>
-//	      <span>{email}</span>
-//	    </div>
-func (p *parserState) parseComponent() Component {
-	comp := Component{}
-
-	// consume "component"
-	p.advance()
-
-	// component name
-	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-		comp.Name = p.advance().Value
-	}
-
-	p.skipToEndOfLine()
-	p.skipNewlines()
-
-	if p.current().Type == lexer.TokenIndent {
-		p.advance()
-		for !p.isEOF() {
-			if p.current().Type == lexer.TokenDedent {
-				p.advance()
-				break
-			}
-			if p.current().Type == lexer.TokenNewline {
-				p.advance()
-				continue
-			}
-
-			tok := p.current()
-
-			// param: name, email, avatar
-			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "param" {
-				p.advance()
-				if p.current().Type == lexer.TokenColon {
-					p.advance()
-				}
-				for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
-					if p.current().Type == lexer.TokenComma {
-						p.advance()
-						continue
-					}
-					if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-						comp.Params = append(comp.Params, p.advance().Value)
-					} else {
-						p.advance()
-					}
-				}
-				continue
-			}
-
-			// html block or other body nodes
-			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "html" {
-				node := p.parseHTMLNode()
-				comp.Body = append(comp.Body, node)
-				continue
-			}
-
-			// Other body nodes (alert, text, etc.)
-			if tok.Type == lexer.TokenString {
-				comp.Body = append(comp.Body, Node{Type: NodeText, Value: tok.Value})
-				p.advance()
-				continue
-			}
-
-			p.advance()
-		}
-	}
-
-	return comp
-}
 
 // parsePermissions parses:
 //
@@ -2119,38 +1751,6 @@ func (p *parserState) parseEnqueueNode() Node {
 	return node
 }
 
-// parseSearchNode parses: search queryName in title, body
-func (p *parserState) parseSearchNode() Node {
-	node := Node{Type: NodeSearch}
-
-	// consume "search"
-	p.advance()
-
-	// query name to filter
-	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-		node.Name = p.advance().Value
-	}
-
-	// expect "in"
-	if p.current().Type == lexer.TokenIdentifier && p.current().Value == "in" {
-		p.advance()
-	}
-
-	// field list
-	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
-		if p.current().Type == lexer.TokenComma {
-			p.advance()
-			continue
-		}
-		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-			node.SearchFields = append(node.SearchFields, p.advance().Value)
-		} else {
-			p.advance()
-		}
-	}
-
-	return node
-}
 
 // parseWebhook parses:
 //
@@ -2742,51 +2342,7 @@ func (p *parserState) parseConfig() AppConfig {
 	return cfg
 }
 
-// peekIsComponentUsage checks if the current identifier is followed by "with"
-func (p *parserState) peekIsComponentUsage() bool {
-	if p.pos+1 < len(p.tokens) {
-		next := p.tokens[p.pos+1]
-		return next.Type == lexer.TokenKeyword && next.Value == "with"
-	}
-	return false
-}
 
-// parseComponentUsageNode parses: component-name with key: val, key2: val2
-func (p *parserState) parseComponentUsageNode() Node {
-	node := Node{Type: NodeComponent, ComponentArgs: make(map[string]string)}
-
-	node.ComponentName = p.advance().Value
-
-	// consume "with"
-	if p.current().Type == lexer.TokenKeyword && p.current().Value == "with" {
-		p.advance()
-	}
-
-	// Parse key: value pairs (comma-separated on same line or indented)
-	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
-		if p.current().Type == lexer.TokenComma {
-			p.advance()
-			continue
-		}
-		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-			key := p.advance().Value
-			if p.current().Type == lexer.TokenColon {
-				p.advance()
-			}
-			var val string
-			if p.current().Type == lexer.TokenString {
-				val = p.advance().Value
-			} else if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-				val = "{" + p.advance().Value + "}"
-			}
-			node.ComponentArgs[key] = val
-		} else {
-			p.advance()
-		}
-	}
-
-	return node
-}
 
 // parseOnNode parses:
 //
@@ -2994,132 +2550,3 @@ func (p *parserState) parseGeneratePDFNode() Node {
 	return node
 }
 
-// parseCardNode parses: card queryName { title: field, subtitle: field }
-// Same structure as list parsing
-func (p *parserState) parseCardNode() Node {
-	node := Node{Type: NodeCard, Props: make(map[string]string)}
-
-	// consume "card"
-	p.advance()
-
-	// query name
-	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-		node.Name = p.advance().Value
-	}
-
-	p.skipToEndOfLine()
-	p.skipNewlines()
-
-	// parse indented props
-	if p.current().Type == lexer.TokenIndent {
-		p.advance()
-		for !p.isEOF() {
-			if p.current().Type == lexer.TokenDedent {
-				p.advance()
-				break
-			}
-			if p.current().Type == lexer.TokenNewline {
-				p.advance()
-				continue
-			}
-			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-				key := p.advance().Value
-				if p.current().Type == lexer.TokenColon {
-					p.advance()
-				}
-				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-					node.Props[key] = p.advance().Value
-				} else if p.current().Type == lexer.TokenString {
-					node.Props[key] = p.advance().Value
-				}
-				p.skipToEndOfLine()
-			} else {
-				p.advance()
-			}
-		}
-	}
-
-	return node
-}
-
-// parseModalNode parses: modal "my-modal" title "Modal Title"
-// followed by indented body content
-func (p *parserState) parseModalNode() Node {
-	node := Node{Type: NodeModal, Props: make(map[string]string)}
-
-	// consume "modal"
-	p.advance()
-
-	// modal ID
-	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenString {
-		node.ModalID = p.advance().Value
-	}
-
-	// optional title keyword
-	if (p.current().Type == lexer.TokenKeyword || p.current().Type == lexer.TokenIdentifier) && p.current().Value == "title" {
-		p.advance()
-		if p.current().Type == lexer.TokenString {
-			node.ModalTitle = p.advance().Value
-		} else if p.current().Type == lexer.TokenIdentifier {
-			node.ModalTitle = p.advance().Value
-		}
-	}
-
-	p.skipToEndOfLine()
-	p.skipNewlines()
-
-	// parse children
-	if p.current().Type == lexer.TokenIndent {
-		p.advance()
-		node.Children = p.parseBody()
-	}
-
-	return node
-}
-
-// parseChartNode parses: chart queryName { type: bar, label: field, value: field }
-func (p *parserState) parseChartNode() Node {
-	node := Node{Type: NodeChart, Props: make(map[string]string)}
-
-	// consume "chart"
-	p.advance()
-
-	// query name
-	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-		node.Name = p.advance().Value
-	}
-
-	p.skipToEndOfLine()
-	p.skipNewlines()
-
-	// parse indented props
-	if p.current().Type == lexer.TokenIndent {
-		p.advance()
-		for !p.isEOF() {
-			if p.current().Type == lexer.TokenDedent {
-				p.advance()
-				break
-			}
-			if p.current().Type == lexer.TokenNewline {
-				p.advance()
-				continue
-			}
-			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-				key := p.advance().Value
-				if p.current().Type == lexer.TokenColon {
-					p.advance()
-				}
-				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-					node.Props[key] = p.advance().Value
-				} else if p.current().Type == lexer.TokenString {
-					node.Props[key] = p.advance().Value
-				}
-				p.skipToEndOfLine()
-			} else {
-				p.advance()
-			}
-		}
-	}
-
-	return node
-}
