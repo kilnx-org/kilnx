@@ -32,7 +32,7 @@ type ModelFieldInfo struct {
 
 // Schema is the compile-time view of the database derived from model declarations.
 type Schema struct {
-	Tables     map[string]*TableInfo
+	Tables      map[string]*TableInfo
 	ModelFields map[string]*ModelFieldInfo
 }
 
