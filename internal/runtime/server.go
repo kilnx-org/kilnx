@@ -6,12 +6,14 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
 
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
+	"github.com/kilnx-org/kilnx/internal/pdf"
 )
 
 //go:embed static/htmx.min.js static/sse.js
@@ -33,7 +35,11 @@ type Server struct {
 }
 
 func NewServer(app *parser.App, db *database.DB, port int) *Server {
-	s := &Server{app: app, db: db, sessions: NewSessionStore(), port: port}
+	secret := ""
+	if app.Config != nil {
+		secret = app.Config.Secret
+	}
+	s := &Server{app: app, db: db, sessions: NewSessionStore(secret), port: port}
 	// Attach DB to session store for persistence
 	if db != nil {
 		s.sessions.SetDB(db)
@@ -41,11 +47,21 @@ func NewServer(app *parser.App, db *database.DB, port int) *Server {
 	s.jobQueue = NewJobQueue(s)
 	s.rateLimiter = NewRateLimiter(app.RateLimits)
 	s.logger = NewLogger(app.LogConfig)
-	defaultLang := "en"
-	if app.Config != nil && app.Config.DefaultLanguage != "" {
-		defaultLang = app.Config.DefaultLanguage
+	// Wire slow query logging from database to logger
+	if db != nil {
+		db.OnSlowQuery = s.logger.LogSlowQuery
 	}
-	s.i18n = NewI18n(app.Translations, defaultLang)
+	defaultLang := "en"
+	detectLang := true // detect by default when translations exist
+	if app.Config != nil {
+		if app.Config.DefaultLanguage != "" {
+			defaultLang = app.Config.DefaultLanguage
+		}
+		if app.Config.DetectLanguage != "" {
+			detectLang = app.Config.DetectLanguage != "false" && app.Config.DetectLanguage != "off"
+		}
+	}
+	s.i18n = NewI18n(app.Translations, defaultLang, detectLang)
 	return s
 }
 
@@ -179,10 +195,17 @@ func (s *Server) Start() error {
 		}
 
 		// Match API endpoints (JSON)
+		pathMatched := false
 		for _, api := range app.APIs {
 			if matchPath(api.Path, r.URL.Path) {
+				// Allow CORS preflight even when method is declared
+				if r.Method == http.MethodOptions {
+					s.handleAPI(w, r, api)
+					return
+				}
 				// Enforce declared HTTP method
 				if api.Method != "" && !strings.EqualFold(api.Method, r.Method) {
+					pathMatched = true
 					continue
 				}
 				if !s.requireAPIAuth(w, r, api) {
@@ -191,6 +214,12 @@ func (s *Server) Start() error {
 				s.handleAPI(w, r, api)
 				return
 			}
+		}
+
+		// If a path matched but no method matched, return 405
+		if pathMatched {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
 		}
 
 		// Match fragments (partial HTML, no page wrapper)
@@ -637,7 +666,7 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 // handleAction processes a POST/PUT/DELETE request.
 // All mutation queries within an action are wrapped in an implicit transaction.
 func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action parser.Page, app *parser.App) {
-	formData := extractFormData(r)
+	formData := extractFormData(r, app.Config)
 
 	// Verify CSRF token
 	csrfToken := formData["_csrf"]
@@ -741,8 +770,21 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 					if err != nil {
 						lastQueryOk = false
 						lastQueryNotFound = false
-						http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
-						return // tx.Rollback via defer
+						// Check if there's an on error handler in remaining nodes
+						hasOnError := false
+						for _, remaining := range action.Body {
+							if remaining.Type == parser.NodeOn {
+								if cond, ok := remaining.Props["condition"]; ok && cond == "error" {
+									hasOnError = true
+									break
+								}
+							}
+						}
+						if !hasOnError {
+							http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+							return // tx.Rollback via defer
+						}
+						continue
 					}
 					lastQueryOk = true
 					lastQueryNotFound = false
@@ -817,6 +859,58 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 					fmt.Printf("  enqueue error: %v\n", err)
 				}
 			}
+
+		case parser.NodeGeneratePDF:
+			doc := pdf.NewDocument()
+			doc.SetTitle(node.TemplateName)
+			doc.SetFooter("Page {page} of {pages}")
+			pdfPage := doc.AddPage()
+			pdfPage.AddHeading(node.TemplateName)
+			pdfPage.AddSpace(10)
+
+			dataName := node.DataQueryName
+			if dataName != "" && tx != nil {
+				// Re-run the named query to get full rows for the PDF
+				for _, prevNode := range action.Body {
+					if prevNode.Type == parser.NodeQuery && prevNode.Name == dataName {
+						rows, err := tx.QueryRowsWithParams(prevNode.SQL, formData)
+						if err == nil && len(rows) > 0 {
+							var headers []string
+							for key := range rows[0] {
+								headers = append(headers, key)
+							}
+							var tableRows [][]string
+							for _, row := range rows {
+								var tr []string
+								for _, h := range headers {
+									tr = append(tr, row[h])
+								}
+								tableRows = append(tableRows, tr)
+							}
+							pdfPage.AddTable(headers, tableRows)
+						}
+						break
+					}
+				}
+			}
+
+			pdfBytes := doc.Render()
+			tmpFile, err := os.CreateTemp("", "kilnx-*.pdf")
+			if err != nil {
+				fmt.Printf("  pdf generation error: %v\n", err)
+				http.Error(w, "PDF generation error", http.StatusInternalServerError)
+				return
+			}
+			if _, err := tmpFile.Write(pdfBytes); err != nil {
+				fmt.Printf("  pdf write error: %v\n", err)
+				tmpFile.Close()
+				os.Remove(tmpFile.Name())
+				http.Error(w, "PDF write error", http.StatusInternalServerError)
+				return
+			}
+			tmpFile.Close()
+			formData["_generated_pdf"] = tmpFile.Name()
+			fmt.Printf("  generated pdf: %s\n", tmpFile.Name())
 
 		case parser.NodeRedirect:
 			path := node.Value
@@ -996,6 +1090,26 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 						fmt.Printf("  on-branch query error: %v\n", err)
 					}
 				}
+			}
+		case parser.NodeValidate:
+			modelName := node.ModelName
+			var errors []string
+			if modelName == "" {
+				if len(node.Validations) > 0 {
+					errors = validateInlineRules(node.Validations, formData)
+				}
+			} else {
+				errors = validateFormData(modelName, app, formData)
+			}
+			if len(errors) > 0 {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				var errorHTML strings.Builder
+				for _, e := range errors {
+					errorHTML.WriteString(fmt.Sprintf("<div class=\"kilnx-alert kilnx-alert-error\">%s</div>", html.EscapeString(e)))
+				}
+				w.Write([]byte(errorHTML.String()))
+				return
 			}
 		case parser.NodeEnqueue:
 			if s.jobQueue != nil {

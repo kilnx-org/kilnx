@@ -458,7 +458,6 @@ var topLevelKeywords = []keywordInfo{
 	{"translations", "i18n translation strings"},
 	{"log", "Logging configuration"},
 	{"limit", "Rate limiting rules"},
-	{"component", "Reusable UI component"},
 }
 
 var bodyKeywords = []keywordInfo{
@@ -491,7 +490,6 @@ var fieldTypes = []keywordInfo{
 	{"phone", "Phone number field"},
 	{"required", "Field constraint: non-null"},
 	{"unique", "Field constraint: unique value"},
-	{"optional", "Field constraint: nullable"},
 	{"default", "Field constraint: default value"},
 	{"auto", "Field constraint: auto-generated"},
 	{"min", "Field constraint: minimum value"},

@@ -9,16 +9,17 @@ import (
 type I18n struct {
 	translations    map[string]map[string]string // lang -> key -> value
 	defaultLanguage string
+	detectLanguages bool // whether to detect language from request headers/params
 }
 
-func NewI18n(translations map[string]map[string]string, defaultLang string) *I18n {
+func NewI18n(translations map[string]map[string]string, defaultLang string, detect bool) *I18n {
 	if defaultLang == "" {
 		defaultLang = "en"
 	}
 	if translations == nil {
 		translations = make(map[string]map[string]string)
 	}
-	return &I18n{translations: translations, defaultLanguage: defaultLang}
+	return &I18n{translations: translations, defaultLanguage: defaultLang, detectLanguages: detect}
 }
 
 // Translate returns the translation for a key in the detected language
@@ -45,7 +46,7 @@ func (i *I18n) Translate(key string, r *http.Request) string {
 
 // detectLanguage reads Accept-Language header and returns best match
 func (i *I18n) detectLanguage(r *http.Request) string {
-	if r == nil {
+	if r == nil || !i.detectLanguages {
 		return i.defaultLanguage
 	}
 

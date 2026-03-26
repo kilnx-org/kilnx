@@ -456,8 +456,8 @@ func TestJobDefaultRetry(t *testing.T) {
 	src := `job simple-task
   query: SELECT 1`
 	app := parse(t, src)
-	if app.Jobs[0].MaxRetries != 1 {
-		t.Errorf("expected default MaxRetries 1, got %d", app.Jobs[0].MaxRetries)
+	if app.Jobs[0].MaxRetries != 3 {
+		t.Errorf("expected default MaxRetries 3, got %d", app.Jobs[0].MaxRetries)
 	}
 }
 

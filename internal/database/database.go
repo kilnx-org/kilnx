@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
@@ -12,8 +13,9 @@ import (
 var identifierRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 type DB struct {
-	conn *sql.DB
-	path string
+	conn        *sql.DB
+	path        string
+	OnSlowQuery func(sql string, d time.Duration) // optional callback for slow query logging
 }
 
 // TxHandle wraps a sql.Tx with named parameter support
@@ -217,6 +219,14 @@ func fieldToColumnDef(f parser.Field) string {
 	def := fieldToDefault(f)
 	if def != "" {
 		parts = append(parts, strings.TrimSpace(def))
+	}
+
+	if f.Type == parser.FieldOption && len(f.Options) > 0 {
+		quoted := make([]string, len(f.Options))
+		for i, opt := range f.Options {
+			quoted[i] = fmt.Sprintf("'%s'", opt)
+		}
+		parts = append(parts, fmt.Sprintf("CHECK(\"%s\" IN (%s))", name, strings.Join(quoted, ", ")))
 	}
 
 	if f.Type == parser.FieldReference {

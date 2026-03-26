@@ -337,7 +337,7 @@ func TestFieldTypeRecognition(t *testing.T) {
 }
 
 func TestFieldConstraintRecognition(t *testing.T) {
-	constraints := []string{"required", "unique", "optional", "default", "auto", "min", "max"}
+	constraints := []string{"required", "unique", "default", "auto", "min", "max"}
 
 	for _, c := range constraints {
 		if !IsFieldConstraint(c) {

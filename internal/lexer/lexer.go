@@ -55,7 +55,7 @@ var fieldTypes = map[string]bool{
 
 // Field constraint keywords
 var fieldConstraints = map[string]bool{
-	"required": true, "unique": true, "optional": true,
+	"required": true, "unique": true,
 	"default": true, "auto": true,
 	"min": true, "max": true,
 }

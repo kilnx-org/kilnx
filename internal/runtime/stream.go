@@ -49,6 +49,10 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request, stream par
 	// Add current_user params if authenticated
 	session := s.getSession(r)
 	if session != nil {
+		params["current_user.id"] = session.UserID
+		params["current_user.identity"] = session.Identity
+		params["current_user.role"] = session.Role
+		// Also support underscore form for backwards compatibility
 		params["current_user_id"] = session.UserID
 		params["current_user_identity"] = session.Identity
 		params["current_user_role"] = session.Role

@@ -100,7 +100,7 @@ type Schedule struct {
 type Job struct {
 	Name       string
 	Body       []Node // query, send email, etc.
-	MaxRetries int    // from "retry N" declaration (default 1 = no retry)
+	MaxRetries int    // from "retry N" declaration (default 3)
 }
 
 type Stream struct {
@@ -157,7 +157,6 @@ type Field struct {
 	Type      FieldType
 	Required  bool
 	Unique    bool
-	Optional  bool
 	Default   string
 	Auto      bool
 	Min       string
@@ -604,9 +603,6 @@ func (p *parserState) parseField(app *App) (Field, error) {
 				p.advance()
 			case "unique":
 				field.Unique = true
-				p.advance()
-			case "optional":
-				field.Optional = true
 				p.advance()
 			case "auto":
 				field.Auto = true
@@ -1672,7 +1668,7 @@ func (p *parserState) parseSchedule() Schedule {
 //	  send email to :requested_by
 //	    subject: "Your report is ready"
 func (p *parserState) parseJob() Job {
-	job := Job{MaxRetries: 1}
+	job := Job{MaxRetries: 3}
 
 	// consume "job"
 	p.advance()
@@ -2119,15 +2115,10 @@ func (p *parserState) parseRateLimit() RateLimit {
 					if p.current().Type == lexer.TokenColon {
 						p.advance()
 					}
-					// Parse inline: status N message "text"
+					// Parse inline: message "text" (status is always 429)
 					for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
 						cur := p.current()
-						if (cur.Type == lexer.TokenIdentifier || cur.Type == lexer.TokenKeyword) && cur.Value == "status" {
-							p.advance()
-							if p.current().Type == lexer.TokenNumber {
-								p.advance() // consume status code (always 429 for rate limiting)
-							}
-						} else if (cur.Type == lexer.TokenIdentifier || cur.Type == lexer.TokenKeyword) && cur.Value == "message" {
+						if (cur.Type == lexer.TokenIdentifier || cur.Type == lexer.TokenKeyword) && cur.Value == "message" {
 							p.advance()
 							if p.current().Type == lexer.TokenString {
 								rl.Message = p.advance().Value

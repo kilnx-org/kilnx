@@ -106,12 +106,16 @@ func nextCronOccurrence(expr string) time.Time {
 	}
 
 	var targetDay time.Weekday = -1
+	everyDay := false
 	var hour, minute int
 
 	parts := strings.Fields(expr)
 	for i, p := range parts {
 		if d, ok := dayMap[p]; ok {
 			targetDay = d
+		}
+		if p == "day" || p == "daily" {
+			everyDay = true
 		}
 		if p == "at" && i+1 < len(parts) {
 			timeParts := strings.SplitN(parts[i+1], ":", 2)
@@ -124,18 +128,27 @@ func nextCronOccurrence(expr string) time.Time {
 		}
 	}
 
-	if targetDay < 0 {
+	if targetDay < 0 && !everyDay {
 		return time.Time{}
 	}
 
 	now := time.Now()
-	// Find the next occurrence of the target day
+
+	if everyDay {
+		// "every day at HH:MM" - run daily at the specified time
+		target := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
+		if now.After(target) {
+			target = target.AddDate(0, 0, 1)
+		}
+		return target
+	}
+
+	// Find the next occurrence of the target weekday
 	daysUntil := int(targetDay) - int(now.Weekday())
 	if daysUntil < 0 {
 		daysUntil += 7
 	}
 	if daysUntil == 0 {
-		// Same day: check if the time has passed
 		target := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
 		if now.After(target) {
 			daysUntil = 7
@@ -475,6 +488,25 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 			tmpFile.Close()
 			params["_generated_pdf"] = tmpFile.Name()
 			fmt.Printf("  generated pdf: %s\n", tmpFile.Name())
+
+		case parser.NodeEnqueue:
+			if s.jobQueue != nil {
+				resolvedParams := make(map[string]string)
+				for k, v := range node.JobParams {
+					if strings.HasPrefix(v, ":") {
+						paramName := strings.TrimPrefix(v, ":")
+						if val, ok := params[paramName]; ok {
+							resolvedParams[k] = val
+							continue
+						}
+					}
+					resolvedParams[k] = v
+				}
+				if err := s.jobQueue.Enqueue(node.JobName, resolvedParams); err != nil {
+					fmt.Printf("  enqueue error: %v\n", err)
+					return fmt.Errorf("enqueue error: %w", err)
+				}
+			}
 		}
 	}
 

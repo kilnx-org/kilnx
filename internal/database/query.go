@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Row is a single result row as a map of column name to string value
@@ -52,7 +53,11 @@ var paramRe = regexp.MustCompile(`:([a-zA-Z_][a-zA-Z0-9_]*)`)
 // Named params like :name, :email are replaced with positional ? params.
 func (db *DB) ExecWithParams(sqlStr string, params map[string]string) error {
 	query, args := bindParams(sqlStr, params)
+	start := time.Now()
 	_, err := db.conn.Exec(query, args...)
+	if db.OnSlowQuery != nil {
+		db.OnSlowQuery(sqlStr, time.Since(start))
+	}
 	if err != nil {
 		return fmt.Errorf("exec error: %w\nSQL: %s\nParams: %v", err, query, args)
 	}
@@ -62,7 +67,12 @@ func (db *DB) ExecWithParams(sqlStr string, params map[string]string) error {
 // QueryRowsWithParams executes a SELECT with named params
 func (db *DB) QueryRowsWithParams(sqlStr string, params map[string]string) ([]Row, error) {
 	query, args := bindParams(sqlStr, params)
-	return db.queryRowsInternal(query, args...)
+	start := time.Now()
+	result, err := db.queryRowsInternal(query, args...)
+	if db.OnSlowQuery != nil {
+		db.OnSlowQuery(sqlStr, time.Since(start))
+	}
+	return result, err
 }
 
 func (db *DB) queryRowsInternal(query string, args ...interface{}) ([]Row, error) {

@@ -34,7 +34,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 	// For mutation methods, extract form/JSON body data
 	isMutation := r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodDelete
 	if isMutation {
-		formData := extractFormData(r)
+		formData := extractFormData(r, s.getApp().Config)
 		for k, v := range formData {
 			pathParams[k] = v
 		}

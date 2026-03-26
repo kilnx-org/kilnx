@@ -1,8 +1,8 @@
 # Kilnx Grammar Reference
 
-Kilnx has 22 keywords. The entire language fits on a single page.
+Kilnx has 27 keywords. The entire language fits on a single page.
 
-For comparison: Python has 35 keywords and does none of these things without importing libraries. JavaScript has 64. Java has 67. Kilnx has 22 and delivers a complete web app from database to browser.
+For comparison: Python has 35 keywords and does none of these things without importing libraries. JavaScript has 64. Java has 67. Kilnx has 27 and delivers a complete web app from database to browser.
 
 ## Hello World
 
@@ -86,7 +86,12 @@ auth
 
 ### layout
 
-Page wrapper templates.
+Page wrapper templates. Four placeholders are available:
+
+- `{page.title}` - the page title (HTML-escaped)
+- `{page.content}` - the rendered page body
+- `{nav}` - auto-generated navigation bar
+- `{kilnx.js}` - **required** htmx and SSE scripts. Without this, htmx functionality breaks.
 
 ```kilnx
 layout main
@@ -94,9 +99,10 @@ layout main
     <html>
     <head>
       <title>{page.title}</title>
+      {kilnx.js}
     </head>
     <body>
-      <nav>...</nav>
+      {nav}
       {page.content}
     </body>
     </html>
@@ -182,11 +188,7 @@ socket /chat/:room requires auth
       body: required max 500
     query: insert into chat_message (body, author, room)
            values (:body, :current_user.id, :room)
-    broadcast to :room
-      fragment chat-bubble with
-        body: :body
-        author: :current_user.name
-        created: now()
+    broadcast to :room fragment chat-bubble
 ```
 
 ### api
@@ -223,6 +225,15 @@ webhook /stripe/payment secret env STRIPE_SECRET
                          where id = :event.customer_id
       template: payment-received
       subject: "Payment confirmed"
+```
+
+Use `on event *` as a catch-all to match any event type:
+
+```kilnx
+webhook /github secret env GITHUB_SECRET
+  on event *
+    query: insert into webhook_log (event, payload, received)
+           values (:event.type, :event.body, now())
 ```
 
 ### schedule
@@ -434,17 +445,14 @@ action /reports/generate method POST requires admin
 
 ### broadcast
 
-Sends data to all connected WebSocket clients in a room.
+Sends data to all connected WebSocket clients in a room. The fragment receives the same params that the socket handler received.
 
 ```kilnx
 socket /chat/:room requires auth
   on message
     query: insert into chat_message (body, author, room)
            values (:body, :current_user.id, :room)
-    broadcast to :room
-      fragment chat-bubble with
-        body: :body
-        author: :current_user.name
+    broadcast to :room fragment chat-bubble
 ```
 
 ---
@@ -480,12 +488,12 @@ auth
 layout main
   html
     <html>
-    <head><title>Tasks</title></head>
+    <head>
+      <title>Tasks</title>
+      {kilnx.js}
+    </head>
     <body>
-      <nav>
-        <a href="/tasks">Tasks</a>
-        <a href="/logout">Logout</a>
-      </nav>
+      {nav}
       {page.content}
     </body>
     </html>

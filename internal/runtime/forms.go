@@ -102,6 +102,20 @@ func validateFormData(modelName string, app *parser.App, formData map[string]str
 			}
 		}
 
+		if field.Type == parser.FieldOption && len(field.Options) > 0 && val != "" {
+			valid := false
+			for _, opt := range field.Options {
+				if val == opt {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				label := strings.ToUpper(field.Name[:1]) + field.Name[1:]
+				errors = append(errors, fmt.Sprintf("%s must be one of: %s", label, strings.Join(field.Options, ", ")))
+			}
+		}
+
 		if field.Min != "" && val != "" {
 			var min int
 			fmt.Sscanf(field.Min, "%d", &min)
@@ -200,30 +214,26 @@ func validateInlineRules(validations []parser.Validation, formData map[string]st
 	return errors
 }
 
-// extractPathParams extracts :param values from URL path
-func extractPathParams(r *http.Request) map[string]string {
-	params := make(map[string]string)
-	parts := strings.Split(r.URL.Path, "/")
-	for i, part := range parts {
-		if part != "" {
-			params[fmt.Sprintf("p%d", i)] = part
-		}
-	}
-	// Common pattern: /model/id -> extract "id"
-	if len(parts) >= 3 {
-		params["id"] = parts[len(parts)-1]
-	}
-	return params
-}
-
-// extractFormData reads form values from a POST request, including file uploads
-func extractFormData(r *http.Request) map[string]string {
+// extractFormData reads form values from a POST request, including file uploads.
+// config may be nil; defaults are used in that case.
+func extractFormData(r *http.Request, config *parser.AppConfig) map[string]string {
 	contentType := r.Header.Get("Content-Type")
 	data := make(map[string]string)
 
+	// Resolve upload settings from config
+	uploadsDir := "uploads"
+	var maxUploadBytes int64 = 32 << 20 // 32MB default
+	if config != nil {
+		if config.UploadsDir != "" {
+			uploadsDir = config.UploadsDir
+		}
+		if config.UploadsMaxMB > 0 {
+			maxUploadBytes = int64(config.UploadsMaxMB) << 20
+		}
+	}
+
 	if strings.Contains(contentType, "multipart/form-data") {
-		// Parse multipart form with 32MB max
-		r.ParseMultipartForm(32 << 20)
+		r.ParseMultipartForm(maxUploadBytes)
 		if r.MultipartForm != nil {
 			for key, values := range r.MultipartForm.Value {
 				if len(values) > 0 {
@@ -239,8 +249,6 @@ func extractFormData(r *http.Request) map[string]string {
 					}
 					defer file.Close()
 
-					// Determine uploads directory
-					uploadsDir := "uploads"
 					// Sanitize filename to prevent path traversal
 					safeName := filepath.Base(fileHeaders[0].Filename)
 					fileName := fmt.Sprintf("%d_%s", time.Now().UnixNano(), safeName)
