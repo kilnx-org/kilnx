@@ -1,6 +1,7 @@
 package optimizer
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/kilnx-org/kilnx/internal/parser"
@@ -554,6 +555,171 @@ func TestRewrite_NodeOnChildren(t *testing.T) {
 	want := "SELECT name, email FROM user WHERE id = 1"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// --- Deduplication tests ---
+
+func TestDeduplicate_IdenticalQueries(t *testing.T) {
+	app := &parser.App{
+		Pages: []parser.Page{{
+			Path: "/test",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "q1", SQL: "SELECT * FROM user"},
+				{Type: parser.NodeQuery, Name: "q2", SQL: "SELECT * FROM user"},
+				{Type: parser.NodeTable, Name: "q2", Columns: []parser.TableColumn{{Field: "name"}}},
+			},
+		}},
+	}
+	deduplicateQueries(&app.Pages[0])
+	if app.Pages[0].Body[1].SQL != "" {
+		t.Errorf("duplicate query should have SQL cleared, got %q", app.Pages[0].Body[1].SQL)
+	}
+	if app.Pages[0].Body[2].Name != "q1" {
+		t.Errorf("consumer should be renamed to q1, got %q", app.Pages[0].Body[2].Name)
+	}
+}
+
+func TestDeduplicate_DifferentQueries(t *testing.T) {
+	app := &parser.App{
+		Pages: []parser.Page{{
+			Path: "/test",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "q1", SQL: "SELECT * FROM user"},
+				{Type: parser.NodeQuery, Name: "q2", SQL: "SELECT * FROM post"},
+			},
+		}},
+	}
+	deduplicateQueries(&app.Pages[0])
+	if app.Pages[0].Body[0].SQL == "" || app.Pages[0].Body[1].SQL == "" {
+		t.Error("different queries should not be deduplicated")
+	}
+}
+
+func TestDeduplicate_ConsumerInOnBlock(t *testing.T) {
+	app := &parser.App{
+		Pages: []parser.Page{{
+			Path: "/test",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "q1", SQL: "SELECT * FROM user"},
+				{Type: parser.NodeQuery, Name: "q2", SQL: "SELECT * FROM user"},
+				{Type: parser.NodeOn, Children: []parser.Node{
+					{Type: parser.NodeTable, Name: "q2", Columns: []parser.TableColumn{{Field: "name"}}},
+				}},
+			},
+		}},
+	}
+	deduplicateQueries(&app.Pages[0])
+	if app.Pages[0].Body[2].Children[0].Name != "q1" {
+		t.Errorf("consumer inside NodeOn should be renamed, got %q", app.Pages[0].Body[2].Children[0].Name)
+	}
+}
+
+// --- JOIN pruning tests ---
+
+func TestPruneJoin_UnusedJoinRemoved(t *testing.T) {
+	sql := "SELECT p.title FROM post p JOIN user u ON p.author_id = u.id"
+	fields := newFieldSet()
+	fields.add("p.title")
+	got := pruneUnusedJoins(sql, fields)
+	if strings.Contains(got, "JOIN") {
+		t.Errorf("unused JOIN should be pruned, got %q", got)
+	}
+}
+
+func TestPruneJoin_UsedJoinKept(t *testing.T) {
+	sql := "SELECT p.title, u.name FROM post p JOIN user u ON p.author_id = u.id"
+	fields := newFieldSet()
+	fields.add("p.title")
+	fields.add("u.name")
+	got := pruneUnusedJoins(sql, fields)
+	if !strings.Contains(got, "JOIN") {
+		t.Errorf("used JOIN should be kept, got %q", got)
+	}
+}
+
+func TestPruneJoin_UnqualifiedFieldSkips(t *testing.T) {
+	sql := "SELECT p.title FROM post p JOIN user u ON p.author_id = u.id"
+	fields := newFieldSet()
+	fields.add("title") // unqualified, can't determine table
+	got := pruneUnusedJoins(sql, fields)
+	if got != sql {
+		t.Errorf("should not prune with unqualified fields, got %q", got)
+	}
+}
+
+func TestPruneJoin_WithoutAlias(t *testing.T) {
+	sql := "SELECT post.title FROM post JOIN user ON post.author_id = user.id"
+	fields := newFieldSet()
+	fields.add("post.title")
+	got := pruneUnusedJoins(sql, fields)
+	if strings.Contains(strings.ToLower(got), "join user") {
+		t.Errorf("JOIN without alias should still be prunable, got %q", got)
+	}
+}
+
+// --- Stream materialization tests ---
+
+func TestMarkStream_AggregateMarked(t *testing.T) {
+	app := &parser.App{
+		Streams: []parser.Stream{
+			{Path: "/stream/stats", SQL: "SELECT count(*) FROM user", IntervalSecs: 5},
+		},
+	}
+	markStreamCandidates(app)
+	if !strings.HasPrefix(app.Streams[0].SQL, "/* kilnx:materialize-candidate */") {
+		t.Errorf("aggregate stream should be marked, got %q", app.Streams[0].SQL)
+	}
+}
+
+func TestMarkStream_NonAggregateNotMarked(t *testing.T) {
+	app := &parser.App{
+		Streams: []parser.Stream{
+			{Path: "/stream/users", SQL: "SELECT * FROM user", IntervalSecs: 5},
+		},
+	}
+	markStreamCandidates(app)
+	if strings.Contains(app.Streams[0].SQL, "materialize") {
+		t.Errorf("non-aggregate stream should not be marked, got %q", app.Streams[0].SQL)
+	}
+}
+
+func TestMarkStream_NoInterval(t *testing.T) {
+	app := &parser.App{
+		Streams: []parser.Stream{
+			{Path: "/stream/stats", SQL: "SELECT count(*) FROM user", IntervalSecs: 0},
+		},
+	}
+	markStreamCandidates(app)
+	if strings.Contains(app.Streams[0].SQL, "materialize") {
+		t.Errorf("stream without interval should not be marked, got %q", app.Streams[0].SQL)
+	}
+}
+
+func TestMarkStream_AlreadyMarked(t *testing.T) {
+	app := &parser.App{
+		Streams: []parser.Stream{
+			{Path: "/stream/stats", SQL: "/* kilnx:materialize-candidate */ SELECT count(*) FROM user", IntervalSecs: 5},
+		},
+	}
+	markStreamCandidates(app)
+	count := strings.Count(app.Streams[0].SQL, "materialize-candidate")
+	if count != 1 {
+		t.Errorf("should not double-mark, got %d occurrences", count)
+	}
+}
+
+func TestMarkStream_SumAvgMinMax(t *testing.T) {
+	for _, fn := range []string{"SUM", "AVG", "MIN", "MAX"} {
+		app := &parser.App{
+			Streams: []parser.Stream{
+				{Path: "/s", SQL: "SELECT " + fn + "(value) FROM deal", IntervalSecs: 10},
+			},
+		}
+		markStreamCandidates(app)
+		if !strings.Contains(app.Streams[0].SQL, "materialize") {
+			t.Errorf("%s stream should be marked", fn)
+		}
 	}
 }
 
