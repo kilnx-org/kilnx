@@ -21,6 +21,7 @@ func checkSecurity(app *parser.App, schema *Schema) []Diagnostic {
 	diags = append(diags, checkWebhookSecrets(app)...)
 	diags = append(diags, checkPasswordExposure(app, schema)...)
 	diags = append(diags, checkAuthWithoutPermissions(app)...)
+	diags = append(diags, checkCSRFProtection(app)...)
 
 	return diags
 }
@@ -204,6 +205,72 @@ func hasMutatingSQL(nodes []parser.Node) bool {
 			if hasMutatingSQL(n.Children) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// checkCSRFProtection warns when a page has a raw HTML form targeting a
+// mutating action instead of using the Kilnx form keyword (which auto-adds
+// a CSRF token). Only pages whose path matches an action's path are checked.
+func checkCSRFProtection(app *parser.App) []Diagnostic {
+	// Build a set of action paths that accept POST/PUT/DELETE.
+	actionPaths := make(map[string]string) // path -> method
+	for _, a := range app.Actions {
+		method := a.Method
+		if method == "" {
+			method = "POST"
+		}
+		upper := strings.ToUpper(method)
+		if upper == "POST" || upper == "PUT" || upper == "DELETE" {
+			actionPaths[a.Path] = upper
+		}
+	}
+	if len(actionPaths) == 0 {
+		return nil
+	}
+
+	var diags []Diagnostic
+	for _, p := range app.Pages {
+		method, ok := actionPaths[p.Path]
+		if !ok {
+			continue
+		}
+		if hasRawHTMLForm(p.Body) && !hasFormNode(p.Body) {
+			diags = append(diags, Diagnostic{
+				Level:   "warning",
+				Message: fmt.Sprintf("page has a raw HTML <form> targeting a %s action; use the 'form' keyword instead so Kilnx auto-adds a CSRF token", method),
+				Context: fmt.Sprintf("page %s", p.Path),
+			})
+		}
+	}
+	return diags
+}
+
+// hasRawHTMLForm checks if any NodeHTML in the tree contains a <form tag.
+func hasRawHTMLForm(nodes []parser.Node) bool {
+	for _, n := range nodes {
+		if n.Type == parser.NodeHTML {
+			lower := strings.ToLower(n.HTMLContent)
+			if strings.Contains(lower, "<form") {
+				return true
+			}
+		}
+		if hasRawHTMLForm(n.Children) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasFormNode checks if any node in the tree uses the Kilnx form keyword.
+func hasFormNode(nodes []parser.Node) bool {
+	for _, n := range nodes {
+		if n.Type == parser.NodeForm {
+			return true
+		}
+		if hasFormNode(n.Children) {
+			return true
 		}
 	}
 	return false

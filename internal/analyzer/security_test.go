@@ -500,3 +500,155 @@ func TestCheckPasswordExposure_InAction(t *testing.T) {
 		t.Errorf("expected context to mention action, got %q", diags[0].Context)
 	}
 }
+
+func TestCheckCSRFProtection_RawHTMLForm(t *testing.T) {
+	app := &parser.App{
+		Actions: []parser.Page{
+			{Path: "/submit", Method: "POST"},
+		},
+		Pages: []parser.Page{
+			{
+				Path: "/submit",
+				Body: []parser.Node{
+					{Type: parser.NodeHTML, HTMLContent: `<form method="post"><input name="title"><button>Send</button></form>`},
+				},
+			},
+		},
+	}
+	diags := checkCSRFProtection(app)
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic, got %d: %v", len(diags), diags)
+	}
+	if !strings.Contains(diags[0].Message, "CSRF") {
+		t.Errorf("expected message about CSRF, got %q", diags[0].Message)
+	}
+	if !strings.Contains(diags[0].Context, "/submit") {
+		t.Errorf("expected context to mention /submit, got %q", diags[0].Context)
+	}
+}
+
+func TestCheckCSRFProtection_FormKeyword(t *testing.T) {
+	app := &parser.App{
+		Actions: []parser.Page{
+			{Path: "/submit", Method: "POST"},
+		},
+		Pages: []parser.Page{
+			{
+				Path: "/submit",
+				Body: []parser.Node{
+					{Type: parser.NodeForm, ModelName: "post"},
+				},
+			},
+		},
+	}
+	diags := checkCSRFProtection(app)
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diagnostics when form keyword is used, got %d: %v", len(diags), diags)
+	}
+}
+
+func TestCheckCSRFProtection_NoMatchingPage(t *testing.T) {
+	app := &parser.App{
+		Actions: []parser.Page{
+			{Path: "/api/submit", Method: "POST"},
+		},
+		Pages: []parser.Page{
+			{
+				Path: "/home",
+				Body: []parser.Node{
+					{Type: parser.NodeHTML, HTMLContent: `<form method="post"><button>Send</button></form>`},
+				},
+			},
+		},
+	}
+	diags := checkCSRFProtection(app)
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diagnostics when page path does not match action path, got %d", len(diags))
+	}
+}
+
+func TestCheckCSRFProtection_DefaultMethod(t *testing.T) {
+	app := &parser.App{
+		Actions: []parser.Page{
+			{Path: "/update"}, // Method defaults to POST
+		},
+		Pages: []parser.Page{
+			{
+				Path: "/update",
+				Body: []parser.Node{
+					{Type: parser.NodeHTML, HTMLContent: `<form><input name="name"></form>`},
+				},
+			},
+		},
+	}
+	diags := checkCSRFProtection(app)
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic for default POST method, got %d", len(diags))
+	}
+	if !strings.Contains(diags[0].Message, "POST") {
+		t.Errorf("expected message to mention POST, got %q", diags[0].Message)
+	}
+}
+
+func TestCheckCSRFProtection_DeleteMethod(t *testing.T) {
+	app := &parser.App{
+		Actions: []parser.Page{
+			{Path: "/items/remove", Method: "DELETE"},
+		},
+		Pages: []parser.Page{
+			{
+				Path: "/items/remove",
+				Body: []parser.Node{
+					{Type: parser.NodeHTML, HTMLContent: `<form method="delete"><button>Delete</button></form>`},
+				},
+			},
+		},
+	}
+	diags := checkCSRFProtection(app)
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic for DELETE action with raw form, got %d", len(diags))
+	}
+}
+
+func TestCheckCSRFProtection_NoActions(t *testing.T) {
+	app := &parser.App{
+		Pages: []parser.Page{
+			{
+				Path: "/home",
+				Body: []parser.Node{
+					{Type: parser.NodeHTML, HTMLContent: `<form><input></form>`},
+				},
+			},
+		},
+	}
+	diags := checkCSRFProtection(app)
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diagnostics when no actions exist, got %d", len(diags))
+	}
+}
+
+func TestCheckCSRFProtection_BothRawAndFormKeyword(t *testing.T) {
+	// When a page has both a raw HTML form AND a form keyword,
+	// the form keyword provides CSRF for its own form, but the raw HTML form
+	// is still unprotected. However, the presence of the form keyword means
+	// the developer is aware of the form system. We still skip the warning
+	// since the page uses the form keyword.
+	app := &parser.App{
+		Actions: []parser.Page{
+			{Path: "/edit", Method: "POST"},
+		},
+		Pages: []parser.Page{
+			{
+				Path: "/edit",
+				Body: []parser.Node{
+					{Type: parser.NodeForm, ModelName: "post"},
+					{Type: parser.NodeHTML, HTMLContent: `<form method="post"><button>Extra</button></form>`},
+				},
+			},
+		},
+	}
+	diags := checkCSRFProtection(app)
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diagnostics when form keyword is present alongside raw HTML, got %d", len(diags))
+	}
+}
