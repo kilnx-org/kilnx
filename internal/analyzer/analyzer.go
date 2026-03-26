@@ -22,24 +22,52 @@ type TableInfo struct {
 	Columns map[string]bool
 }
 
+// ModelFieldInfo holds the form-level field names for a model.
+// This maps model field names (what HTML forms send) to DB column names.
+type ModelFieldInfo struct {
+	FormFields    map[string]bool   // field names as sent by HTML forms
+	FieldToColumn map[string]string // form field name -> DB column name
+	ColumnToField map[string]string // DB column name -> form field name
+}
+
 // Schema is the compile-time view of the database derived from model declarations.
 type Schema struct {
-	Tables map[string]*TableInfo
+	Tables     map[string]*TableInfo
+	ModelFields map[string]*ModelFieldInfo
 }
 
 func BuildSchema(models []parser.Model) *Schema {
-	s := &Schema{Tables: make(map[string]*TableInfo)}
+	s := &Schema{
+		Tables:      make(map[string]*TableInfo),
+		ModelFields: make(map[string]*ModelFieldInfo),
+	}
 	for _, m := range models {
 		info := &TableInfo{Name: m.Name, Columns: make(map[string]bool)}
+		mf := &ModelFieldInfo{
+			FormFields:    make(map[string]bool),
+			FieldToColumn: make(map[string]string),
+			ColumnToField: make(map[string]string),
+		}
 		info.Columns["id"] = true
+		mf.FormFields["id"] = true
+		mf.FieldToColumn["id"] = "id"
+		mf.ColumnToField["id"] = "id"
 		for _, f := range m.Fields {
 			if f.Type == parser.FieldReference {
-				info.Columns[f.Name+"_id"] = true
+				colName := f.Name + "_id"
+				info.Columns[colName] = true
+				mf.FormFields[f.Name] = true
+				mf.FieldToColumn[f.Name] = colName
+				mf.ColumnToField[colName] = f.Name
 			} else {
 				info.Columns[f.Name] = true
+				mf.FormFields[f.Name] = true
+				mf.FieldToColumn[f.Name] = f.Name
+				mf.ColumnToField[f.Name] = f.Name
 			}
 		}
 		s.Tables[m.Name] = info
+		s.ModelFields[m.Name] = mf
 	}
 	return s
 }
@@ -99,6 +127,9 @@ func checkAllSQL(app *parser.App, schema *Schema) []Diagnostic {
 	for _, a := range app.Actions {
 		ctx := fmt.Sprintf("action %s", a.Path)
 		diags = append(diags, analyzeNodes(a.Body, schema, ctx)...)
+		// Validate named params in action SQL against form fields
+		modelName := findActionModel(a, app)
+		diags = append(diags, checkActionParams(a, modelName, schema, ctx)...)
 	}
 	for _, f := range app.Fragments {
 		ctx := fmt.Sprintf("fragment %s", f.Path)
@@ -135,6 +166,33 @@ func checkAllSQL(app *parser.App, schema *Schema) []Diagnostic {
 		diags = append(diags, analyzeNodes(sock.OnDisconnect, schema, base+" on disconnect")...)
 	}
 
+	return diags
+}
+
+// checkActionParams validates named params in all SQL nodes of an action,
+// including query SQL, form QuerySQL, and respond QuerySQL. Recurses into
+// NodeOn children to cover on success/error branches.
+func checkActionParams(action parser.Page, modelName string, schema *Schema, context string) []Diagnostic {
+	return checkActionParamsNodes(action.Body, action.Path, modelName, schema, context)
+}
+
+func checkActionParamsNodes(nodes []parser.Node, path string, modelName string, schema *Schema, context string) []Diagnostic {
+	var diags []Diagnostic
+	for _, node := range nodes {
+		sql := ""
+		switch {
+		case node.Type == parser.NodeQuery && node.SQL != "":
+			sql = node.SQL
+		case (node.Type == parser.NodeForm || node.Type == parser.NodeRespond) && node.QuerySQL != "":
+			sql = node.QuerySQL
+		case node.Type == parser.NodeOn:
+			diags = append(diags, checkActionParamsNodes(node.Children, path, modelName, schema, context)...)
+		}
+		if sql != "" {
+			tokens := tokenizeSQL(sql)
+			diags = append(diags, checkNamedParams(sql, tokens, path, modelName, schema, context)...)
+		}
+	}
 	return diags
 }
 
@@ -303,6 +361,218 @@ func checkSelectColumns(tokens []sqlToken, tableRefs []tableRef, aliasToTable ma
 		}
 	}
 	return diags
+}
+
+// --- Named param validation ---
+
+// extractNamedParams returns all :param references from SQL tokens.
+func extractNamedParams(tokens []sqlToken) []string {
+	var params []string
+	seen := make(map[string]bool)
+	for _, t := range tokens {
+		if t.typ == stParam {
+			name := strings.TrimPrefix(t.value, ":")
+			if !seen[name] {
+				params = append(params, name)
+				seen[name] = true
+			}
+		}
+	}
+	return params
+}
+
+// extractURLParams extracts named segments from a URL path like /deals/:id/edit.
+func extractURLParams(path string) map[string]bool {
+	params := make(map[string]bool)
+	for _, seg := range strings.Split(path, "/") {
+		if strings.HasPrefix(seg, ":") {
+			params[seg[1:]] = true
+		}
+	}
+	return params
+}
+
+// findActionModel determines which model an action operates on by checking:
+// 1. validate/form nodes in the action body
+// 2. matching page with same path that has a form
+// 3. the target table in INSERT/UPDATE SQL statements
+func findActionModel(action parser.Page, app *parser.App) string {
+	// Check if the action body has a validate node referencing a model
+	for _, n := range action.Body {
+		if n.Type == parser.NodeValidate && n.ModelName != "" {
+			return n.ModelName
+		}
+		if n.Type == parser.NodeForm && n.ModelName != "" {
+			return n.ModelName
+		}
+	}
+	// Look for a matching page with the same path that has a form
+	for _, p := range app.Pages {
+		if p.Path == action.Path {
+			for _, n := range p.Body {
+				if n.Type == parser.NodeForm && n.ModelName != "" {
+					return n.ModelName
+				}
+			}
+		}
+	}
+	// Infer from SQL: extract table name from INSERT INTO or UPDATE statements
+	for _, n := range action.Body {
+		if n.Type == parser.NodeQuery && n.SQL != "" {
+			tokens := tokenizeSQL(n.SQL)
+			if len(tokens) > 0 && tokens[0].typ == stKeyword {
+				switch tokens[0].lower {
+				case "insert":
+					table, _ := extractInsertColumns(tokens)
+					if table != "" {
+						return table
+					}
+				case "update":
+					table, _ := extractUpdateColumns(tokens)
+					if table != "" {
+						return table
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// checkNamedParams validates that SQL named parameters match available form fields
+// and URL params. Reports errors with "did you mean?" suggestions.
+func checkNamedParams(sql string, tokens []sqlToken, path string, modelName string, schema *Schema, context string) []Diagnostic {
+	var diags []Diagnostic
+	params := extractNamedParams(tokens)
+	if len(params) == 0 {
+		return nil
+	}
+
+	// Build set of available param names
+	available := make(map[string]bool)
+
+	// URL path params (e.g., :id from /deals/:id)
+	for p := range extractURLParams(path) {
+		available[p] = true
+	}
+
+	// Model form fields
+	var mf *ModelFieldInfo
+	if modelName != "" {
+		if m, ok := schema.ModelFields[modelName]; ok {
+			mf = m
+			for field := range m.FormFields {
+				available[field] = true
+			}
+		}
+	}
+
+	// Check each param
+	for _, param := range params {
+		if available[param] {
+			continue
+		}
+
+		// Maybe it's a DB column name and the form sends the field name?
+		if mf != nil {
+			if fieldName, ok := mf.ColumnToField[param]; ok {
+				diags = append(diags, Diagnostic{
+					Level: "error",
+					Message: fmt.Sprintf(
+						"named parameter ':%s' will not be provided by the form. "+
+							"The model field is '%s' (form sends ':%s', database column is '%s'). "+
+							"Use ':%s' instead",
+						param, fieldName, fieldName, param, fieldName),
+					Context: context,
+				})
+				continue
+			}
+		}
+
+		// Try to find a close match
+		suggestion := findClosestMatch(param, available)
+		if suggestion != "" {
+			diags = append(diags, Diagnostic{
+				Level: "error",
+				Message: fmt.Sprintf(
+					"named parameter ':%s' does not match any form field or URL parameter. "+
+						"Did you mean ':%s'?",
+					param, suggestion),
+				Context: context,
+			})
+		} else {
+			// List available params
+			var avail []string
+			for a := range available {
+				avail = append(avail, ":"+a)
+			}
+			diags = append(diags, Diagnostic{
+				Level: "error",
+				Message: fmt.Sprintf(
+					"named parameter ':%s' does not match any form field or URL parameter. "+
+						"Available: %s",
+					param, strings.Join(avail, ", ")),
+				Context: context,
+			})
+		}
+	}
+
+	return diags
+}
+
+// findClosestMatch returns the closest match from candidates using edit distance.
+func findClosestMatch(target string, candidates map[string]bool) string {
+	best := ""
+	bestDist := (len(target) + 2) / 3 // threshold: must be within ~1/3 of the length
+	if bestDist < 1 {
+		bestDist = 1
+	}
+	for c := range candidates {
+		d := editDistance(target, c)
+		if d < bestDist {
+			bestDist = d
+			best = c
+		}
+	}
+	return best
+}
+
+// editDistance computes the Levenshtein distance between two strings.
+func editDistance(a, b string) int {
+	la, lb := len(a), len(b)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+
+	prev := make([]int, lb+1)
+	curr := make([]int, lb+1)
+	for j := 0; j <= lb; j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			ins := curr[j-1] + 1
+			del := prev[j] + 1
+			sub := prev[j-1] + cost
+			curr[j] = ins
+			if del < curr[j] {
+				curr[j] = del
+			}
+			if sub < curr[j] {
+				curr[j] = sub
+			}
+		}
+		prev, curr = curr, prev
+	}
+	return prev[lb]
 }
 
 // --- SQL tokenizer ---
@@ -668,7 +938,8 @@ func extractSelectColumns(tokens []sqlToken) []columnRef {
 				cols = append(cols, columnRef{column: tokens[i].lower})
 			}
 
-			if i+1 < len(tokens) && tokens[i+1].typ == stKeyword && tokens[i+1].lower == "as" {
+			if i+1 < len(tokens) && tokens[i+1].typ == stKeyword && tokens[i+1].lower == "as" &&
+				i+2 < len(tokens) {
 				i += 2
 			}
 			continue
@@ -680,7 +951,8 @@ func extractSelectColumns(tokens []sqlToken) []columnRef {
 
 		// String literal: skip, including any "as alias"
 		if tokens[i].typ == stString {
-			if i+1 < len(tokens) && tokens[i+1].typ == stKeyword && tokens[i+1].lower == "as" {
+			if i+1 < len(tokens) && tokens[i+1].typ == stKeyword && tokens[i+1].lower == "as" &&
+				i+2 < len(tokens) {
 				i += 2
 			}
 			continue
@@ -688,7 +960,8 @@ func extractSelectColumns(tokens []sqlToken) []columnRef {
 
 		// Number literal: skip, including any "as alias"
 		if tokens[i].typ == stNumber {
-			if i+1 < len(tokens) && tokens[i+1].typ == stKeyword && tokens[i+1].lower == "as" {
+			if i+1 < len(tokens) && tokens[i+1].typ == stKeyword && tokens[i+1].lower == "as" &&
+				i+2 < len(tokens) {
 				i += 2
 			}
 			continue

@@ -655,6 +655,187 @@ func TestAnalyze_RespondQuerySQL(t *testing.T) {
 	}
 }
 
+// --- Named param validation tests ---
+
+func TestAnalyze_ParamMismatch_ReferenceField(t *testing.T) {
+	// This is the exact bug: model has "contact: contact required" which generates
+	// column "contact_id" in DB, but the form sends field "contact".
+	// If the dev writes :contact_id in SQL, it should error with a clear message.
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "contact", Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+			}},
+			{Name: "deal", Fields: []parser.Field{
+				{Name: "title", Type: parser.FieldText},
+				{Name: "value", Type: parser.FieldFloat},
+				{Name: "contact", Type: parser.FieldReference, Reference: "contact"},
+			}},
+		},
+		Actions: []parser.Page{
+			{
+				Path: "/deals/new",
+				Body: []parser.Node{
+					{Type: parser.NodeValidate, ModelName: "deal"},
+					{Type: parser.NodeQuery, SQL: "INSERT INTO deal (title, value, contact_id) VALUES (:title, :value, :contact_id)"},
+				},
+			},
+		},
+	}
+
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "contact_id") && strings.Contains(d.Message, ":contact") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected error about :contact_id suggesting :contact, got: %v", diags)
+	}
+}
+
+func TestAnalyze_ParamMismatch_CorrectUsage(t *testing.T) {
+	// Using :contact (the form field name) should NOT produce an error
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "contact", Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+			}},
+			{Name: "deal", Fields: []parser.Field{
+				{Name: "title", Type: parser.FieldText},
+				{Name: "contact", Type: parser.FieldReference, Reference: "contact"},
+			}},
+		},
+		Actions: []parser.Page{
+			{
+				Path: "/deals/new",
+				Body: []parser.Node{
+					{Type: parser.NodeValidate, ModelName: "deal"},
+					{Type: parser.NodeQuery, SQL: "INSERT INTO deal (title, contact_id) VALUES (:title, :contact)"},
+				},
+			},
+		},
+	}
+
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "named parameter") {
+			t.Errorf("unexpected param error: %s", d.Message)
+		}
+	}
+}
+
+func TestAnalyze_ParamMismatch_URLParam(t *testing.T) {
+	// :id from URL path should be recognized
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "deal", Fields: []parser.Field{
+				{Name: "title", Type: parser.FieldText},
+			}},
+		},
+		Actions: []parser.Page{
+			{
+				Path: "/deals/:id/edit",
+				Body: []parser.Node{
+					{Type: parser.NodeQuery, SQL: "UPDATE deal SET title = :title WHERE id = :id"},
+				},
+			},
+		},
+	}
+
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "named parameter") {
+			t.Errorf("unexpected param error: %s", d.Message)
+		}
+	}
+}
+
+func TestAnalyze_ParamMismatch_UnknownParam(t *testing.T) {
+	// A completely unknown param should error
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "deal", Fields: []parser.Field{
+				{Name: "title", Type: parser.FieldText},
+			}},
+		},
+		Actions: []parser.Page{
+			{
+				Path: "/deals/new",
+				Body: []parser.Node{
+					{Type: parser.NodeValidate, ModelName: "deal"},
+					{Type: parser.NodeQuery, SQL: "INSERT INTO deal (title) VALUES (:nonexistent)"},
+				},
+			},
+		},
+	}
+
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "nonexistent") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected error about :nonexistent, got: %v", diags)
+	}
+}
+
+func TestAnalyze_ParamMismatch_DidYouMean(t *testing.T) {
+	// Typo: :titl should suggest :title
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "deal", Fields: []parser.Field{
+				{Name: "title", Type: parser.FieldText},
+				{Name: "value", Type: parser.FieldFloat},
+			}},
+		},
+		Actions: []parser.Page{
+			{
+				Path: "/deals/new",
+				Body: []parser.Node{
+					{Type: parser.NodeValidate, ModelName: "deal"},
+					{Type: parser.NodeQuery, SQL: "INSERT INTO deal (title) VALUES (:titl)"},
+				},
+			},
+		},
+	}
+
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "titl") && strings.Contains(d.Message, "title") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected error about :titl suggesting :title, got: %v", diags)
+	}
+}
+
+func TestEditDistance(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"abc", "", 3},
+		{"", "abc", 3},
+		{"abc", "abc", 0},
+		{"contact_id", "contact", 3},
+		{"titl", "title", 1},
+		{"emial", "email", 2},
+	}
+	for _, tt := range tests {
+		got := editDistance(tt.a, tt.b)
+		if got != tt.want {
+			t.Errorf("editDistance(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
 func TestAnalyze_WebhookAndJobSQL(t *testing.T) {
 	app := &parser.App{
 		Models: []parser.Model{
