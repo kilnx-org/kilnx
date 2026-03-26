@@ -75,6 +75,12 @@ func (s *Server) Start() error {
 		w.Write(data)
 	})
 
+	// Health check for PaaS platforms and load balancers (GET only)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+
 	// Catch-all handler that resolves routes dynamically (supports hot reload)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		app := s.getApp()
@@ -83,7 +89,11 @@ func (s *Server) Start() error {
 		if exceeded, rule := s.rateLimiter.CheckWithRule(r, s.getSession(r)); exceeded {
 			// Apply delay if configured
 			if rule != nil && rule.DelaySecs > 0 {
-				time.Sleep(time.Duration(rule.DelaySecs) * time.Second)
+				delay := time.Duration(rule.DelaySecs) * time.Second
+				if delay > 5*time.Second {
+					delay = 5 * time.Second
+				}
+				time.Sleep(delay)
 			}
 			msg := "Too many requests"
 			if rule != nil && rule.Message != "" {

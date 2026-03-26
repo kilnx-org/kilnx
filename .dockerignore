@@ -1,0 +1,6 @@
+.git
+.claude
+*.db
+*.db-shm
+*.db-wal
+worktrees

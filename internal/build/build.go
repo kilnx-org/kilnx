@@ -9,8 +9,9 @@ import (
 )
 
 // Build compiles a .kilnx file into a standalone binary.
-// It creates a small wrapper main.go inside the kilnx source tree
-// that embeds the .kilnx source, then compiles it.
+// It creates a temporary main.go inside the kilnx source tree
+// (cmd/_build/) that embeds the .kilnx source, then compiles it.
+// Requires the kilnx source tree to be present (development, CI, or Docker).
 func Build(kilnxFile, outputPath string) error {
 	source, err := os.ReadFile(kilnxFile)
 	if err != nil {
@@ -24,7 +25,9 @@ func Build(kilnxFile, outputPath string) error {
 
 	kilnxRoot := findKilnxRoot()
 	if kilnxRoot == "" {
-		return fmt.Errorf("could not find kilnx source tree; run build from within the kilnx project")
+		return fmt.Errorf("could not find kilnx source tree (looked from CWD and executable path).\n" +
+			"Run from within the kilnx repo, or use Docker:\n" +
+			"  docker build --build-arg KILNX_FILE=app.kilnx -t myapp .")
 	}
 
 	// Create a temporary build entry point inside the kilnx tree
@@ -40,7 +43,7 @@ func Build(kilnxFile, outputPath string) error {
 
 	absOutput, _ := filepath.Abs(outputPath)
 
-	fmt.Printf("Building %s...\n", outputPath)
+	fmt.Printf("Building %s...\n", filepath.Base(absOutput))
 
 	cmd := exec.Command("go", "build", "-o", absOutput, "./cmd/_build/")
 	cmd.Dir = kilnxRoot
@@ -116,6 +119,16 @@ func main() {
 		}
 		if app.Config.Database != "" {
 			dbPath = strings.TrimPrefix(app.Config.Database, "sqlite://")
+		}
+	}
+
+	// PaaS platforms (Railway, Fly.io, Render, Cloud Run) set PORT env var
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		var p int
+		if n, err := fmt.Sscanf(envPort, "%d", &p); n == 1 && err == nil && p > 0 && p < 65536 {
+			port = p
+		} else {
+			fmt.Fprintf(os.Stderr, "kilnx: invalid PORT=%q, using %d\n", envPort, port)
 		}
 	}
 

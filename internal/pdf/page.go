@@ -37,10 +37,10 @@ const (
 )
 
 type pageOp struct {
-	kind    opKind
-	text    string
-	space   float64
-	table   *tableData
+	kind  opKind
+	text  string
+	space float64
+	table *tableData
 }
 
 type tableData struct {

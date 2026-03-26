@@ -128,6 +128,16 @@ func cmdRun(filename string) error {
 		}
 	}
 
+	// PaaS platforms (Railway, Fly.io, Render, Cloud Run) set PORT env var
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		var p int
+		if n, err := fmt.Sscanf(envPort, "%d", &p); n == 1 && err == nil && p > 0 && p < 65536 {
+			port = p
+		} else {
+			fmt.Fprintf(os.Stderr, "kilnx: invalid PORT=%q, using %d\n", envPort, port)
+		}
+	}
+
 	db, err := database.Open(dbPath)
 	if err != nil {
 		return err
@@ -187,7 +197,11 @@ func cmdMigrate(filename string) error {
 			fmt.Printf("  + Created table '%s'\n", table)
 		} else if strings.HasPrefix(stmt, "ALTER TABLE") {
 			parts := strings.Fields(stmt)
-			fmt.Printf("  + Added column '%s' to '%s'\n", parts[5], parts[2])
+			if len(parts) > 5 {
+				fmt.Printf("  + Added column '%s' to '%s'\n", parts[5], parts[2])
+			} else {
+				fmt.Printf("  %s\n", stmt)
+			}
 		} else {
 			fmt.Printf("  %s\n", stmt)
 		}

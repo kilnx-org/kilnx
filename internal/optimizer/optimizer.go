@@ -205,9 +205,9 @@ func rewriteSelectStar(sql string, fields *fieldSet) string {
 	// Preserve leading whitespace from original
 	leadingWS := sql[:len(sql)-len(strings.TrimLeft(sql, " \t\n\r"))]
 
-	prefix := trimmed[loc[2]:loc[3]]    // "SELECT " or "SELECT DISTINCT "
-	fromPart := trimmed[loc[4]:loc[5]]   // " FROM "
-	rest := trimmed[loc[1]:]             // everything after "* FROM "
+	prefix := trimmed[loc[2]:loc[3]]   // "SELECT " or "SELECT DISTINCT "
+	fromPart := trimmed[loc[4]:loc[5]] // " FROM "
+	rest := trimmed[loc[1]:]           // everything after "* FROM "
 
 	cols := fields.sorted()
 	return leadingWS + prefix + strings.Join(cols, ", ") + fromPart + rest
