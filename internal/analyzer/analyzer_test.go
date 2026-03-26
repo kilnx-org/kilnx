@@ -42,7 +42,7 @@ func TestBuildSchema(t *testing.T) {
 		t.Fatal("user table not found")
 	}
 	for _, col := range []string{"id", "name", "email", "password", "role", "active", "created"} {
-		if !user.Columns[col] {
+		if _, exists := user.Columns[col]; !exists {
 			t.Errorf("user.%s should exist", col)
 		}
 	}
@@ -51,10 +51,10 @@ func TestBuildSchema(t *testing.T) {
 	if post == nil {
 		t.Fatal("post table not found")
 	}
-	if !post.Columns["author_id"] {
+	if _, exists := post.Columns["author_id"]; !exists {
 		t.Error("post.author_id should exist (reference field)")
 	}
-	if post.Columns["author"] {
+	if _, exists := post.Columns["author"]; exists {
 		t.Error("post.author should NOT exist (reference becomes author_id)")
 	}
 }
@@ -866,5 +866,276 @@ func TestAnalyze_WebhookAndJobSQL(t *testing.T) {
 		if d.Level == "error" && strings.Contains(d.Message, "not defined as a model") {
 			t.Errorf("unexpected table error: %s", d.Message)
 		}
+	}
+}
+
+// --- Type system tests ---
+
+func TestCheckModelDefaults_IntFieldWithStringDefault(t *testing.T) {
+	models := []parser.Model{{
+		Name: "item",
+		Fields: []parser.Field{
+			{Name: "count", Type: parser.FieldInt, Default: "abc"},
+		},
+	}}
+	diags := checkModelDefaults(models)
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "not a valid integer") {
+		t.Errorf("expected int default error, got: %v", diags)
+	}
+}
+
+func TestCheckModelDefaults_IntFieldWithValidDefault(t *testing.T) {
+	models := []parser.Model{{
+		Name: "item",
+		Fields: []parser.Field{
+			{Name: "count", Type: parser.FieldInt, Default: "42"},
+		},
+	}}
+	diags := checkModelDefaults(models)
+	if len(diags) != 0 {
+		t.Errorf("expected no errors, got: %v", diags)
+	}
+}
+
+func TestCheckModelDefaults_BoolFieldWithInvalidDefault(t *testing.T) {
+	models := []parser.Model{{
+		Name: "item",
+		Fields: []parser.Field{
+			{Name: "active", Type: parser.FieldBool, Default: "maybe"},
+		},
+	}}
+	diags := checkModelDefaults(models)
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "use 'true' or 'false'") {
+		t.Errorf("expected bool default error, got: %v", diags)
+	}
+}
+
+func TestCheckModelDefaults_OptionFieldWithInvalidDefault(t *testing.T) {
+	models := []parser.Model{{
+		Name: "user",
+		Fields: []parser.Field{
+			{Name: "role", Type: parser.FieldOption, Default: "superadmin", Options: []string{"admin", "editor", "viewer"}},
+		},
+	}}
+	diags := checkModelDefaults(models)
+	if len(diags) != 1 || !strings.Contains(diags[0].Message, "valid options are") {
+		t.Errorf("expected option default error, got: %v", diags)
+	}
+}
+
+func TestCheckModelDefaults_FloatFieldWithValidDefault(t *testing.T) {
+	models := []parser.Model{{
+		Name: "item",
+		Fields: []parser.Field{
+			{Name: "price", Type: parser.FieldFloat, Default: "3.14"},
+		},
+	}}
+	diags := checkModelDefaults(models)
+	if len(diags) != 0 {
+		t.Errorf("expected no errors, got: %v", diags)
+	}
+}
+
+func TestAnalyze_WhereTypeMismatch_IntVsString(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+				{Name: "age", Type: parser.FieldInt},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/test",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, SQL: "SELECT id FROM user WHERE age = 'hello'"},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "not compatible") && strings.Contains(d.Message, "age") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected type mismatch error for age vs string, got: %v", diags)
+	}
+}
+
+func TestAnalyze_WhereNoFalsePositive_IntVsNumber(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "age", Type: parser.FieldInt},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/test",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, SQL: "SELECT id FROM user WHERE age = 25"},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "not compatible") {
+			t.Errorf("unexpected type error: %s", d.Message)
+		}
+	}
+}
+
+func TestAnalyze_WhereNoFalsePositive_BoolVsInt(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "active", Type: parser.FieldBool},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/test",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, SQL: "SELECT id FROM user WHERE active = 1"},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "not compatible") {
+			t.Errorf("unexpected type error: %s", d.Message)
+		}
+	}
+}
+
+func TestAnalyze_WhereNoFalsePositive_Param(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "age", Type: parser.FieldInt},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/test",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, SQL: "SELECT id FROM user WHERE age = :age"},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "not compatible") {
+			t.Errorf("unexpected type error: %s", d.Message)
+		}
+	}
+}
+
+func TestAnalyze_WhereWarning_BoolVsStringTrue(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "active", Type: parser.FieldBool},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/test",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, SQL: "SELECT id FROM user WHERE active = 'true'"},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "warning" && strings.Contains(d.Message, "use 1 (true) or 0 (false)") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about bool vs string 'true', got: %v", diags)
+	}
+}
+
+func TestAnalyze_InsertTypeMismatch(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+				{Name: "age", Type: parser.FieldInt},
+			},
+		}},
+		Actions: []parser.Page{{
+			Path: "/test",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, SQL: "INSERT INTO user (name, age) VALUES ('Alice', 'twenty')"},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "inserting") && strings.Contains(d.Message, "age") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected insert type mismatch for age, got: %v", diags)
+	}
+}
+
+func TestAnalyze_InsertNoFalsePositive_Param(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+				{Name: "age", Type: parser.FieldInt},
+			},
+		}},
+		Actions: []parser.Page{{
+			Path: "/test",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, SQL: "INSERT INTO user (name, age) VALUES (:name, :age)"},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if strings.Contains(d.Message, "inserting") || strings.Contains(d.Message, "not compatible") {
+			t.Errorf("unexpected type error: %s", d.Message)
+		}
+	}
+}
+
+func TestAnalyze_UpdateTypeMismatch(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+				{Name: "age", Type: parser.FieldInt},
+			},
+		}},
+		Actions: []parser.Page{{
+			Path: "/test",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, SQL: "UPDATE user SET age = 'hello' WHERE id = 1"},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "setting column") && strings.Contains(d.Message, "age") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected update type mismatch for age, got: %v", diags)
 	}
 }
