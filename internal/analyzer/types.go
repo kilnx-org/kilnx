@@ -2,11 +2,15 @@ package analyzer
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
+
+// templateInterpolationRe matches {queryName.field} patterns in HTML content.
+var templateInterpolationRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 
 // ColumnInfo holds the inferred type for a single database column.
 type ColumnInfo struct {
@@ -448,5 +452,221 @@ func checkUpdateSetTypes(tokens []sqlToken, table string, schema *Schema, contex
 			}
 		}
 	}
+	return diags
+}
+
+// --- Template interpolation and component column checks ---
+
+// queryModelMap builds a mapping from query name to the primary table (model)
+// referenced in that query's SQL, by scanning all nodes in the given slices.
+func queryModelMap(pages []parser.Page, fragments []parser.Page, apis []parser.Page) map[string]string {
+	m := make(map[string]string)
+	collect := func(nodes []parser.Node) {
+		for _, n := range nodes {
+			if n.Type == parser.NodeQuery && n.Name != "" && n.SQL != "" {
+				tokens := tokenizeSQL(n.SQL)
+				refs := extractTableRefs(tokens)
+				if len(refs) > 0 {
+					m[n.Name] = refs[0].name
+				}
+			}
+		}
+	}
+	for _, p := range pages {
+		collect(p.Body)
+	}
+	for _, f := range fragments {
+		collect(f.Body)
+	}
+	for _, a := range apis {
+		collect(a.Body)
+	}
+	return m
+}
+
+// builtinFields are virtual fields available on any query result that should
+// not trigger a validation error (e.g. {users.count}).
+var builtinFields = map[string]bool{
+	"count": true,
+}
+
+// reservedInterpolations are top-level names that the runtime resolves
+// without requiring a matching query (e.g. {page.title}, {page.content}).
+var reservedInterpolations = map[string]bool{
+	"page":  true,
+	"kilnx": true,
+	"t":     true,
+}
+
+// checkTemplateInterpolations validates {queryName.field} references inside
+// HTML content of pages, fragments, and layouts against the schema.
+func checkTemplateInterpolations(app *parser.App, schema *Schema) []Diagnostic {
+	qMap := queryModelMap(app.Pages, app.Fragments, app.APIs)
+
+	var diags []Diagnostic
+
+	scanNodes := func(nodes []parser.Node, context string) {
+		// First pass: collect query names defined in this scope.
+		localQueries := make(map[string]string)
+		for _, n := range nodes {
+			if n.Type == parser.NodeQuery && n.Name != "" && n.SQL != "" {
+				tokens := tokenizeSQL(n.SQL)
+				refs := extractTableRefs(tokens)
+				if len(refs) > 0 {
+					localQueries[n.Name] = refs[0].name
+				}
+			}
+		}
+
+		for _, n := range nodes {
+			html := ""
+			switch n.Type {
+			case parser.NodeHTML:
+				html = n.HTMLContent
+			}
+			if html == "" {
+				continue
+			}
+			matches := templateInterpolationRe.FindAllStringSubmatch(html, -1)
+			for _, m := range matches {
+				queryName := m[1]
+				fieldName := m[2]
+
+				if reservedInterpolations[queryName] {
+					continue
+				}
+				if builtinFields[fieldName] {
+					continue
+				}
+
+				// Resolve the model for this query name.
+				modelName := ""
+				if mn, ok := localQueries[queryName]; ok {
+					modelName = mn
+				} else if mn, ok := qMap[queryName]; ok {
+					modelName = mn
+				}
+
+				if modelName == "" {
+					diags = append(diags, Diagnostic{
+						Level:   "error",
+						Message: fmt.Sprintf("template reference '{%s.%s}' uses unknown query '%s'", queryName, fieldName, queryName),
+						Context: context,
+					})
+					continue
+				}
+
+				info, ok := schema.Tables[modelName]
+				if !ok {
+					continue // model itself not found; already reported elsewhere
+				}
+				if _, colExists := info.Columns[fieldName]; !colExists {
+					diags = append(diags, Diagnostic{
+						Level:   "error",
+						Message: fmt.Sprintf("template reference '{%s.%s}': field '%s' does not exist in model '%s'", queryName, fieldName, fieldName, modelName),
+						Context: context,
+					})
+				}
+			}
+		}
+	}
+
+	for _, p := range app.Pages {
+		scanNodes(p.Body, fmt.Sprintf("page %s", p.Path))
+	}
+	for _, f := range app.Fragments {
+		scanNodes(f.Body, fmt.Sprintf("fragment %s", f.Path))
+	}
+
+	// Layouts use {page.title}, {page.content}, {nav}, {kilnx.css}, {kilnx.js}
+	// which are all reserved. We still scan for user query refs if any.
+	for _, l := range app.Layouts {
+		if l.HTMLContent == "" {
+			continue
+		}
+		matches := templateInterpolationRe.FindAllStringSubmatch(l.HTMLContent, -1)
+		for _, m := range matches {
+			queryName := m[1]
+			fieldName := m[2]
+
+			if reservedInterpolations[queryName] {
+				continue
+			}
+			if builtinFields[fieldName] {
+				continue
+			}
+
+			if _, ok := qMap[queryName]; !ok {
+				diags = append(diags, Diagnostic{
+					Level:   "error",
+					Message: fmt.Sprintf("template reference '{%s.%s}' uses unknown query '%s'", queryName, fieldName, queryName),
+					Context: fmt.Sprintf("layout %s", l.Name),
+				})
+			}
+		}
+	}
+
+	return diags
+}
+
+// checkTableColumnRefs validates that columns declared in table components
+// exist in the model referenced by the table's query.
+func checkTableColumnRefs(app *parser.App, schema *Schema) []Diagnostic {
+	qMap := queryModelMap(app.Pages, app.Fragments, app.APIs)
+
+	var diags []Diagnostic
+
+	scanNodes := func(nodes []parser.Node, context string) {
+		// Collect local query-to-model mappings.
+		localQueries := make(map[string]string)
+		for _, n := range nodes {
+			if n.Type == parser.NodeQuery && n.Name != "" && n.SQL != "" {
+				tokens := tokenizeSQL(n.SQL)
+				refs := extractTableRefs(tokens)
+				if len(refs) > 0 {
+					localQueries[n.Name] = refs[0].name
+				}
+			}
+		}
+
+		for _, n := range nodes {
+			if n.Type != parser.NodeTable || n.Name == "" || len(n.Columns) == 0 {
+				continue
+			}
+
+			modelName := ""
+			if mn, ok := localQueries[n.Name]; ok {
+				modelName = mn
+			} else if mn, ok := qMap[n.Name]; ok {
+				modelName = mn
+			}
+			if modelName == "" {
+				continue // query not found; not our concern here
+			}
+
+			info, ok := schema.Tables[modelName]
+			if !ok {
+				continue
+			}
+
+			for _, col := range n.Columns {
+				if _, colExists := info.Columns[col.Field]; !colExists {
+					diags = append(diags, Diagnostic{
+						Level:   "error",
+						Message: fmt.Sprintf("table column '%s' does not exist in model '%s' (query '%s')", col.Field, modelName, n.Name),
+						Context: context,
+					})
+				}
+			}
+		}
+	}
+
+	for _, p := range app.Pages {
+		scanNodes(p.Body, fmt.Sprintf("page %s", p.Path))
+	}
+	for _, f := range app.Fragments {
+		scanNodes(f.Body, fmt.Sprintf("fragment %s", f.Path))
+	}
+
 	return diags
 }
