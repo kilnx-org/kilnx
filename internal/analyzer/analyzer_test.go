@@ -250,6 +250,9 @@ func TestAnalyze_ValidApp(t *testing.T) {
 			},
 		},
 		Auth: &parser.AuthConfig{Table: "user", Identity: "email", Password: "password"},
+		Permissions: []parser.Permission{
+			{Role: "admin", Rules: []string{"all"}},
+		},
 		Pages: []parser.Page{
 			{
 				Path: "/users",
@@ -261,21 +264,25 @@ func TestAnalyze_ValidApp(t *testing.T) {
 		},
 		Actions: []parser.Page{
 			{
-				Path: "/users/new",
+				Path:         "/users/new",
+				Auth:         true,
+				RequiresRole: "admin",
 				Body: []parser.Node{
 					{Type: parser.NodeValidate, ModelName: "user"},
 					{Type: parser.NodeQuery, SQL: "INSERT INTO user (name, email, password, role) VALUES (:name, :email, :password, :role)"},
 				},
 			},
 			{
-				Path: "/users/:id/edit",
+				Path:         "/users/:id/edit",
+				Auth:         true,
+				RequiresRole: "admin",
 				Body: []parser.Node{
 					{Type: parser.NodeQuery, SQL: "UPDATE user SET name = :name, email = :email, role = :role WHERE id = :id"},
 				},
 			},
 		},
 		Streams: []parser.Stream{
-			{Path: "/stream/users", SQL: "SELECT count(*) as total FROM user"},
+			{Path: "/stream/users", SQL: "SELECT count(*) as total FROM user", Auth: true},
 		},
 	}
 
