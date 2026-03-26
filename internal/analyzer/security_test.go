@@ -123,6 +123,23 @@ func TestCheckUnauthSockets_WithMutatingOnMessage(t *testing.T) {
 	}
 }
 
+func TestCheckUnauthSockets_WithMutatingOnConnect(t *testing.T) {
+	app := &parser.App{
+		Sockets: []parser.Socket{
+			{
+				Path: "/ws/session",
+				OnConnect: []parser.Node{
+					{Type: parser.NodeQuery, SQL: "INSERT INTO session (user_id) VALUES (:user_id)"},
+				},
+			},
+		},
+	}
+	diags := checkUnauthSockets(app)
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic for OnConnect mutating SQL, got %d", len(diags))
+	}
+}
+
 func TestCheckUnauthSockets_ReadOnly(t *testing.T) {
 	app := &parser.App{
 		Sockets: []parser.Socket{
@@ -304,8 +321,8 @@ func TestCheckAuthWithoutPermissions(t *testing.T) {
 	if len(diags) != 1 {
 		t.Fatalf("expected 1 diagnostic, got %d", len(diags))
 	}
-	if !strings.Contains(diags[0].Message, "no permissions") {
-		t.Errorf("expected message about no permissions, got %q", diags[0].Message)
+	if !strings.Contains(diags[0].Message, "no permissions or role requirements") {
+		t.Errorf("expected message about no permissions or role requirements, got %q", diags[0].Message)
 	}
 }
 
@@ -370,14 +387,12 @@ func TestCheckSecurity_Integration(t *testing.T) {
 	// 1. SELECT * from user exposes password (page /admin/users)
 	// 2. action /public/submit has no auth
 	// 3. webhook /webhook/test has no secret
-	// 4. auth without permissions
+	// 4. auth without permissions or role requirements
 	if len(diags) != 4 {
-		t.Fatalf("expected 4 diagnostics, got %d:", len(diags))
-	}
-
-	var contexts []string
-	for _, d := range diags {
-		contexts = append(contexts, d.Context)
+		for _, d := range diags {
+			t.Logf("[%s] %s: %s", d.Level, d.Context, d.Message)
+		}
+		t.Fatalf("expected 4 diagnostics, got %d", len(diags))
 	}
 
 	found := map[string]bool{}
@@ -396,7 +411,7 @@ func TestCheckSecurity_Integration(t *testing.T) {
 
 	for _, key := range []string{"password_exposure", "unauth_action", "webhook_secret", "no_permissions"} {
 		if !found[key] {
-			t.Errorf("missing expected diagnostic: %s. Got: %v", key, diags)
+			t.Errorf("missing expected diagnostic: %s", key)
 		}
 	}
 }
@@ -430,11 +445,58 @@ func TestHasMutatingSQL(t *testing.T) {
 			},
 			want: true,
 		},
+		{
+			nodes: []parser.Node{{Type: parser.NodeQuery, SQL: "REPLACE INTO user (id, name) VALUES (1, 'test')"}},
+			want:  true,
+		},
 	}
 	for _, tt := range tests {
 		got := hasMutatingSQL(tt.nodes)
 		if got != tt.want {
 			t.Errorf("hasMutatingSQL(%v) = %v, want %v", tt.nodes, got, tt.want)
 		}
+	}
+}
+
+func TestCheckAuthWithoutPermissions_WithPerRouteRoles(t *testing.T) {
+	app := &parser.App{
+		Auth: &parser.AuthConfig{Table: "user"},
+		Actions: []parser.Page{
+			{Path: "/admin/delete", RequiresRole: "admin"},
+		},
+	}
+	diags := checkAuthWithoutPermissions(app)
+	if len(diags) != 0 {
+		t.Fatalf("expected 0 diagnostics when per-route roles exist, got %d: %v", len(diags), diags)
+	}
+}
+
+func TestCheckPasswordExposure_InAction(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{
+			{
+				Name: "user",
+				Fields: []parser.Field{
+					{Name: "name", Type: parser.FieldText},
+					{Name: "password", Type: parser.FieldPassword},
+				},
+			},
+		},
+		Actions: []parser.Page{
+			{
+				Path: "/users/:id/update",
+				Body: []parser.Node{
+					{Type: parser.NodeQuery, SQL: "SELECT * FROM user WHERE id = :id"},
+				},
+			},
+		},
+	}
+	schema := BuildSchema(app.Models)
+	diags := checkPasswordExposure(app, schema)
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic for action with SELECT *, got %d", len(diags))
+	}
+	if !strings.Contains(diags[0].Context, "action") {
+		t.Errorf("expected context to mention action, got %q", diags[0].Context)
 	}
 }

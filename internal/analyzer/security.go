@@ -85,10 +85,10 @@ func checkUnauthSockets(app *parser.App) []Diagnostic {
 		if s.Auth || s.RequiresRole != "" {
 			continue
 		}
-		if hasMutatingSQL(s.OnMessage) {
+		if hasMutatingSQL(s.OnConnect) || hasMutatingSQL(s.OnMessage) || hasMutatingSQL(s.OnDisconnect) {
 			diags = append(diags, Diagnostic{
 				Level:   "warning",
-				Message: "socket with write queries in on message has no authentication requirement",
+				Message: "socket with write queries has no authentication requirement",
 				Context: fmt.Sprintf("socket %s", s.Path),
 			})
 		}
@@ -117,11 +117,11 @@ func checkPasswordExposure(app *parser.App, schema *Schema) []Diagnostic {
 	var diags []Diagnostic
 
 	// Build set of tables that have password fields
-	passwordTables := make(map[string]string) // table -> password column name
+	passwordTables := make(map[string][]string) // table -> password column names
 	for _, m := range schema.Tables {
 		for colName, col := range m.Columns {
 			if col.FieldType == parser.FieldPassword {
-				passwordTables[m.Name] = colName
+				passwordTables[m.Name] = append(passwordTables[m.Name], colName)
 			}
 		}
 	}
@@ -147,6 +147,12 @@ func checkPasswordExposure(app *parser.App, schema *Schema) []Diagnostic {
 		diags = append(diags, checkNodesForPasswordExposure(a.Body, passwordTables, schema, ctx)...)
 	}
 
+	// Check actions
+	for _, a := range app.Actions {
+		ctx := fmt.Sprintf("action %s", a.Path)
+		diags = append(diags, checkNodesForPasswordExposure(a.Body, passwordTables, schema, ctx)...)
+	}
+
 	return diags
 }
 
@@ -155,14 +161,30 @@ func checkAuthWithoutPermissions(app *parser.App) []Diagnostic {
 	if app.Auth == nil {
 		return nil
 	}
-	if len(app.Permissions) == 0 {
-		return []Diagnostic{{
-			Level:   "warning",
-			Message: "auth is configured but no permissions are defined; all authenticated users have equal access",
-			Context: "auth",
-		}}
+	if len(app.Permissions) > 0 {
+		return nil
 	}
-	return nil
+	// Don't warn if any route already uses RequiresRole (per-route access control)
+	for _, p := range app.Pages {
+		if p.RequiresRole != "" {
+			return nil
+		}
+	}
+	for _, a := range app.Actions {
+		if a.RequiresRole != "" {
+			return nil
+		}
+	}
+	for _, a := range app.APIs {
+		if a.RequiresRole != "" {
+			return nil
+		}
+	}
+	return []Diagnostic{{
+		Level:   "warning",
+		Message: "auth is configured but no permissions or role requirements are defined; all authenticated users have equal access",
+		Context: "auth",
+	}}
 }
 
 // hasMutatingSQL checks if any nodes contain INSERT, UPDATE, or DELETE queries.
@@ -170,7 +192,7 @@ func hasMutatingSQL(nodes []parser.Node) bool {
 	for _, n := range nodes {
 		if n.Type == parser.NodeQuery && n.SQL != "" {
 			upper := strings.ToUpper(strings.TrimSpace(n.SQL))
-			if strings.HasPrefix(upper, "INSERT") || strings.HasPrefix(upper, "UPDATE") || strings.HasPrefix(upper, "DELETE") {
+			if strings.HasPrefix(upper, "INSERT") || strings.HasPrefix(upper, "UPDATE") || strings.HasPrefix(upper, "DELETE") || strings.HasPrefix(upper, "REPLACE") {
 				return true
 			}
 		}
@@ -184,7 +206,7 @@ func hasMutatingSQL(nodes []parser.Node) bool {
 }
 
 // checkNodesForPasswordExposure checks if query nodes expose password columns.
-func checkNodesForPasswordExposure(nodes []parser.Node, passwordTables map[string]string, schema *Schema, context string) []Diagnostic {
+func checkNodesForPasswordExposure(nodes []parser.Node, passwordTables map[string][]string, schema *Schema, context string) []Diagnostic {
 	var diags []Diagnostic
 	for _, n := range nodes {
 		if n.Type != parser.NodeQuery || n.SQL == "" {
@@ -202,7 +224,7 @@ func checkNodesForPasswordExposure(nodes []parser.Node, passwordTables map[strin
 
 		// Check if any referenced table has a password field
 		for _, ref := range tableRefs {
-			pwCol, hasPw := passwordTables[ref.name]
+			pwCols, hasPw := passwordTables[ref.name]
 			if !hasPw {
 				continue
 			}
@@ -213,20 +235,22 @@ func checkNodesForPasswordExposure(nodes []parser.Node, passwordTables map[strin
 				// nil means SELECT * was used
 				diags = append(diags, Diagnostic{
 					Level:   "warning",
-					Message: fmt.Sprintf("SELECT * from '%s' exposes the '%s' field; select specific columns instead", ref.name, pwCol),
+					Message: fmt.Sprintf("SELECT * from '%s' exposes the '%s' field; select specific columns instead", ref.name, strings.Join(pwCols, "', '")),
 					Context: context,
 				})
 				break
 			}
 
-			// Check if password column is explicitly selected
+			// Check if any password column is explicitly selected
 			for _, col := range cols {
-				if col.column == pwCol {
-					diags = append(diags, Diagnostic{
-						Level:   "warning",
-						Message: fmt.Sprintf("query selects '%s' from '%s' which is a password field; this should not be exposed", pwCol, ref.name),
-						Context: context,
-					})
+				for _, pwCol := range pwCols {
+					if col.column == pwCol {
+						diags = append(diags, Diagnostic{
+							Level:   "warning",
+							Message: fmt.Sprintf("query selects '%s' from '%s' which is a password field; this should not be exposed", pwCol, ref.name),
+							Context: context,
+						})
+					}
 				}
 			}
 		}
