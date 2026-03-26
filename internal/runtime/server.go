@@ -279,7 +279,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		}
 	}
 
-// Execute all queries first (needed for both modes)
+	// Execute all queries first (needed for both modes)
 	for _, node := range p.Body {
 		if node.Type != parser.NodeQuery || s.db == nil {
 			continue
@@ -1017,7 +1017,6 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 		}
 	}
 }
-
 
 // matchPath checks if a route pattern matches a URL path.
 // Supports :param segments: /users/:id matches /users/5

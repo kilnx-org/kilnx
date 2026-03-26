@@ -122,7 +122,6 @@ type Layout struct {
 	HTMLContent string // raw HTML with {page.title}, {page.content}, {nav}
 }
 
-
 type AuthConfig struct {
 	Table      string // user table name (default: "user")
 	Identity   string // identity field (default: "email")
@@ -225,7 +224,6 @@ type Validation struct {
 	Rules []string // required, is email, min N, max N
 }
 
-
 func Parse(tokens []lexer.Token, source string) (*App, error) {
 	lines := strings.Split(source, "\n")
 	p := &parserState{tokens: tokens, pos: 0, lines: lines}
@@ -324,7 +322,7 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 		case "layout":
 			layout := p.parseLayout()
 			app.Layouts = append(app.Layouts, layout)
-			case "test":
+		case "test":
 			t := p.parseTest()
 			app.Tests = append(app.Tests, t)
 		case "log":
@@ -911,8 +909,6 @@ func extractPaginate(sql string) (string, int) {
 	return strings.TrimSpace(trimmed[:idx]), n
 }
 
-
-
 // parseAction parses:
 //
 //	action /users/create method POST
@@ -967,7 +963,6 @@ func (p *parserState) parseAction() (Page, error) {
 
 	return page, nil
 }
-
 
 // parseValidateNode parses:
 //
@@ -1344,7 +1339,6 @@ func (p *parserState) parseLayout() Layout {
 
 	return layout
 }
-
 
 // parsePermissions parses:
 //
@@ -1887,7 +1881,6 @@ func (p *parserState) parseEnqueueNode() Node {
 
 	return node
 }
-
 
 // parseWebhook parses:
 //
@@ -2511,8 +2504,6 @@ func (p *parserState) parseConfig() AppConfig {
 	return cfg
 }
 
-
-
 // parseOnNode parses:
 //
 //	on success
@@ -2718,4 +2709,3 @@ func (p *parserState) parseGeneratePDFNode() Node {
 	p.skipToEndOfLine()
 	return node
 }
-
