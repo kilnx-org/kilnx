@@ -276,7 +276,7 @@ func (s *Server) hasPermissionForRequest(userRole string, r *http.Request, perms
 }
 
 func renderForbidden(pages []parser.Page, session *Session) string {
-	nav := renderNav(pages, "", session)
+	nav := renderNav(pages, "", session, "")
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>

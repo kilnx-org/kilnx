@@ -43,6 +43,7 @@ type TestStep struct {
 }
 
 type AppConfig struct {
+	Name            string // app display name for the topbar
 	Database        string // env var or default path
 	Port            int    // server port (default 8080)
 	Secret          string // env var for session secret
@@ -2690,6 +2691,8 @@ func (p *parserState) parseConfig() AppConfig {
 			}
 
 			switch key {
+			case "name":
+				cfg.Name = strings.Trim(rawVal, "\"")
 			case "database":
 				cfg.Database = resolveEnvValue(rawVal)
 			case "port":

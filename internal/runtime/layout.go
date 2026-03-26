@@ -9,13 +9,42 @@ import (
 )
 
 const kilnxCSS = `    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 800px; margin: 0 auto; padding: 1rem; }
-    nav { display: flex; gap: 1rem; padding: 0.75rem 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 1.5rem; flex-wrap: wrap; }
-    nav a { text-decoration: none; color: #555; font-size: 0.9rem; }
-    nav a:hover { color: #1a1a1a; }
-    nav a.active { color: #1a1a1a; font-weight: 600; }
-    main { padding: 0.5rem 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 800px; margin: 0 auto; padding: 0; }
+    main { padding: 1.5rem; }
     p { margin-bottom: 0.75rem; }
+    .kilnx-topbar {
+      position: sticky; top: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 3.5rem; padding: 0 1.5rem;
+      background: rgba(9,9,11,0.85); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .kilnx-topbar-left { display: flex; align-items: center; gap: 2rem; }
+    .kilnx-topbar-right { display: flex; align-items: center; gap: 1rem; }
+    .kilnx-app-name { font-weight: 600; font-size: 0.9375rem; color: var(--foreground); }
+    .kilnx-nav { display: flex; align-items: center; gap: 0.25rem; }
+    .kilnx-nav a {
+      text-decoration: none; color: var(--muted-foreground);
+      font-size: 0.875rem; font-weight: 500;
+      padding: 0.375rem 0.75rem; border-radius: var(--radius);
+      transition: all var(--transition);
+    }
+    .kilnx-nav a:hover { color: var(--foreground); background: var(--secondary); }
+    .kilnx-nav a.active { color: var(--primary); background: rgba(230,74,25,0.1); }
+    .kilnx-user { font-size: 0.8125rem; color: var(--muted-foreground); }
+    .kilnx-logout {
+      font-size: 0.8125rem; color: var(--muted-foreground);
+      text-decoration: none; transition: color var(--transition);
+    }
+    .kilnx-logout:hover { color: var(--foreground); }
+    .kilnx-page-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 2rem; padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .kilnx-page-header h1 {
+      font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; margin: 0;
+    }
     .kilnx-list { list-style: none; }
     .kilnx-list-item { padding: 0.6rem 0; border-bottom: 1px solid #f0f0f0; display: flex; flex-direction: column; gap: 0.15rem; }
     .kilnx-list-item strong { font-size: 0.95rem; }
@@ -46,11 +75,21 @@ const kilnxCSS = `    * { margin: 0; padding: 0; box-sizing: border-box; }
     .kilnx-search { margin-bottom: 1rem; }
     .kilnx-search input { width: 100%%; padding: 0.5rem 0.75rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9rem; font-family: inherit; }
     .kilnx-search input:focus { outline: none; border-color: #4a7aba; box-shadow: 0 0 0 2px rgba(74,122,186,0.15); }
+    .kilnx-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden; margin-bottom: 1.5rem;
+    }
+    .kilnx-card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 1.25rem; border-bottom: 1px solid var(--border);
+    }
+    .kilnx-card-title { font-size: 0.9375rem; font-weight: 600; color: var(--foreground); margin: 0; }
+    .kilnx-card-content { padding: 0; }
+    .kilnx-card-content .kilnx-table { border: none; border-radius: 0; }
     .kilnx-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
-    .kilnx-card { border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; }
+    .kilnx-cards .kilnx-card { margin-bottom: 0; }
     .kilnx-card-img { width: 100%%; height: 160px; object-fit: cover; }
     .kilnx-card-body { padding: 0.75rem; }
-    .kilnx-card-title { font-size: 1rem; margin-bottom: 0.25rem; }
     .kilnx-card-subtitle { font-size: 0.85rem; color: #666; margin-bottom: 0.5rem; }
     .kilnx-card-action { font-size: 0.85rem; color: #4a7aba; text-decoration: none; }
     .kilnx-card-action:hover { text-decoration: underline; }

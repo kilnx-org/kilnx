@@ -391,11 +391,17 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 	}
 	title = interpolate(title, ctx)
 
-	nav := renderNav(allPages, p.Path, ctx.currentUser)
-	content := body.String()
+	// Prepend page header to body content
+	pageHeader := fmt.Sprintf("    <div class=\"kilnx-page-header\">\n      <div>\n        <h1>%s</h1>\n      </div>\n    </div>\n", html.EscapeString(title))
+	bodyContent := pageHeader + body.String()
 
-	// Check for custom layout
+	appName := ""
 	app := s.getApp()
+	if app.Config != nil {
+		appName = app.Config.Name
+	}
+	nav := renderNav(allPages, p.Path, ctx.currentUser, appName)
+	content := bodyContent
 	if p.Layout != "" {
 		for _, layout := range app.Layouts {
 			if layout.Name == p.Layout {
@@ -455,9 +461,14 @@ func interpolate(text string, ctx *renderContext) string {
 	})
 }
 
-func renderNav(pages []parser.Page, currentPath string, session *Session) string {
+func renderNav(pages []parser.Page, currentPath string, session *Session, appName string) string {
 	var nav strings.Builder
-	nav.WriteString("  <nav>\n")
+	nav.WriteString("  <header class=\"kilnx-topbar\">\n")
+	nav.WriteString("    <div class=\"kilnx-topbar-left\">\n")
+	if appName != "" {
+		nav.WriteString(fmt.Sprintf("      <span class=\"kilnx-app-name\">%s</span>\n", html.EscapeString(appName)))
+	}
+	nav.WriteString("      <nav class=\"kilnx-nav\">\n")
 	for _, p := range pages {
 		// Skip pages with :params in the path (they're not navigable directly)
 		if strings.Contains(p.Path, ":") {
@@ -480,20 +491,24 @@ func renderNav(pages []parser.Page, currentPath string, session *Session) string
 				label = strings.ToUpper(label[:1]) + label[1:]
 			}
 		}
-		nav.WriteString(fmt.Sprintf("    <a href=\"%s\"%s>%s</a>\n", p.Path, class, html.EscapeString(label)))
+		nav.WriteString(fmt.Sprintf("        <a href=\"%s\"%s>%s</a>\n", p.Path, class, html.EscapeString(label)))
 	}
+	nav.WriteString("      </nav>\n")
+	nav.WriteString("    </div>\n")
 	// Auth links
 	if session != nil {
-		nav.WriteString(fmt.Sprintf("    <span style=\"margin-left:auto;font-size:0.85rem;color:#888\">%s</span>\n",
+		nav.WriteString("    <div class=\"kilnx-topbar-right\">\n")
+		nav.WriteString(fmt.Sprintf("      <span class=\"kilnx-user\">%s</span>\n",
 			html.EscapeString(session.Identity)))
-		nav.WriteString("    <a href=\"/logout\">Logout</a>\n")
+		nav.WriteString("      <a href=\"/logout\" class=\"kilnx-logout\">Logout</a>\n")
+		nav.WriteString("    </div>\n")
 	}
-	nav.WriteString("  </nav>\n")
+	nav.WriteString("  </header>\n")
 	return nav.String()
 }
 
 func render404(path string, pages []parser.Page) string {
-	nav := renderNav(pages, "", nil)
+	nav := renderNav(pages, "", nil, "")
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
