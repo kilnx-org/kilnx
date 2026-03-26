@@ -16,10 +16,10 @@ type Diagnostic struct {
 	Context string // location, e.g. "page /users"
 }
 
-// TableInfo holds the known columns for a model-derived table.
+// TableInfo holds the known columns and their types for a model-derived table.
 type TableInfo struct {
 	Name    string
-	Columns map[string]bool
+	Columns map[string]*ColumnInfo
 }
 
 // ModelFieldInfo holds the form-level field names for a model.
@@ -36,31 +36,32 @@ type Schema struct {
 	ModelFields map[string]*ModelFieldInfo
 }
 
+// BuildSchema creates a compile-time view of the database from model declarations.
 func BuildSchema(models []parser.Model) *Schema {
 	s := &Schema{
 		Tables:      make(map[string]*TableInfo),
 		ModelFields: make(map[string]*ModelFieldInfo),
 	}
 	for _, m := range models {
-		info := &TableInfo{Name: m.Name, Columns: make(map[string]bool)}
+		info := &TableInfo{Name: m.Name, Columns: make(map[string]*ColumnInfo)}
 		mf := &ModelFieldInfo{
 			FormFields:    make(map[string]bool),
 			FieldToColumn: make(map[string]string),
 			ColumnToField: make(map[string]string),
 		}
-		info.Columns["id"] = true
+		info.Columns["id"] = &ColumnInfo{FieldType: parser.FieldInt}
 		mf.FormFields["id"] = true
 		mf.FieldToColumn["id"] = "id"
 		mf.ColumnToField["id"] = "id"
 		for _, f := range m.Fields {
 			if f.Type == parser.FieldReference {
 				colName := f.Name + "_id"
-				info.Columns[colName] = true
+				info.Columns[colName] = &ColumnInfo{FieldType: parser.FieldInt}
 				mf.FormFields[f.Name] = true
 				mf.FieldToColumn[f.Name] = colName
 				mf.ColumnToField[colName] = f.Name
 			} else {
-				info.Columns[f.Name] = true
+				info.Columns[f.Name] = &ColumnInfo{FieldType: f.Type}
 				mf.FormFields[f.Name] = true
 				mf.FieldToColumn[f.Name] = f.Name
 				mf.ColumnToField[f.Name] = f.Name
@@ -73,11 +74,13 @@ func BuildSchema(models []parser.Model) *Schema {
 }
 
 // Analyze performs static analysis on a parsed Kilnx app, checking SQL
-// references against declared models.
+// references against declared models and type compatibility.
 func Analyze(app *parser.App) []Diagnostic {
 	var diags []Diagnostic
 	schema := BuildSchema(app.Models)
 
+	diags = append(diags, checkModelDefaults(app.Models)...)
+	diags = append(diags, checkModelMinMax(app.Models)...)
 	diags = append(diags, checkAuthRef(app, schema)...)
 	diags = append(diags, checkModelRefs(app, schema)...)
 	diags = append(diags, checkAllSQL(app, schema)...)
@@ -127,7 +130,6 @@ func checkAllSQL(app *parser.App, schema *Schema) []Diagnostic {
 	for _, a := range app.Actions {
 		ctx := fmt.Sprintf("action %s", a.Path)
 		diags = append(diags, analyzeNodes(a.Body, schema, ctx)...)
-		// Validate named params in action SQL against form fields
 		modelName := findActionModel(a, app)
 		diags = append(diags, checkActionParams(a, modelName, schema, ctx)...)
 	}
@@ -169,9 +171,6 @@ func checkAllSQL(app *parser.App, schema *Schema) []Diagnostic {
 	return diags
 }
 
-// checkActionParams validates named params in all SQL nodes of an action,
-// including query SQL, form QuerySQL, and respond QuerySQL. Recurses into
-// NodeOn children to cover on success/error branches.
 func checkActionParams(action parser.Page, modelName string, schema *Schema, context string) []Diagnostic {
 	return checkActionParamsNodes(action.Body, action.Path, modelName, schema, context)
 }
@@ -245,7 +244,7 @@ func checkSearchFields(node parser.Node, schema *Schema, context string) []Diagn
 	for _, field := range node.SearchFields {
 		found := false
 		for _, table := range schema.Tables {
-			if table.Columns[field] {
+			if _, colExists := table.Columns[field]; colExists {
 				found = true
 				break
 			}
@@ -296,7 +295,7 @@ func analyzeSQL(sql string, schema *Schema, context string) []Diagnostic {
 		table, cols := extractInsertColumns(tokens)
 		if info, ok := schema.Tables[table]; ok {
 			for _, col := range cols {
-				if !info.Columns[col] {
+				if _, colExists := info.Columns[col]; !colExists {
 					diags = append(diags, Diagnostic{
 						Level:   "error",
 						Message: fmt.Sprintf("column '%s' does not exist in model '%s'", col, table),
@@ -309,7 +308,7 @@ func analyzeSQL(sql string, schema *Schema, context string) []Diagnostic {
 		table, cols := extractUpdateColumns(tokens)
 		if info, ok := schema.Tables[table]; ok {
 			for _, col := range cols {
-				if !info.Columns[col] {
+				if _, colExists := info.Columns[col]; !colExists {
 					diags = append(diags, Diagnostic{
 						Level:   "error",
 						Message: fmt.Sprintf("column '%s' does not exist in model '%s'", col, table),
@@ -320,6 +319,17 @@ func analyzeSQL(sql string, schema *Schema, context string) []Diagnostic {
 		}
 	case "select":
 		diags = append(diags, checkSelectColumns(tokens, tableRefs, aliasToTable, schema, context)...)
+	}
+
+	// Type-level checks
+	diags = append(diags, checkWhereTypes(tokens, tableRefs, aliasToTable, schema, context)...)
+	switch stmtType {
+	case "insert":
+		tbl, _ := extractInsertColumns(tokens)
+		diags = append(diags, checkInsertValueTypes(tokens, tbl, schema, context)...)
+	case "update":
+		tbl, _ := extractUpdateColumns(tokens)
+		diags = append(diags, checkUpdateSetTypes(tokens, tbl, schema, context)...)
 	}
 
 	return diags
@@ -339,7 +349,7 @@ func checkSelectColumns(tokens []sqlToken, tableRefs []tableRef, aliasToTable ma
 				continue
 			}
 			if info, ok := schema.Tables[realTable]; ok {
-				if !info.Columns[col.column] {
+				if _, colExists := info.Columns[col.column]; !colExists {
 					diags = append(diags, Diagnostic{
 						Level:   "error",
 						Message: fmt.Sprintf("column '%s' does not exist in model '%s'", col.column, realTable),
@@ -350,7 +360,7 @@ func checkSelectColumns(tokens []sqlToken, tableRefs []tableRef, aliasToTable ma
 		} else if len(tableRefs) == 1 {
 			table := tableRefs[0].name
 			if info, ok := schema.Tables[table]; ok {
-				if !info.Columns[col.column] {
+				if _, colExists := info.Columns[col.column]; !colExists {
 					diags = append(diags, Diagnostic{
 						Level:   "error",
 						Message: fmt.Sprintf("column '%s' does not exist in model '%s'", col.column, table),
@@ -365,7 +375,6 @@ func checkSelectColumns(tokens []sqlToken, tableRefs []tableRef, aliasToTable ma
 
 // --- Named param validation ---
 
-// extractNamedParams returns all :param references from SQL tokens.
 func extractNamedParams(tokens []sqlToken) []string {
 	var params []string
 	seen := make(map[string]bool)
@@ -381,7 +390,6 @@ func extractNamedParams(tokens []sqlToken) []string {
 	return params
 }
 
-// extractURLParams extracts named segments from a URL path like /deals/:id/edit.
 func extractURLParams(path string) map[string]bool {
 	params := make(map[string]bool)
 	for _, seg := range strings.Split(path, "/") {
@@ -392,12 +400,7 @@ func extractURLParams(path string) map[string]bool {
 	return params
 }
 
-// findActionModel determines which model an action operates on by checking:
-// 1. validate/form nodes in the action body
-// 2. matching page with same path that has a form
-// 3. the target table in INSERT/UPDATE SQL statements
 func findActionModel(action parser.Page, app *parser.App) string {
-	// Check if the action body has a validate node referencing a model
 	for _, n := range action.Body {
 		if n.Type == parser.NodeValidate && n.ModelName != "" {
 			return n.ModelName
@@ -406,7 +409,6 @@ func findActionModel(action parser.Page, app *parser.App) string {
 			return n.ModelName
 		}
 	}
-	// Look for a matching page with the same path that has a form
 	for _, p := range app.Pages {
 		if p.Path == action.Path {
 			for _, n := range p.Body {
@@ -416,7 +418,6 @@ func findActionModel(action parser.Page, app *parser.App) string {
 			}
 		}
 	}
-	// Infer from SQL: extract table name from INSERT INTO or UPDATE statements
 	for _, n := range action.Body {
 		if n.Type == parser.NodeQuery && n.SQL != "" {
 			tokens := tokenizeSQL(n.SQL)
@@ -439,8 +440,6 @@ func findActionModel(action parser.Page, app *parser.App) string {
 	return ""
 }
 
-// checkNamedParams validates that SQL named parameters match available form fields
-// and URL params. Reports errors with "did you mean?" suggestions.
 func checkNamedParams(sql string, tokens []sqlToken, path string, modelName string, schema *Schema, context string) []Diagnostic {
 	var diags []Diagnostic
 	params := extractNamedParams(tokens)
@@ -448,15 +447,11 @@ func checkNamedParams(sql string, tokens []sqlToken, path string, modelName stri
 		return nil
 	}
 
-	// Build set of available param names
 	available := make(map[string]bool)
-
-	// URL path params (e.g., :id from /deals/:id)
 	for p := range extractURLParams(path) {
 		available[p] = true
 	}
 
-	// Model form fields
 	var mf *ModelFieldInfo
 	if modelName != "" {
 		if m, ok := schema.ModelFields[modelName]; ok {
@@ -467,13 +462,10 @@ func checkNamedParams(sql string, tokens []sqlToken, path string, modelName stri
 		}
 	}
 
-	// Check each param
 	for _, param := range params {
 		if available[param] {
 			continue
 		}
-
-		// Maybe it's a DB column name and the form sends the field name?
 		if mf != nil {
 			if fieldName, ok := mf.ColumnToField[param]; ok {
 				diags = append(diags, Diagnostic{
@@ -488,8 +480,6 @@ func checkNamedParams(sql string, tokens []sqlToken, path string, modelName stri
 				continue
 			}
 		}
-
-		// Try to find a close match
 		suggestion := findClosestMatch(param, available)
 		if suggestion != "" {
 			diags = append(diags, Diagnostic{
@@ -501,7 +491,6 @@ func checkNamedParams(sql string, tokens []sqlToken, path string, modelName stri
 				Context: context,
 			})
 		} else {
-			// List available params
 			var avail []string
 			for a := range available {
 				avail = append(avail, ":"+a)
@@ -520,10 +509,9 @@ func checkNamedParams(sql string, tokens []sqlToken, path string, modelName stri
 	return diags
 }
 
-// findClosestMatch returns the closest match from candidates using edit distance.
 func findClosestMatch(target string, candidates map[string]bool) string {
 	best := ""
-	bestDist := (len(target) + 2) / 3 // threshold: must be within ~1/3 of the length
+	bestDist := (len(target) + 2) / 3
 	if bestDist < 1 {
 		bestDist = 1
 	}
@@ -537,7 +525,6 @@ func findClosestMatch(target string, candidates map[string]bool) string {
 	return best
 }
 
-// editDistance computes the Levenshtein distance between two strings.
 func editDistance(a, b string) int {
 	la, lb := len(a), len(b)
 	if la == 0 {
@@ -546,7 +533,6 @@ func editDistance(a, b string) int {
 	if lb == 0 {
 		return la
 	}
-
 	prev := make([]int, lb+1)
 	curr := make([]int, lb+1)
 	for j := 0; j <= lb; j++ {
@@ -843,8 +829,6 @@ func extractUpdateColumns(tokens []sqlToken) (string, []string) {
 	return table, cols
 }
 
-// extractSelectColumns returns column references from a SELECT clause.
-// Returns nil if SELECT * is used (meaning "all columns, no individual check").
 func extractSelectColumns(tokens []sqlToken) []columnRef {
 	var cols []columnRef
 	inSelect := false
@@ -885,7 +869,6 @@ func extractSelectColumns(tokens []sqlToken) []columnRef {
 			return nil
 		}
 
-		// Skip aggregate/scalar function calls: func(...)
 		if tokens[i].typ == stKeyword && i+1 < len(tokens) && tokens[i+1].typ == stPunct && tokens[i+1].value == "(" {
 			depth := 1
 			i += 2
@@ -898,7 +881,7 @@ func extractSelectColumns(tokens []sqlToken) []columnRef {
 				}
 				i++
 			}
-			if i < len(tokens) && tokens[i].typ == stKeyword && tokens[i].lower == "as" {
+			if i < len(tokens) && tokens[i].typ == stKeyword && tokens[i].lower == "as" && i+1 < len(tokens) {
 				i++
 				if i < len(tokens) {
 					i++
@@ -920,7 +903,7 @@ func extractSelectColumns(tokens []sqlToken) []columnRef {
 				}
 				i++
 			}
-			if i < len(tokens) && tokens[i].typ == stKeyword && tokens[i].lower == "as" {
+			if i < len(tokens) && tokens[i].typ == stKeyword && tokens[i].lower == "as" && i+1 < len(tokens) {
 				i++
 				if i < len(tokens) {
 					i++
@@ -938,8 +921,7 @@ func extractSelectColumns(tokens []sqlToken) []columnRef {
 				cols = append(cols, columnRef{column: tokens[i].lower})
 			}
 
-			if i+1 < len(tokens) && tokens[i+1].typ == stKeyword && tokens[i+1].lower == "as" &&
-				i+2 < len(tokens) {
+			if i+1 < len(tokens) && tokens[i+1].typ == stKeyword && tokens[i+1].lower == "as" && i+2 < len(tokens) {
 				i += 2
 			}
 			continue
@@ -949,19 +931,15 @@ func extractSelectColumns(tokens []sqlToken) []columnRef {
 			continue
 		}
 
-		// String literal: skip, including any "as alias"
 		if tokens[i].typ == stString {
-			if i+1 < len(tokens) && tokens[i+1].typ == stKeyword && tokens[i+1].lower == "as" &&
-				i+2 < len(tokens) {
+			if i+1 < len(tokens) && tokens[i+1].typ == stKeyword && tokens[i+1].lower == "as" && i+2 < len(tokens) {
 				i += 2
 			}
 			continue
 		}
 
-		// Number literal: skip, including any "as alias"
 		if tokens[i].typ == stNumber {
-			if i+1 < len(tokens) && tokens[i+1].typ == stKeyword && tokens[i+1].lower == "as" &&
-				i+2 < len(tokens) {
+			if i+1 < len(tokens) && tokens[i+1].typ == stKeyword && tokens[i+1].lower == "as" && i+2 < len(tokens) {
 				i += 2
 			}
 			continue
