@@ -140,11 +140,11 @@ func renderAlert(node parser.Node, ctx *renderContext) string {
 
 // PaginateInfo holds pagination state for a query
 type PaginateInfo struct {
-	Page     int
-	PerPage  int
-	Total    int
-	HasPrev  bool
-	HasNext  bool
+	Page    int
+	PerPage int
+	Total   int
+	HasPrev bool
+	HasNext bool
 }
 
 func renderPagination(info PaginateInfo, currentPath string) string {

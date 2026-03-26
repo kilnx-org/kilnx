@@ -8,27 +8,27 @@ import (
 type TokenType int
 
 const (
-	TokenKeyword    TokenType = iota // page, fragment, action, etc.
-	TokenPath                        // /users, /about
-	TokenString                      // "Hello World"
-	TokenIdentifier                  // variable names, method names
-	TokenNumber                      // 2, 100, 8080
-	TokenColon                       // :
-	TokenComma                       // ,
-	TokenBracketOpen                 // [
-	TokenBracketClose                // ]
-	TokenNewline                     // end of line
-	TokenIndent                      // increase in indentation
-	TokenDedent                      // decrease in indentation
-	TokenRawLine                     // raw text of a full line (for SQL capture)
-	TokenEOF                         // end of file
+	TokenKeyword      TokenType = iota // page, fragment, action, etc.
+	TokenPath                          // /users, /about
+	TokenString                        // "Hello World"
+	TokenIdentifier                    // variable names, method names
+	TokenNumber                        // 2, 100, 8080
+	TokenColon                         // :
+	TokenComma                         // ,
+	TokenBracketOpen                   // [
+	TokenBracketClose                  // ]
+	TokenNewline                       // end of line
+	TokenIndent                        // increase in indentation
+	TokenDedent                        // decrease in indentation
+	TokenRawLine                       // raw text of a full line (for SQL capture)
+	TokenEOF                           // end of file
 )
 
 type Token struct {
-	Type    TokenType
-	Value   string
-	Line    int
-	Column  int
+	Type   TokenType
+	Value  string
+	Line   int
+	Column int
 }
 
 var keywords = map[string]bool{

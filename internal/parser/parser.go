@@ -9,26 +9,26 @@ import (
 )
 
 type App struct {
-	Models      []Model
-	Pages       []Page
-	Actions     []Page       // actions share the same structure as pages but handle POST/PUT/DELETE
-	Fragments   []Page       // fragments return partial HTML (no page wrapper)
-	APIs        []Page       // api endpoints return JSON instead of HTML
-	Streams     []Stream     // SSE stream endpoints
-	Schedules   []Schedule   // timed tasks
-	Jobs        []Job        // async background jobs
-	Webhooks    []Webhook    // external event receivers
-	Sockets     []Socket     // bidirectional websockets
-	RateLimits  []RateLimit  // rate limiting rules
-	Config       *AppConfig    // nil if no config block defined
-	Auth         *AuthConfig   // nil if no auth block defined
-	Permissions  []Permission  // role-based access rules
+	Models       []Model
+	Pages        []Page
+	Actions      []Page       // actions share the same structure as pages but handle POST/PUT/DELETE
+	Fragments    []Page       // fragments return partial HTML (no page wrapper)
+	APIs         []Page       // api endpoints return JSON instead of HTML
+	Streams      []Stream     // SSE stream endpoints
+	Schedules    []Schedule   // timed tasks
+	Jobs         []Job        // async background jobs
+	Webhooks     []Webhook    // external event receivers
+	Sockets      []Socket     // bidirectional websockets
+	RateLimits   []RateLimit  // rate limiting rules
+	Config       *AppConfig   // nil if no config block defined
+	Auth         *AuthConfig  // nil if no auth block defined
+	Permissions  []Permission // role-based access rules
 	Layouts      []Layout
 	Components   []Component
 	Tests        []Test
 	LogConfig    *LogConfig
 	Translations map[string]map[string]string // lang -> key -> value
-	NamedQueries map[string]string             // name -> SQL
+	NamedQueries map[string]string            // name -> SQL
 }
 
 type Test struct {
@@ -53,17 +53,17 @@ type AppConfig struct {
 }
 
 type LogConfig struct {
-	Level         string // "debug", "info", "warn", "error"
-	SlowQueryMs   int    // log queries slower than this (ms)
-	LogRequests   bool
-	LogErrors     bool
-	Stacktrace    bool   // log errors with stacktrace
+	Level       string // "debug", "info", "warn", "error"
+	SlowQueryMs int    // log queries slower than this (ms)
+	LogRequests bool
+	LogErrors   bool
+	Stacktrace  bool // log errors with stacktrace
 }
 
 type Webhook struct {
 	Path      string
-	SecretEnv string            // env var name for signature verification
-	Events    []WebhookEvent    // on event handlers
+	SecretEnv string         // env var name for signature verification
+	Events    []WebhookEvent // on event handlers
 }
 
 type WebhookEvent struct {
@@ -105,9 +105,9 @@ type Stream struct {
 	Path         string
 	Auth         bool
 	RequiresRole string
-	SQL          string   // query to execute on each tick
-	IntervalSecs int      // polling interval in seconds
-	EventName    string   // SSE event name (default: "message")
+	SQL          string // query to execute on each tick
+	IntervalSecs int    // polling interval in seconds
+	EventName    string // SSE event name (default: "message")
 }
 
 type Permission struct {
@@ -122,8 +122,8 @@ type Layout struct {
 
 type Component struct {
 	Name   string
-	Params []string          // declared param names
-	Body   []Node            // component body nodes
+	Params []string // declared param names
+	Body   []Node   // component body nodes
 }
 
 type AuthConfig struct {
@@ -145,7 +145,7 @@ const (
 	FieldText      FieldType = "text"
 	FieldEmail     FieldType = "email"
 	FieldBool      FieldType = "bool"
-	FieldTimestamp  FieldType = "timestamp"
+	FieldTimestamp FieldType = "timestamp"
 	FieldRichtext  FieldType = "richtext"
 	FieldOption    FieldType = "option"
 	FieldInt       FieldType = "int"
@@ -157,17 +157,17 @@ const (
 )
 
 type Field struct {
-	Name       string
-	Type       FieldType
-	Required   bool
-	Unique     bool
-	Optional   bool
-	Default    string
-	Auto       bool
-	Min        string
-	Max        string
-	Options    []string   // for option type: [admin, editor, viewer]
-	Reference  string     // for reference type: model name
+	Name      string
+	Type      FieldType
+	Required  bool
+	Unique    bool
+	Optional  bool
+	Default   string
+	Auto      bool
+	Min       string
+	Max       string
+	Options   []string // for option type: [admin, editor, viewer]
+	Reference string   // for reference type: model name
 }
 
 type Page struct {
@@ -183,37 +183,37 @@ type Page struct {
 type NodeType int
 
 const (
-	NodeText  NodeType = iota
-	NodeQuery          // query users: select name, email from user
-	NodeList           // list users { title: name, subtitle: email }
-	NodeTable          // table users { columns: name, email }
-	NodeAlert          // alert success "message"
-	NodeForm           // form user
-	NodeRedirect       // redirect /users
-	NodeValidate       // validate { name: required, email: required }
-	NodeRespond        // respond fragment ".selector" with query: SQL
-	NodeHTML           // html { raw html content }
-	NodeComponent      // user-card with name: "Alice", email: "alice@test.com"
-	NodeSearch         // search queryName in field1, field2
-	NodeSendEmail      // send email to :email { subject: "...", body: "..." }
-	NodeEnqueue        // enqueue job-name with param: value
-	NodeOn             // on success/error/not found branching
-	NodeBroadcast      // broadcast to :room
-	NodeGeneratePDF    // generate pdf from template X with data Y
-	NodeCard           // card queryName { title: field, subtitle: field }
-	NodeModal          // modal id title { content }
-	NodeChart          // chart queryName { type: bar, label: field, value: field }
+	NodeText        NodeType = iota
+	NodeQuery                // query users: select name, email from user
+	NodeList                 // list users { title: name, subtitle: email }
+	NodeTable                // table users { columns: name, email }
+	NodeAlert                // alert success "message"
+	NodeForm                 // form user
+	NodeRedirect             // redirect /users
+	NodeValidate             // validate { name: required, email: required }
+	NodeRespond              // respond fragment ".selector" with query: SQL
+	NodeHTML                 // html { raw html content }
+	NodeComponent            // user-card with name: "Alice", email: "alice@test.com"
+	NodeSearch               // search queryName in field1, field2
+	NodeSendEmail            // send email to :email { subject: "...", body: "..." }
+	NodeEnqueue              // enqueue job-name with param: value
+	NodeOn                   // on success/error/not found branching
+	NodeBroadcast            // broadcast to :room
+	NodeGeneratePDF          // generate pdf from template X with data Y
+	NodeCard                 // card queryName { title: field, subtitle: field }
+	NodeModal                // modal id title { content }
+	NodeChart                // chart queryName { type: bar, label: field, value: field }
 )
 
 type Node struct {
-	Type        NodeType
-	Value       string
-	Name        string            // for query: result var name; for list/table: query name
-	SQL         string            // for query: the raw SQL
-	Props       map[string]string // for list: title, subtitle; for alert: level
-	Columns     []TableColumn     // for table: column definitions
-	RowActions  []RowAction       // for table: row-level actions
-	Paginate    int               // for query: items per page (0 = no pagination)
+	Type          NodeType
+	Value         string
+	Name          string            // for query: result var name; for list/table: query name
+	SQL           string            // for query: the raw SQL
+	Props         map[string]string // for list: title, subtitle; for alert: level
+	Columns       []TableColumn     // for table: column definitions
+	RowActions    []RowAction       // for table: row-level actions
+	Paginate      int               // for query: items per page (0 = no pagination)
 	ModelName     string            // for form: which model to generate form from
 	QuerySQL      string            // for form with query: pre-fill data
 	Validations   []Validation      // for validate block
@@ -230,13 +230,13 @@ type Node struct {
 	JobParams     map[string]string // for enqueue: params to pass to job
 	Children      []Node            // for on: child nodes to execute
 	StatusCode    int               // for respond: HTTP status code
-	BroadcastRoom   string            // for broadcast: room name
-	BroadcastFrag   string            // for broadcast: fragment reference
-	TemplateName    string            // for generate pdf: template name
-	DataQueryName   string            // for generate pdf: data query name
-	EmailAttach     string            // for send email: attachment file path or param
-	ModalID         string            // for modal: element ID
-	ModalTitle      string            // for modal: title text
+	BroadcastRoom string            // for broadcast: room name
+	BroadcastFrag string            // for broadcast: fragment reference
+	TemplateName  string            // for generate pdf: template name
+	DataQueryName string            // for generate pdf: data query name
+	EmailAttach   string            // for send email: attachment file path or param
+	ModalID       string            // for modal: element ID
+	ModalTitle    string            // for modal: title text
 }
 
 type Validation struct {
@@ -432,13 +432,14 @@ func (p *parserState) skipNewlines() {
 }
 
 // parseModel parses:
-//   model user
-//     name: text required min 2 max 100
-//     email: email unique
-//     role: option [admin, editor, viewer] default viewer
-//     active: bool default true
-//     created: timestamp auto
-//     author: user required        (reference to another model)
+//
+//	model user
+//	  name: text required min 2 max 100
+//	  email: email unique
+//	  role: option [admin, editor, viewer] default viewer
+//	  active: bool default true
+//	  created: timestamp auto
+//	  author: user required        (reference to another model)
 func (p *parserState) parseModel(app *App) (Model, error) {
 	model := Model{}
 

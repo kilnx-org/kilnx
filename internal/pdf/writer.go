@@ -41,10 +41,10 @@ func (w *pdfWriter) endObj() {
 
 func (w *pdfWriter) render(doc *Document) []byte {
 	// Pre-allocate object IDs
-	catalogID := w.allocObj()   // 1
-	pagesID := w.allocObj()     // 2
-	fontHelvID := w.allocObj()  // 3
-	fontBoldID := w.allocObj()  // 4
+	catalogID := w.allocObj()  // 1
+	pagesID := w.allocObj()    // 2
+	fontHelvID := w.allocObj() // 3
+	fontBoldID := w.allocObj() // 4
 
 	// Build content for each logical page
 	type renderedPage struct {

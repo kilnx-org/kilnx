@@ -22,11 +22,11 @@ type EmailConfig struct {
 
 func loadEmailConfig() EmailConfig {
 	cfg := EmailConfig{
-		Host: getEnv("KILNX_SMTP_HOST", "localhost"),
-		Port: getEnv("KILNX_SMTP_PORT", "25"),
-		User: getEnv("KILNX_SMTP_USER", ""),
+		Host:     getEnv("KILNX_SMTP_HOST", "localhost"),
+		Port:     getEnv("KILNX_SMTP_PORT", "25"),
+		User:     getEnv("KILNX_SMTP_USER", ""),
 		Password: getEnv("KILNX_SMTP_PASS", ""),
-		From: getEnv("KILNX_SMTP_FROM", "noreply@localhost"),
+		From:     getEnv("KILNX_SMTP_FROM", "noreply@localhost"),
 	}
 	return cfg
 }
