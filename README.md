@@ -1,10 +1,6 @@
 <p align="center">
   <br>
-  <img src=".github/logo.svg" alt="kilnx" width="100"/>
-  <br><br>
-  <strong>kilnx</strong>
-  <br>
-  <em>The backend language for the htmx era.</em>
+  <a href="https://kilnx.dev"><img src=".github/banner.svg" alt="kilnx" width="800"/></a>
   <br><br>
   <a href="https://kilnx.dev">Website</a> &nbsp;&bull;&nbsp;
   <a href="GRAMMAR.md">Grammar</a> &nbsp;&bull;&nbsp;
