@@ -227,7 +227,6 @@ func analyzeNodes(nodes []parser.Node, schema *Schema, context string) []Diagnos
 	return diags
 }
 
-
 // --- SQL analysis ---
 
 func analyzeSQL(sql string, schema *Schema, context string) []Diagnostic {
@@ -498,8 +497,12 @@ func checkNamedParams(sql string, tokens []sqlToken, path string, modelName stri
 		}
 	}
 
+	// current_user.* params are always available when auth exists
 	for _, param := range params {
 		if available[param] {
+			continue
+		}
+		if strings.HasPrefix(param, "current_user.") || param == "current_user_id" || param == "current_user_identity" || param == "current_user_role" {
 			continue
 		}
 		if mf != nil {

@@ -27,7 +27,7 @@ auth
 page /
   query posts: SELECT p.title, p.created, u.name as author
                FROM post p
-               LEFT JOIN user u ON u.id = p.author
+               LEFT JOIN user u ON u.id = p.author_id
                WHERE p.status = 'published'
                ORDER BY p.created DESC
                paginate 10
@@ -42,7 +42,7 @@ page /
 
 page /posts requires auth
   query posts: SELECT id, title, status, created FROM post
-               WHERE author = :current_user.id
+               WHERE author_id = :current_user.id
                ORDER BY created DESC
   html
     <h1>My Posts</h1>
@@ -67,12 +67,12 @@ action /posts/create method POST requires auth
   validate
     title: required min 5
     body: required
-  query: INSERT INTO post (title, body, author, status)
+  query: INSERT INTO post (title, body, author_id, status)
          VALUES (:title, :body, :current_user.id, 'published')
   redirect /posts
 
 action /posts/:id/delete method POST requires auth
-  query: DELETE FROM post WHERE id = :id AND author = :current_user.id
+  query: DELETE FROM post WHERE id = :id AND author_id = :current_user.id
   redirect /posts
 
 fragment /posts/:id/preview
