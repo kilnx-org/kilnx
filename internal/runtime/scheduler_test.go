@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"net"
-	"sync/atomic"
 	"testing"
 
 	"github.com/kilnx-org/kilnx/internal/database"
@@ -14,8 +13,6 @@ import (
 // ---------- Scheduler stop/restart ----------
 
 func TestStartSchedulerStopsPreviousGoroutines(t *testing.T) {
-	var counter atomic.Int32
-
 	app := &parser.App{
 		Schedules: []parser.Schedule{
 			{
@@ -65,9 +62,6 @@ func TestStartSchedulerStopsPreviousGoroutines(t *testing.T) {
 	default:
 		// expected
 	}
-
-	// Verify counter is not used (just to silence the compiler)
-	_ = counter
 
 	// Cleanup
 	srv.StopScheduler()
