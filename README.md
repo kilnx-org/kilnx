@@ -1,32 +1,42 @@
 <p align="center">
-  <br>
-  <strong style="font-size: 3rem;">kilnx</strong>
-  <br>
-  <em>The backend language for the htmx era.</em>
-  <br><br>
+  <img src=".github/banner.svg" alt="kilnx" width="900"/>
 </p>
 
 <p align="center">
-  <a href="https://github.com/kilnx-org/kilnx/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
-  <a href="https://htmx.org"><img src="https://img.shields.io/badge/htmx-2.x-blue" alt="htmx 2.x"></a>
-  <img src="https://img.shields.io/badge/dependencies-2-brightgreen" alt="2 dependencies">
-  <img src="https://img.shields.io/badge/keywords-22-orange" alt="22 keywords">
-  <img src="https://img.shields.io/badge/version-1.0.0-purple" alt="v1.0.0">
+  <a href="https://github.com/kilnx-org/kilnx/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT License"></a>
+  <a href="https://github.com/kilnx-org/kilnx/actions"><img src="https://img.shields.io/github/actions/workflow/status/kilnx-org/kilnx/ci.yml?style=flat-square&label=CI" alt="CI"></a>
+  <a href="https://htmx.org"><img src="https://img.shields.io/badge/htmx-2.x-blue?style=flat-square" alt="htmx 2.x"></a>
+  <img src="https://img.shields.io/badge/dependencies-2-brightgreen?style=flat-square" alt="2 dependencies">
+  <img src="https://img.shields.io/badge/keywords-27-e64a19?style=flat-square" alt="27 keywords">
+  <img src="https://img.shields.io/badge/version-1.0.1-a855f7?style=flat-square" alt="v1.0.1">
 </p>
 
 <p align="center">
-  Kilnx is a declarative backend language that compiles to a single binary.<br>
-  22 keywords. Zero framework. SQL is the query language. HTML is the output.<br>
+  Declarative backend language that compiles to a single binary.<br>
+  27 keywords. Zero framework. SQL is the query language. HTML is the output.<br>
   <strong>htmx completed HTML. Kilnx completes htmx.</strong>
 </p>
 
----
+<p align="center">
+  <a href="https://kilnx.dev">Website</a> &nbsp;&bull;&nbsp;
+  <a href="GRAMMAR.md">Grammar Reference</a> &nbsp;&bull;&nbsp;
+  <a href="PRINCIPLES.md">Design Principles</a> &nbsp;&bull;&nbsp;
+  <a href="https://github.com/kilnx-org/kilnx/issues">Roadmap</a>
+</p>
+
+<br>
+
+<img src=".github/divider.svg" width="100%"/>
+
+<br>
 
 ## Why
 
-Most web apps are lists, forms, dashboards, CRUDs. The complexity comes from the tools, not from the problem. You shouldn't need a framework, an ORM, a template engine, and 200 files to show a list from a database.
+Most web apps are lists, forms, dashboards, CRUDs. The complexity comes from the tools, not the problem. You shouldn't need a framework, an ORM, a template engine, and 200 files to show a list from a database.
 
 Kilnx exists to prove this.
+
+<br>
 
 ## Hello World
 
@@ -40,7 +50,13 @@ $ kilnx run app.kilnx
 kilnx serving on http://localhost:8080
 ```
 
-That's it. One useful line. A running web server with htmx linked automatically.
+One useful line. A running web server with htmx linked automatically.
+
+<br>
+
+<img src=".github/divider.svg" width="100%"/>
+
+<br>
 
 ## A Complete App in 30 Lines
 
@@ -71,17 +87,11 @@ page /tasks requires auth
       <tr>
         <td>{title}</td>
         <td>{{if done}}Yes{{end}}</td>
-        <td><button hx-post="/tasks/{id}/delete" hx-target="closest tr" hx-swap="outerHTML">Delete</button></td>
+        <td><button hx-post="/tasks/{id}/delete"
+                    hx-target="closest tr" hx-swap="outerHTML">Delete</button></td>
       </tr>
       {{end}}
     </table>
-
-page /tasks/new requires auth
-  html
-    <form method="POST" action="/tasks/new">
-      <label>Title <input type="text" name="title" required></label>
-      <button type="submit">Create</button>
-    </form>
 
 action /tasks/new requires auth
   validate task
@@ -93,15 +103,23 @@ action /tasks/:id/delete requires auth
   respond fragment delete
 ```
 
-This gives you: user registration, login with bcrypt, session management, CSRF protection, a searchable paginated table, form with validation, inline delete via htmx, and a SQLite database. All auto-generated from the declarations.
+This gives you: user registration, login with bcrypt, session management, CSRF protection, a searchable paginated table, form validation, inline delete via htmx, and a SQLite database. All from declarations.
 
----
+<br>
+
+<img src=".github/divider.svg" width="100%"/>
+
+<br>
 
 ## Features
 
-### Models as Single Source of Truth
+<table>
+<tr>
+<td width="50%">
 
-Define your data once. Kilnx generates the database table, server validation, HTML form, and client-side validation attributes from a single declaration.
+### <img src=".github/icons/database.svg" width="18"/> Models as Single Source of Truth
+
+Define data once. Kilnx generates the database table, server validation, HTML form, and client-side validation attributes.
 
 ```kilnx
 model user
@@ -112,11 +130,12 @@ model user
   created: timestamp auto
 ```
 
-Running `kilnx migrate` creates the SQLite table. `validate user` checks all constraints server-side. Build forms with `html` blocks using standard HTML inputs and htmx attributes.
+</td>
+<td width="50%">
 
-### Declarative Auth
+### <img src=".github/icons/lock.svg" width="18"/> Declarative Auth
 
-Six lines. Registration, login, logout, bcrypt hashing, session cookies, and `current_user` available everywhere.
+Six lines. Registration, login, logout, bcrypt, sessions, and `current_user` available everywhere.
 
 ```kilnx
 auth
@@ -127,31 +146,42 @@ auth
   after login: /dashboard
 ```
 
-Protect any page or action with `requires auth` or `requires admin`.
+Protect any route with `requires auth` or `requires admin`.
 
-### SQL is First-Class
+</td>
+</tr>
+<tr>
+<td>
 
-No ORM. No query builder. SQL lives inline, right where you use it. The language preserves raw SQL including `COUNT(*)`, `LEFT JOIN`, subqueries, and `GROUP BY`.
+### <img src=".github/icons/code.svg" width="18"/> SQL is First-Class
+
+No ORM. No query builder. SQL lives inline, right where you use it.
 
 ```kilnx
 page /dashboard requires auth
-  query stats: SELECT count(*) as total_users FROM user
+  query stats: SELECT count(*) as total FROM user
   query posts: SELECT p.title, u.name as author
                FROM post p
                LEFT JOIN user u ON u.id = p.author_id
                WHERE p.status = 'published'
                ORDER BY p.created DESC
                paginate 10
-  "Total users: {stats.total_users}"
   html
+    <p>Total users: {stats.total}</p>
     {{each posts}}
-    <article><h3>{title}</h3><span>by {author}</span></article>
+    <article>
+      <h3>{title}</h3>
+      <span>by {author}</span>
+    </article>
     {{end}}
 ```
 
-### htmx-Native Fragments
+</td>
+<td>
 
-Fragments return partial HTML that htmx swaps into the DOM. Inline delete, live search, partial updates, all without writing JavaScript.
+### <img src=".github/icons/globe.svg" width="18"/> htmx-Native Fragments
+
+Fragments return partial HTML that htmx swaps into the DOM. No JavaScript required.
 
 ```kilnx
 action /users/:id/delete requires auth
@@ -159,7 +189,8 @@ action /users/:id/delete requires auth
   respond fragment delete
 
 fragment /users/:id/card
-  query user: SELECT name, email FROM user WHERE id = :id
+  query user: SELECT name, email FROM user
+              WHERE id = :id
   html
     <div class="card">
       <strong>{user.name}</strong>
@@ -167,143 +198,78 @@ fragment /users/:id/card
     </div>
 ```
 
-### HTML Blocks
+</td>
+</tr>
+<tr>
+<td>
 
-Use `html` blocks to render any UI with standard HTML, htmx attributes, `{{each}}` loops, and `{{if}}` conditionals. No proprietary component abstraction.
+### <img src=".github/icons/bolt.svg" width="18"/> Realtime
 
-```kilnx
-page /users
-  query users: SELECT name, email, role FROM user ORDER BY id DESC paginate 10
-  html
-    {{each users}}
-    <div class="user-row" hx-get="/users/{id}" hx-target="#detail">
-      <strong>{name}</strong>
-      <span>{email}</span>
-      <span>{role}</span>
-      <button hx-post="/users/{id}/delete" hx-confirm="Sure?">Delete</button>
-    </div>
-    {{end}}
-```
-
-You control the markup. The language handles routing, queries, auth, and htmx wiring.
-
-### JSON API
-
-Same grammar, JSON output. One keyword difference.
-
-```kilnx
-api /api/v1/users requires auth
-  query users: SELECT id, name, email, role FROM user
-               ORDER BY id DESC
-               paginate 50
-```
-
-Returns `{"data": [...], "pagination": {"page": 1, "total": 42, ...}}`.
-
-### Realtime with SSE
-
-Server-Sent Events with polling. htmx SSE extension is embedded in the binary.
+Server-Sent Events and WebSockets built in.
 
 ```kilnx
 stream /notifications requires auth
   query: SELECT message FROM notification
-         WHERE user_id = :current_user.id AND seen = false
+         WHERE user_id = :current_user.id
+         AND seen = false
   every 5s
-```
 
-### WebSockets
-
-Bidirectional communication with rooms and broadcast.
-
-```kilnx
 socket /chat/:room requires auth
-  on connect
-    query: SELECT message, author FROM chat_message
-           WHERE room = :room ORDER BY created DESC LIMIT 50
   on message
     query: INSERT INTO chat_message (body, author, room)
            VALUES (:body, :current_user.id, :room)
     broadcast to :room
 ```
 
-### Webhooks
+</td>
+<td>
 
-Receive external events with HMAC signature verification. Supports GitHub and Stripe formats.
+### <img src=".github/icons/rocket.svg" width="18"/> Everything Else
 
 ```kilnx
-webhook /stripe/payment secret env STRIPE_SECRET
+# JSON API
+api /api/v1/users requires auth
+  query: SELECT id, name FROM user paginate 50
+
+# Webhooks with HMAC verification
+webhook /stripe secret env STRIPE_SECRET
   on event payment_intent.succeeded
-    query: UPDATE order SET status = 'paid' WHERE stripe_id = :event_id
-    send email to :event_customer_email
-      subject: "Payment confirmed"
-```
+    query: UPDATE order SET status = 'paid'
+           WHERE stripe_id = :event_id
 
-### Background Jobs and Schedules
-
-Timed tasks and async jobs run inside the same binary. No Redis, no Celery, no Sidekiq.
-
-```kilnx
+# Background jobs
 schedule cleanup every 24h
-  query: DELETE FROM session WHERE expires_at < datetime('now')
+  query: DELETE FROM session
+         WHERE expires_at < datetime('now')
 
-job welcome-email
-  query data: SELECT name, email FROM user WHERE id = :user_id
-  generate pdf from template welcome with data
-  send email to :email
-    subject: "Welcome"
-    attach: _generated_pdf
-```
-
-### Rate Limiting
-
-Declarative. Per user or per IP. Wildcard paths.
-
-```kilnx
+# Rate limiting
 limit /api/*
   requests: 100 per minute per user
 
-limit /login
-  requests: 5 per minute per ip
-```
-
-### Internationalization
-
-Translations with `{t.key}` interpolation. Language detected from `Accept-Language` header or `?lang=` param.
-
-```kilnx
+# i18n
 translations
   en
     welcome: "Welcome back"
   pt
     welcome: "Bem vindo de volta"
 
-page /dashboard requires auth
-  "{t.welcome}, {current_user.name}"
-```
-
-### Declarative Tests
-
-Test your app in the same language. No Selenium, no Cypress, no test framework.
-
-```kilnx
+# Declarative tests
 test "user can register"
   visit /register
   fill name with "Alice"
-  fill identity with "alice@test.com"
-  fill password with "secret123"
   submit
   expect page /login contains "Log in"
 ```
 
-```bash
-$ kilnx test app.kilnx
-Running 2 test(s):
-  PASS  user can register
-  PASS  about page loads
-All 2 test(s) passed.
-```
+</td>
+</tr>
+</table>
 
----
+<br>
+
+<img src=".github/divider.svg" width="100%"/>
+
+<br>
 
 ## Installation
 
@@ -318,14 +284,15 @@ Requires Go 1.24+. No other dependencies.
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `kilnx run <file.kilnx>` | Start the server with hot reload and auto-migration |
-| `kilnx build <file.kilnx>` | Compile to a standalone binary (~15MB) |
-| `kilnx migrate <file.kilnx>` | Apply database migrations |
-| `kilnx test <file.kilnx>` | Run declarative tests |
-| `kilnx check <file.kilnx>` | Run static analysis |
-| `kilnx version` | Print version |
+```
+kilnx run <file>       Start server with hot reload
+kilnx build <file>     Compile to standalone binary (~15MB)
+kilnx check <file>     Run static analysis
+kilnx migrate <file>   Apply database migrations
+kilnx test <file>      Run declarative tests
+kilnx lsp              Start Language Server Protocol server
+kilnx version          Print version
+```
 
 ## Deploy
 
@@ -333,73 +300,78 @@ Requires Go 1.24+. No other dependencies.
 # Development
 kilnx run app.kilnx
 
-# Production: compile and ship a single binary
+# Production: compile and ship
 kilnx build app.kilnx -o myapp
 scp myapp server:~/
 ssh server './myapp --port 3000 --db /data/app.db'
 ```
 
-The binary contains everything: the HTTP server, htmx.js, SQLite, bcrypt, your app code. Copy it to any Linux/Mac/Windows machine and run. No Docker, no Node, no Python, no runtime.
+The binary contains everything: HTTP server, htmx.js, SQLite, bcrypt, your app. Copy to any machine and run. No Docker, no Node, no Python, no runtime.
 
-## The 22 Keywords
+<br>
 
-| Keyword | What it does |
-|---------|-------------|
-| `config` | Database, port, env vars |
-| `model` | Define types, generate tables |
-| `auth` | Login, register, sessions, bcrypt |
-| `permissions` | Role-based access control |
-| `layout` | Page wrapper with `{page.content}` |
-| `page` | GET route returning HTML |
-| `action` | POST/PUT/DELETE mutations |
-| `fragment` | Partial HTML for htmx |
-| `api` | JSON endpoint |
-| `stream` | Server-Sent Events |
-| `socket` | Bidirectional WebSocket |
-| `webhook` | External event receiver |
-| `schedule` | Timed background tasks |
-| `job` | Async background work |
-| `query` | Inline SQL |
-| `validate` | Server-side validation |
-| `paginate` | Automatic pagination |
-| `send email` | SMTP with templates |
-| `redirect` | Route redirection |
-| `on` | Result branching |
-| `limit` | Rate limiting |
-| `log` | Observability |
-| `test` | Declarative tests |
-| `translations` | i18n with `{t.key}` |
-| `enqueue` | Dispatch async jobs |
-| `broadcast` | WebSocket room messaging |
+<img src=".github/divider.svg" width="100%"/>
+
+<br>
+
+## The 27 Keywords
+
+| Category | Keywords |
+|----------|----------|
+| **Routes** | `page` `action` `fragment` `api` `stream` `socket` |
+| **Data** | `model` `query` `queries` `validate` |
+| **Auth** | `auth` `permissions` `limit` `requires` |
+| **Flow** | `on` `redirect` `enqueue` `broadcast` `send` |
+| **Infrastructure** | `config` `layout` `log` `schedule` `job` `webhook` `test` `translations` |
 
 For comparison: Python has 35 keywords and does none of this without importing libraries. JavaScript has 64. Java has 67.
 
-## Design Principles
-
-**0. The complexity is the tool's fault, not the problem's.**
-
-Most web apps are not complex. The tools are.
-
-See [PRINCIPLES.md](PRINCIPLES.md) for all 11 principles and [GRAMMAR.md](GRAMMAR.md) for the complete language reference.
+<br>
 
 ## Architecture
 
 ```
-app.kilnx --> Lexer --> Tokens --> Parser --> AST
-                                              |
-                                    +---------+---------+
-                                    |         |         |
-                                 Models    Pages    Actions
-                                    |         |         |
-                                SQLite    HTML+htmx  SQL exec
-                                (migrate) (render)   (mutate)
+app.kilnx ─→ Lexer ─→ Parser ─→ Analyzer ─→ Optimizer ─→ Runtime
+                                    │            │            │
+                               Type checks   SELECT *    HTTP server
+                               SQL checks    rewriting   SQLite
+                               Security      JOIN        Sessions
+                               warnings      pruning     htmx
 ```
 
-- **2 dependencies**: SQLite (pure Go) + bcrypt
-- **~15,400 lines** of Go across 30 files
-- **Single binary** output (~15MB)
-- **Zero JavaScript** written by the developer
+| | |
+|---|---|
+| **Implementation** | ~19,000 lines of Go |
+| **Dependencies** | 2 (SQLite + bcrypt) |
+| **Binary size** | ~15MB |
+| **Test suite** | 311 tests, race-tested |
+
+<br>
+
+## Design Principles
+
+> **0. The complexity is the tool's fault, not the problem's.**
+>
+> Most web apps are not complex. The tools are.
+
+See [PRINCIPLES.md](PRINCIPLES.md) for all 11 constitutional principles and [GRAMMAR.md](GRAMMAR.md) for the complete language reference.
+
+<br>
+
+<img src=".github/divider.svg" width="100%"/>
+
+<br>
+
+## Examples
+
+| Example | LOC | Features |
+|---------|-----|----------|
+| [Hello World](examples/hello.kilnx) | 3 | Minimal page |
+| [Blog](examples/blog.kilnx) | 94 | Auth, pagination, validation, fragments, tests |
+| [CRM](../examples/crm/app.kilnx) | 813 | Models, JOINs, layouts, Tailwind, full CRUD |
+
+<br>
 
 ## License
 
-[MIT](LICENSE) - (c) 2026 Andre Ahlert Junior
+[MIT](LICENSE) &copy; 2026 Andre Ahlert Junior

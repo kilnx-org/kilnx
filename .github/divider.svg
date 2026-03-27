@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="4" viewBox="0 0 900 4">
+  <defs>
+    <linearGradient id="divGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#e64a19" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#e64a19" stop-opacity="0.4"/>
+      <stop offset="50%" stop-color="#e64a19" stop-opacity="1"/>
+      <stop offset="80%" stop-color="#e64a19" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#e64a19" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="1" width="900" height="1" fill="url(#divGrad)"/>
+  <rect x="0" y="2" width="900" height="1" fill="url(#divGrad)" opacity="0.3"/>
+</svg>
