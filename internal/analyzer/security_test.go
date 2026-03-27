@@ -527,7 +527,6 @@ func TestCheckCSRFProtection_RawHTMLForm(t *testing.T) {
 	}
 }
 
-
 func TestCheckCSRFProtection_NoMatchingPage(t *testing.T) {
 	app := &parser.App{
 		Actions: []parser.Page{
@@ -607,4 +606,3 @@ func TestCheckCSRFProtection_NoActions(t *testing.T) {
 		t.Fatalf("expected 0 diagnostics when no actions exist, got %d", len(diags))
 	}
 }
-

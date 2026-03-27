@@ -451,7 +451,6 @@ func TestAnalyze_InvalidReference(t *testing.T) {
 	}
 }
 
-
 func TestAnalyze_InvalidValidateModel(t *testing.T) {
 	app := &parser.App{
 		Models: []parser.Model{
@@ -478,7 +477,6 @@ func TestAnalyze_InvalidValidateModel(t *testing.T) {
 		t.Errorf("expected error about validate model 'profile', got: %v", diags)
 	}
 }
-
 
 func TestAnalyze_NoFalsePositives_AggregatesAndLiterals(t *testing.T) {
 	app := &parser.App{
@@ -1537,7 +1535,6 @@ func TestCheckTemplateInterpolations_Fragment(t *testing.T) {
 		t.Errorf("should not error for valid {post.title}")
 	}
 }
-
 
 func TestQueryModelMap(t *testing.T) {
 	pages := []parser.Page{{

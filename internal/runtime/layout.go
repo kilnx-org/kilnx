@@ -37,4 +37,3 @@ func renderWithLayout(layout parser.Layout, title, nav, content string) string {
 
 	return result
 }
-

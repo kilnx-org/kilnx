@@ -329,9 +329,9 @@ type jsonRPCRequest struct {
 }
 
 type jsonRPCResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
+	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
-	Result  interface{} `json:"result"`
+	Result  interface{}     `json:"result"`
 }
 
 type jsonRPCNotification struct {

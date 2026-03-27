@@ -67,7 +67,6 @@ func validateCSRFToken(token string) bool {
 	return false
 }
 
-
 // validateFormData validates form data against model constraints
 func validateFormData(modelName string, app *parser.App, formData map[string]string) []string {
 	var errors []string

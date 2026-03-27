@@ -43,12 +43,12 @@ type TestStep struct {
 }
 
 type AppConfig struct {
-	Name            string // app display name for the topbar
-	Database        string // env var or default path
-	Port            int    // server port (default 8080)
-	Secret          string // env var for session secret
-	UploadsDir      string // upload directory
-	UploadsMaxMB    int    // max upload size in MB
+	Name            string   // app display name for the topbar
+	Database        string   // env var or default path
+	Port            int      // server port (default 8080)
+	Secret          string   // env var for session secret
+	UploadsDir      string   // upload directory
+	UploadsMaxMB    int      // max upload size in MB
 	DefaultLanguage string   // default i18n language
 	DetectLanguage  string   // "header accept-language" or empty
 	CORSOrigins     []string // allowed CORS origins (empty = same-origin only)

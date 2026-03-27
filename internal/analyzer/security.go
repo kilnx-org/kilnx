@@ -263,7 +263,6 @@ func hasRawHTMLForm(nodes []parser.Node) bool {
 	return false
 }
 
-
 // checkNodesForPasswordExposure checks if query nodes expose password columns.
 func checkNodesForPasswordExposure(nodes []parser.Node, passwordTables map[string][]string, schema *Schema, context string) []Diagnostic {
 	var diags []Diagnostic
