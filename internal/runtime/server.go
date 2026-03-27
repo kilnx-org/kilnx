@@ -501,7 +501,8 @@ func renderNav(pages []parser.Page, currentPath string, session *Session, appNam
 		nav.WriteString("    <div class=\"kilnx-topbar-right\">\n")
 		nav.WriteString(fmt.Sprintf("      <span class=\"kilnx-user\">%s</span>\n",
 			html.EscapeString(session.Identity)))
-		nav.WriteString("      <a href=\"/logout\" class=\"kilnx-logout\">Logout</a>\n")
+		csrf := generateCSRFToken()
+		nav.WriteString(fmt.Sprintf("      <form method=\"POST\" action=\"/logout\" style=\"display:inline;margin:0\"><input type=\"hidden\" name=\"_csrf\" value=\"%s\"><button type=\"submit\" class=\"kilnx-logout\">Logout</button></form>\n", csrf))
 		nav.WriteString("    </div>\n")
 	}
 	nav.WriteString("  </header>\n")
@@ -602,8 +603,8 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 				}
 				rows, err := s.db.QueryRowsWithParams(sql, pathParams)
 				if err != nil {
-					body.WriteString(fmt.Sprintf("<p style=\"color:red\">Query error: %s</p>",
-						html.EscapeString(err.Error())))
+					s.logger.LogError("fragment query failed", err)
+					body.WriteString("<p style=\"color:red\">Query error</p>")
 					continue
 				}
 				ctx.queries[queryName] = rows
@@ -639,8 +640,8 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 			if s.db != nil {
 				rows, err := s.db.QueryRowsWithParams(node.SQL, params)
 				if err != nil {
-					body.WriteString(fmt.Sprintf("<p style=\"color:red\">Query error: %s</p>",
-						html.EscapeString(err.Error())))
+					s.logger.LogError("fragment query failed", err)
+					body.WriteString("<p style=\"color:red\">Query error</p>")
 					continue
 				}
 				name := node.Name
@@ -781,7 +782,8 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 							}
 						}
 						if !hasOnError {
-							http.Error(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+							s.logger.LogError("action query failed", err)
+							http.Error(w, "Internal server error", http.StatusInternalServerError)
 							return // tx.Rollback via defer
 						}
 						continue
@@ -836,11 +838,15 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				emailBody = subject
 			}
 			templateName := node.EmailTemplate
+			paramsCopy := make(map[string]string, len(formData))
+			for k, v := range formData {
+				paramsCopy[k] = v
+			}
 			go func(to, subj, body, tmpl string, params map[string]string) {
 				if err := SendEmailWithTemplate(to, subj, body, tmpl, params); err != nil {
 					fmt.Printf("  email error: %v\n", err)
 				}
-			}(recipient, subject, emailBody, templateName, formData)
+			}(recipient, subject, emailBody, templateName, paramsCopy)
 
 		case parser.NodeEnqueue:
 			if s.jobQueue != nil {
@@ -952,7 +958,8 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			if node.QuerySQL != "" && tx != nil {
 				rows, err := tx.QueryRowsWithParams(node.QuerySQL, formData)
 				if err != nil {
-					http.Error(w, "Query error: "+err.Error(), http.StatusInternalServerError)
+					s.logger.LogError("respond query failed", err)
+					http.Error(w, "Internal server error", http.StatusInternalServerError)
 					return
 				}
 				tx.Commit()
@@ -1013,12 +1020,18 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 		tx.Commit()
 	}
 
-	// Default: redirect back to referer or /
+	// Default: redirect back to referer (validated) or /
 	referer := r.Header.Get("Referer")
-	if referer == "" {
-		referer = "/"
+	redirectTo := "/"
+	if referer != "" {
+		if parsed, err := url.Parse(referer); err == nil && isLocalPath(parsed.Path) {
+			redirectTo = parsed.Path
+			if parsed.RawQuery != "" {
+				redirectTo += "?" + parsed.RawQuery
+			}
+		}
 	}
-	http.Redirect(w, r, referer, http.StatusSeeOther)
+	http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 }
 
 // handleActionNodes processes action nodes inside `on` branches.
@@ -1063,11 +1076,15 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 				emailBody = subject
 			}
 			templateName := node.EmailTemplate
+			paramsCopy := make(map[string]string, len(formData))
+			for k, v := range formData {
+				paramsCopy[k] = v
+			}
 			go func(to, subj, body, tmpl string, params map[string]string) {
 				if err := SendEmailWithTemplate(to, subj, body, tmpl, params); err != nil {
 					fmt.Printf("  email error: %v\n", err)
 				}
-			}(recipient, subject, emailBody, templateName, formData)
+			}(recipient, subject, emailBody, templateName, paramsCopy)
 		case parser.NodeQuery:
 			if s.db != nil {
 				trimmed := strings.TrimSpace(strings.ToUpper(node.SQL))

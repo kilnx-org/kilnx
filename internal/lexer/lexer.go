@@ -84,12 +84,13 @@ func StripComments(source string) string {
 		}
 		// Strip inline comment, but respect quoted strings
 		inQuote := false
-		for j := 0; j < len(line); j++ {
-			if line[j] == '"' {
+		runes := []rune(line)
+		for j, ch := range runes {
+			if ch == '"' {
 				inQuote = !inQuote
 			}
-			if !inQuote && line[j] == '#' {
-				lines[i] = line[:j]
+			if !inQuote && ch == '#' {
+				lines[i] = string(runes[:j])
 				break
 			}
 		}

@@ -120,7 +120,8 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 
 	conn, bufrw, err := hj.Hijack()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.logger.LogError("websocket hijack failed", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 	defer conn.Close()

@@ -10,6 +10,7 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -256,7 +257,7 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request, page parser
 	session := s.getSession(r)
 	if session == nil {
 		loginPath := app.Auth.LoginPath
-		http.Redirect(w, r, loginPath+"?next="+r.URL.Path, http.StatusSeeOther)
+		http.Redirect(w, r, loginPath+"?next="+url.QueryEscape(r.URL.Path), http.StatusSeeOther)
 		return false
 	}
 
@@ -449,11 +450,25 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 
-// handleLogout clears the session
+// handleLogout clears the session (POST only, CSRF validated)
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	r.ParseForm()
+	csrfToken := r.FormValue("_csrf")
+	if !validateCSRFToken(csrfToken) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+
 	cookie, err := r.Cookie("_kilnx_session")
 	if err == nil {
-		s.sessions.Delete(cookie.Value)
+		if id, valid := s.sessions.verifySessionID(cookie.Value); valid {
+			s.sessions.Delete(id)
+		}
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "_kilnx_session",

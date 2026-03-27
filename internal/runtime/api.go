@@ -13,10 +13,26 @@ import (
 // handleAPI processes an API endpoint and returns JSON.
 // For mutation methods (POST/PUT/DELETE), supports validate, transactions, and redirect.
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint parser.Page) {
-	// CORS headers for cross-origin API access
-	w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	// CORS headers: only allow configured origins
+	origin := r.Header.Get("Origin")
+	if origin != "" {
+		app := s.getApp()
+		allowed := false
+		if app.Config != nil {
+			for _, o := range app.Config.CORSOrigins {
+				if o == "*" || o == origin {
+					allowed = true
+					break
+				}
+			}
+		}
+		if allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Add("Vary", "Origin")
+		}
+	}
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -139,16 +155,18 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 				// Mutation query within transaction
 				err := tx.ExecWithParams(sql, pathParams)
 				if err != nil {
+					s.logger.LogError("api mutation query failed", err)
 					writeJSON(w, http.StatusInternalServerError, map[string]string{
-						"error": err.Error(),
+						"error": "Internal server error",
 					})
 					return
 				}
 			} else if tx != nil {
 				rows, err := tx.QueryRowsWithParams(sql, pathParams)
 				if err != nil {
+					s.logger.LogError("api select query failed", err)
 					writeJSON(w, http.StatusInternalServerError, map[string]string{
-						"error": err.Error(),
+						"error": "Internal server error",
 					})
 					return
 				}
@@ -166,8 +184,9 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 			} else {
 				rows, err := s.db.QueryRowsWithParams(sql, pathParams)
 				if err != nil {
+					s.logger.LogError("api query failed", err)
 					writeJSON(w, http.StatusInternalServerError, map[string]string{
-						"error": err.Error(),
+						"error": "Internal server error",
 					})
 					return
 				}

@@ -49,8 +49,9 @@ type AppConfig struct {
 	Secret          string // env var for session secret
 	UploadsDir      string // upload directory
 	UploadsMaxMB    int    // max upload size in MB
-	DefaultLanguage string // default i18n language
-	DetectLanguage  string // "header accept-language" or empty
+	DefaultLanguage string   // default i18n language
+	DetectLanguage  string   // "header accept-language" or empty
+	CORSOrigins     []string // allowed CORS origins (empty = same-origin only)
 }
 
 type LogConfig struct {
@@ -2484,6 +2485,13 @@ func (p *parserState) parseConfig() AppConfig {
 				cfg.DefaultLanguage = strings.TrimSpace(rawVal)
 			case "detect_language":
 				cfg.DetectLanguage = strings.TrimSpace(rawVal)
+			case "cors":
+				for _, origin := range strings.Split(rawVal, ",") {
+					origin = strings.TrimSpace(origin)
+					if origin != "" {
+						cfg.CORSOrigins = append(cfg.CORSOrigins, origin)
+					}
+				}
 			}
 
 			p.skipToEndOfLine()
