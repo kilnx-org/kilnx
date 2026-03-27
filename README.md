@@ -83,6 +83,18 @@ kilnx check app.kilnx         # static analysis
 kilnx test app.kilnx          # run declarative tests
 ```
 
+## Deploy
+
+<a href="https://railway.com/template/kilnx?referralCode=kilnx"><img src="https://railway.com/button.svg" alt="Deploy on Railway" height="36"></a>
+
+Or compile and copy a binary anywhere:
+
+```bash
+kilnx build app.kilnx -o myapp
+scp myapp server:~/
+ssh server './myapp'
+```
+
 ## What It Covers
 
 Models, pages, actions, fragments, JSON APIs, Server-Sent Events, WebSockets, webhooks with HMAC verification, background jobs, scheduled tasks, rate limiting, i18n, email sending, PDF generation, declarative tests, and an LSP server.
