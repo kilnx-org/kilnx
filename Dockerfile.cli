@@ -1,0 +1,31 @@
+# Kilnx CLI image for building .kilnx apps.
+# Usage: FROM ghcr.io/kilnx-org/kilnx:1.0.1
+#        COPY app.kilnx .
+#        RUN kilnx build app.kilnx -o /app/server
+
+FROM golang:1.25-alpine AS builder
+
+RUN apk add --no-cache git
+
+WORKDIR /kilnx
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /usr/local/bin/kilnx ./cmd/kilnx/
+
+FROM golang:1.25-alpine
+
+RUN apk add --no-cache git
+
+# Copy kilnx source tree (needed for `kilnx build` to find go.mod)
+COPY --from=builder /kilnx /kilnx
+# Copy pre-built CLI
+COPY --from=builder /usr/local/bin/kilnx /usr/local/bin/kilnx
+# Pre-download Go module cache so `kilnx build` doesn't fetch deps every time
+COPY --from=builder /go/pkg/mod /go/pkg/mod
+
+WORKDIR /kilnx
+
+LABEL org.opencontainers.image.source="https://github.com/kilnx-org/kilnx"
+LABEL org.opencontainers.image.description="Kilnx CLI for building .kilnx apps"
+LABEL org.opencontainers.image.version="1.0.1"
