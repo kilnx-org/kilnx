@@ -26,7 +26,7 @@ func renderDefaultLayout(title, nav, content string) string {
 `, html.EscapeString(title), nav, content)
 }
 
-func renderWithLayout(layout parser.Layout, title, nav, content string) string {
+func renderWithLayout(layout parser.Layout, title, nav, content string, layoutCtx *renderContext) string {
 	result := layout.HTMLContent
 
 	result = strings.ReplaceAll(result, "{page.title}", html.EscapeString(title))
@@ -34,6 +34,11 @@ func renderWithLayout(layout parser.Layout, title, nav, content string) string {
 	result = strings.ReplaceAll(result, "{nav}", nav)
 	result = strings.ReplaceAll(result, "{kilnx.js}", `<script src="/_kilnx/htmx.min.js"></script>
 <script src="/_kilnx/sse.js"></script>`)
+
+	// Render layout queries ({{each}}, {field}, {{if}})
+	if layoutCtx != nil && len(layoutCtx.queries) > 0 {
+		result = renderHTML(result, layoutCtx)
+	}
 
 	return result
 }
