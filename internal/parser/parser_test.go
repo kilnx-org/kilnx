@@ -923,3 +923,38 @@ func TestFragmentRequiresAuth(t *testing.T) {
 		t.Error("fragment should require auth")
 	}
 }
+
+func TestLayoutWithQueries(t *testing.T) {
+	src := `layout docs
+  query nav_items: SELECT slug, title FROM doc ORDER BY sort_order
+  html
+    <html>
+    <body>
+      {{each nav_items}}
+      <a href="/docs/{slug}">{title}</a>
+      {{end}}
+      {page.content}
+    </body>
+    </html>
+
+page /test layout docs
+  "Hello"`
+
+	app := parse(t, src)
+	if len(app.Layouts) != 1 {
+		t.Fatalf("expected 1 layout, got %d", len(app.Layouts))
+	}
+	layout := app.Layouts[0]
+	if layout.Name != "docs" {
+		t.Errorf("expected layout name 'docs', got '%s'", layout.Name)
+	}
+	if len(layout.Queries) != 1 {
+		t.Fatalf("expected 1 query in layout, got %d", len(layout.Queries))
+	}
+	if layout.Queries[0].Name != "nav_items" {
+		t.Errorf("expected query name 'nav_items', got '%s'", layout.Queries[0].Name)
+	}
+	if layout.HTMLContent == "" {
+		t.Error("layout HTML content should not be empty")
+	}
+}

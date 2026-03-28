@@ -121,6 +121,7 @@ type Permission struct {
 type Layout struct {
 	Name        string
 	HTMLContent string // raw HTML with {page.title}, {page.content}, {nav}
+	Queries     []Node // queries to execute when rendering the layout
 }
 
 type AuthConfig struct {
@@ -1328,6 +1329,14 @@ func (p *parserState) parseLayout() Layout {
 			if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "html" {
 				node := p.parseHTMLNode()
 				layout.HTMLContent = node.HTMLContent
+				continue
+			}
+			// Parse query nodes inside layout
+			if p.current().Type == lexer.TokenKeyword && p.current().Value == "query" {
+				node, err := p.parseQueryNode()
+				if err == nil {
+					layout.Queries = append(layout.Queries, node)
+				}
 				continue
 			}
 			p.advance()

@@ -406,7 +406,27 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 	if p.Layout != "" {
 		for _, layout := range app.Layouts {
 			if layout.Name == p.Layout {
-				return renderWithLayout(layout, title, nav, content)
+				var layoutCtx *renderContext
+				if len(layout.Queries) > 0 && s.db != nil {
+					layoutCtx = &renderContext{
+						queries:  make(map[string][]database.Row),
+						paginate: make(map[string]PaginateInfo),
+					}
+					for _, q := range layout.Queries {
+						if q.SQL == "" {
+							continue
+						}
+						name := q.Name
+						if name == "" {
+							name = "_last"
+						}
+						rows, err := s.db.QueryRows(q.SQL)
+						if err == nil {
+							layoutCtx.queries[name] = rows
+						}
+					}
+				}
+				return renderWithLayout(layout, title, nav, content, layoutCtx)
 			}
 		}
 	}
