@@ -72,6 +72,12 @@ This gives you: registration, login with bcrypt, sessions, CSRF, paginated searc
 ## Quick Start
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/kilnx-org/kilnx/main/install.sh | sh
+```
+
+Or with Go:
+
+```bash
 git clone https://github.com/kilnx-org/kilnx.git
 cd kilnx && go build -o kilnx ./cmd/kilnx/
 ```
