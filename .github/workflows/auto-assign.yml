@@ -11,10 +11,20 @@ permissions:
   pull-requests: write
 
 jobs:
-  assign:
+  assign-issue:
+    if: github.event_name == 'issues'
     runs-on: ubuntu-latest
     steps:
       - uses: pozil/auto-assign-issue@v2
         with:
           assignees: andreahlert
           numOfAssignee: 1
+
+  assign-pr:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hkusu/review-assign-action@v1
+        with:
+          assignees: andreahlert
+          reviewers: andreahlert
