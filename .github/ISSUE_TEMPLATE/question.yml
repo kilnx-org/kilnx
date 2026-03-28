@@ -1,0 +1,19 @@
+name: Question
+description: Ask a question about Kilnx
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Any relevant .kilnx code or setup details.
+      render: kilnx
+    validations:
+      required: false
