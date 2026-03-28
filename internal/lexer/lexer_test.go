@@ -501,3 +501,66 @@ func TestCommentedLineNotTokenized(t *testing.T) {
 		}
 	}
 }
+
+func TestStripCommentsPreservesHexColorsInHTML(t *testing.T) {
+	source := `layout main
+  html
+    <style>
+      body { background: #09090b; color: #fafafa; }
+      a { color: #ff6e40; }
+    </style>
+    <div class="test">#not-a-comment</div>`
+
+	result := StripComments(source)
+
+	if !strings.Contains(result, "#09090b") {
+		t.Error("hex color #09090b inside html block was stripped")
+	}
+	if !strings.Contains(result, "#fafafa") {
+		t.Error("hex color #fafafa inside html block was stripped")
+	}
+	if !strings.Contains(result, "#ff6e40") {
+		t.Error("hex color #ff6e40 inside html block was stripped")
+	}
+	if !strings.Contains(result, "#not-a-comment") {
+		t.Error("text with # inside html block was stripped")
+	}
+}
+
+func TestStripCommentsStillWorksOutsideHTML(t *testing.T) {
+	source := `page /
+  html
+    <style>body { color: #fafafa; }</style>
+
+# this is a comment
+page /about
+  "About" # inline comment`
+
+	result := StripComments(source)
+
+	if !strings.Contains(result, "#fafafa") {
+		t.Error("hex color inside html block was stripped")
+	}
+	if strings.Contains(result, "this is a comment") {
+		t.Error("full-line comment outside html should be stripped")
+	}
+	if strings.Contains(result, "inline comment") {
+		t.Error("inline comment outside html should be stripped")
+	}
+}
+
+func TestStripCommentsNestedHTMLBlock(t *testing.T) {
+	source := `page /test
+  html
+    <div>#hash-in-html</div>
+page /other # comment here`
+
+	result := StripComments(source)
+
+	if !strings.Contains(result, "#hash-in-html") {
+		t.Error("hash inside html block was stripped")
+	}
+	if strings.Contains(result, "comment here") {
+		t.Error("inline comment after html block should be stripped")
+	}
+}

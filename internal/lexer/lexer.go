@@ -71,13 +71,46 @@ func IsFieldConstraint(s string) bool {
 // StripComments removes # comments from source code.
 // Full-line comments (lines starting with #) are replaced with blank lines to preserve line numbers.
 // Inline comments (# after code) are stripped, respecting quoted strings.
+// Lines inside html blocks are never stripped (they may contain CSS hex colors like #fff).
 func StripComments(source string) string {
 	lines := strings.Split(source, "\n")
+	inHTML := false
+	htmlIndent := 0
+
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
+
+		indent := 0
+		for _, ch := range line {
+			if ch == ' ' {
+				indent++
+			} else if ch == '\t' {
+				indent += 2
+			} else {
+				break
+			}
+		}
+
+		// Detect entering an html block: a line whose trimmed content is "html"
+		if !inHTML && trimmed == "html" {
+			inHTML = true
+			htmlIndent = indent
+			continue
+		}
+
+		// Inside html block: skip comment stripping until dedent
+		if inHTML {
+			if indent <= htmlIndent && trimmed != "" {
+				inHTML = false
+				// Fall through to normal comment processing for this line
+			} else {
+				continue
+			}
+		}
+
 		if trimmed[0] == '#' {
 			lines[i] = ""
 			continue
