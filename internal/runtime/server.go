@@ -393,6 +393,9 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		title = "kilnx"
 	}
 	title = interpolate(title, ctx)
+	if strings.TrimSpace(title) == "" {
+		title = "kilnx"
+	}
 
 	bodyContent := body.String()
 
