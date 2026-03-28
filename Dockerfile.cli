@@ -1,5 +1,5 @@
 # Kilnx CLI image for building .kilnx apps.
-# Usage: FROM ghcr.io/kilnx-org/kilnx:1.0.0
+# Usage: FROM ghcr.io/kilnx-org/kilnx:0.1.0
 #        COPY app.kilnx .
 #        RUN kilnx build app.kilnx -o /app/server
 
@@ -28,4 +28,4 @@ WORKDIR /kilnx
 
 LABEL org.opencontainers.image.source="https://github.com/kilnx-org/kilnx"
 LABEL org.opencontainers.image.description="Kilnx CLI for building .kilnx apps"
-LABEL org.opencontainers.image.version="1.0.0"
+LABEL org.opencontainers.image.version="0.1.0"

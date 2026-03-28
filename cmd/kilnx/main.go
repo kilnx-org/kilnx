@@ -76,7 +76,7 @@ func main() {
 	case "lsp":
 		lsp.Serve()
 	case "version":
-		fmt.Println("kilnx v1.0.0")
+		fmt.Println("kilnx v0.1.0")
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		printUsage()
