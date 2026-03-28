@@ -545,3 +545,24 @@ func TestRenderHTML_IfAndQuotedString(t *testing.T) {
 		t.Errorf("'and' inside quotes should not split condition, got %s", result)
 	}
 }
+
+func TestInterpolate_DynamicTitle(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["doc"] = []database.Row{{"title": "Getting Started", "body": "content"}}
+
+	title := "{doc.title} - Kilnx Docs"
+	result := interpolate(title, ctx)
+	if result != "Getting Started - Kilnx Docs" {
+		t.Errorf("expected 'Getting Started - Kilnx Docs', got '%s'", result)
+	}
+}
+
+func TestInterpolate_DynamicTitleNoQuery(t *testing.T) {
+	ctx := newTestContext()
+
+	title := "{doc.title} - Kilnx Docs"
+	result := interpolate(title, ctx)
+	if result != "{doc.title} - Kilnx Docs" {
+		t.Errorf("unresolved interpolation should be left as-is, got '%s'", result)
+	}
+}
