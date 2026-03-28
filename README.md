@@ -85,7 +85,7 @@ kilnx test app.kilnx          # run declarative tests
 
 ## Deploy
 
-<a href="https://railway.com/template/kilnx?referralCode=kilnx"><img src="https://railway.com/button.svg" alt="Deploy on Railway" height="36"></a>
+<a href="https://railway.com/deploy/kilnx"><img src="https://railway.com/button.svg" alt="Deploy on Railway" height="36"></a>
 
 Or compile and copy a binary anywhere:
 
