@@ -923,3 +923,79 @@ func TestFragmentRequiresAuth(t *testing.T) {
 		t.Error("fragment should require auth")
 	}
 }
+
+func TestLayoutWithQueries(t *testing.T) {
+	src := `layout docs
+  query nav_items: SELECT slug, title FROM doc ORDER BY sort_order
+  html
+    <html>
+    <body>
+      {{each nav_items}}
+      <a href="/docs/{slug}">{title}</a>
+      {{end}}
+      {page.content}
+    </body>
+    </html>
+
+page /test layout docs
+  "Hello"`
+
+	app := parse(t, src)
+	if len(app.Layouts) != 1 {
+		t.Fatalf("expected 1 layout, got %d", len(app.Layouts))
+	}
+	layout := app.Layouts[0]
+	if layout.Name != "docs" {
+		t.Errorf("expected layout name 'docs', got '%s'", layout.Name)
+	}
+	if len(layout.Queries) != 1 {
+		t.Fatalf("expected 1 query in layout, got %d", len(layout.Queries))
+	}
+	if layout.Queries[0].Name != "nav_items" {
+		t.Errorf("expected query name 'nav_items', got '%s'", layout.Queries[0].Name)
+	}
+	if layout.HTMLContent == "" {
+		t.Error("layout HTML content should not be empty")
+	}
+}
+
+func TestPageWithDynamicTitle(t *testing.T) {
+	src := "page /docs/:slug title {doc.title}\n  query doc: SELECT title FROM doc WHERE slug = :slug\n  html\n    <h1>{doc.title}</h1>"
+	app := parse(t, src)
+	if app.Pages[0].Title != "{doc.title}" {
+		t.Errorf("expected dynamic title '{doc.title}', got %q", app.Pages[0].Title)
+	}
+}
+
+func TestPageWithDynamicTitleMixed(t *testing.T) {
+	src := "page / title Docs - {doc.title}\n  \"content\""
+	app := parse(t, src)
+	if app.Pages[0].Title != "Docs - {doc.title}" {
+		t.Errorf("expected 'Docs - {doc.title}', got %q", app.Pages[0].Title)
+	}
+}
+
+func TestPageWithDynamicTitleAndModifiers(t *testing.T) {
+	src := "page /docs/:slug title {doc.title} layout main requires auth\n  \"content\""
+	app := parse(t, src)
+	if app.Pages[0].Title != "{doc.title}" {
+		t.Errorf("expected '{doc.title}', got %q", app.Pages[0].Title)
+	}
+	if app.Pages[0].Layout != "main" {
+		t.Errorf("expected layout 'main', got %q", app.Pages[0].Layout)
+	}
+	if !app.Pages[0].Auth {
+		t.Error("expected auth to be true")
+	}
+}
+
+func TestPageWithStaticTitleStillWorks(t *testing.T) {
+	src := "page /about title \"About Us\" layout main\n  \"content\""
+	app := parse(t, src)
+	if app.Pages[0].Title != "About Us" {
+		t.Errorf("expected 'About Us', got %q", app.Pages[0].Title)
+	}
+	if app.Pages[0].Layout != "main" {
+		t.Errorf("expected layout 'main', got %q", app.Pages[0].Layout)
+	}
+}

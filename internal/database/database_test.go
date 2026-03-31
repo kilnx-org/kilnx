@@ -742,3 +742,102 @@ func TestTempDirCleanedUp(t *testing.T) {
 	}
 	_ = os.Remove(dbPath) // best-effort cleanup
 }
+
+func TestPlanMigration_DryRun(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	models := []parser.Model{
+		{Name: "task", Fields: []parser.Field{
+			{Name: "title", Type: parser.FieldText, Required: true},
+			{Name: "done", Type: parser.FieldBool},
+		}},
+	}
+
+	stmts, err := db.PlanMigration(models)
+	if err != nil {
+		t.Fatalf("PlanMigration: %v", err)
+	}
+	if len(stmts) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(stmts))
+	}
+	if !strings.HasPrefix(stmts[0], "CREATE TABLE") {
+		t.Errorf("expected CREATE TABLE, got %q", stmts[0])
+	}
+
+	// Table should NOT exist (dry run)
+	exists, _ := db.tableExists("task")
+	if exists {
+		t.Error("PlanMigration should not create tables")
+	}
+}
+
+func TestMigrationHistory(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	if err := db.MigrateInternal(); err != nil {
+		t.Fatalf("MigrateInternal: %v", err)
+	}
+
+	models := []parser.Model{
+		{Name: "note", Fields: []parser.Field{
+			{Name: "body", Type: parser.FieldText},
+		}},
+	}
+
+	_, err := db.Migrate(models)
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	history, err := db.MigrationHistory()
+	if err != nil {
+		t.Fatalf("MigrationHistory: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("expected 1 migration record, got %d", len(history))
+	}
+	if history[0].SchemaHash == "" {
+		t.Error("schema hash should not be empty")
+	}
+	if !strings.Contains(history[0].Statements, "CREATE TABLE") {
+		t.Error("statements should contain CREATE TABLE")
+	}
+}
+
+func TestMigrationStatus_Pending(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	if err := db.MigrateInternal(); err != nil {
+		t.Fatalf("MigrateInternal: %v", err)
+	}
+
+	// Migrate initial model
+	models := []parser.Model{
+		{Name: "item", Fields: []parser.Field{
+			{Name: "name", Type: parser.FieldText},
+		}},
+	}
+	if _, err := db.Migrate(models); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// Add a field
+	models[0].Fields = append(models[0].Fields, parser.Field{
+		Name: "price", Type: parser.FieldFloat,
+	})
+
+	// Plan should show pending ALTER
+	pending, err := db.PlanMigration(models)
+	if err != nil {
+		t.Fatalf("PlanMigration: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending statement, got %d", len(pending))
+	}
+	if !strings.Contains(pending[0], "ALTER TABLE") {
+		t.Errorf("expected ALTER TABLE, got %q", pending[0])
+	}
+}

@@ -1,0 +1,380 @@
+# Kilnx Chat
+# A full-featured chat app demonstrating: auth, WebSocket, SSE, rate limit,
+# search, delete, profile, fragments, CSRF, Tailwind CSS
+
+config
+  database: env DATABASE_URL default "sqlite://chat.db"
+  port: env PORT default 8080
+  secret: env SECRET_KEY default "dev-secret"
+  name: Kilnx Chat
+
+model user
+  name: text required min 2 max 50
+  email: email unique
+  password: password required
+  role: option [admin, member] default member
+  created: timestamp auto
+
+model room
+  name: text required unique
+  description: text
+  creator: user required
+  created: timestamp auto
+
+model message
+  body: text required
+  author: user required
+  room: room required
+  created: timestamp auto
+
+auth
+  table: user
+  identity: email
+  password: password
+  login: /login
+  after login: /
+
+# Rate limiting
+limit /chat/*/send
+  requests: 30 per minute per user
+  message: "Slow down, you're sending too many messages."
+
+limit /rooms/create
+  requests: 5 per minute per user
+
+layout chat
+  html
+    <!DOCTYPE html>
+    <html lang="en" class="h-full">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>{page.title} - Kilnx Chat</title>
+      <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 470 469'><g transform='translate(0,470) scale(0.1,-0.1)' fill='%23e64a19'><path d='M360 2850 l0-1850 111 0 111 0 240 233c132 127 256 245 274 260l34 28 0 530 0 529 1220 0 1220 0 0-522-1-523 273-267 273-267 113-1 112 0 0 1850 0 1850-1990 0-1990 0 0-1850z M1410 1877l0-473-349-347-349-347-356 0-356 0 2-352c2-194 6-352 11-350 4 1 333 2 732 2l725 0 0 288 0 288 116 215c64 117 156 288 205 379l89 164 0 503 0 503-235 0-235 0 0-473z M2120 2243c0-60-1-322-2-583l-2-475-178-374-178-374 0-213 0-214 590 0 590 0 0 214 0 214-111 233c-61 129-139 290-173 359l-61 125-5 595-5 595-232 3-233 2 0-107z M2820 1848l0-502 92-170c51-94 143-265 205-381l113-210 0-287 0-288 735 0 735 0 0 350 0 350-355 0-355 0-350 346-350 347 0 473 0 474-235 0-235 0 0-502z'/></g></svg>">
+      {kilnx.js}
+      <script src="https://cdn.tailwindcss.com"></script>
+      <style>
+        @keyframes fadeUp { from { opacity:0; transform:translateY(6px) } to { opacity:1; transform:translateY(0) } }
+        .fade-up { animation: fadeUp .25s ease both }
+        ::-webkit-scrollbar { width: 6px }
+        ::-webkit-scrollbar-track { background: transparent }
+        ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px }
+        .kilnx-topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; justify-content: space-between; padding: 0 1.5rem; height: 3.5rem; background: rgba(9,9,11,0.85); backdrop-filter: blur(16px); border-bottom: 1px solid rgba(63,63,70,0.4); }
+        .kilnx-topbar-left { display: flex; align-items: center; gap: 1.25rem; }
+        .kilnx-app-name { font-size: 1rem; font-weight: 700; color: #ff6e40; letter-spacing: -0.02em; }
+        .kilnx-nav { display: flex; align-items: center; gap: 0.25rem; }
+        .kilnx-nav a { padding: 0.375rem 0.75rem; font-size: 0.875rem; font-weight: 500; color: #a1a1aa; text-decoration: none; border-radius: 0.375rem; transition: all 0.15s; }
+        .kilnx-nav a:hover { color: #fff; background: rgba(63,63,70,0.5); }
+        .kilnx-nav a.active { color: #ff6e40; background: rgba(230,74,25,0.1); }
+        .kilnx-topbar-right { display: flex; align-items: center; gap: 0.75rem; font-size: 0.85rem; color: #71717a; }
+        .kilnx-topbar-right .kilnx-user { color: #a1a1aa; }
+        .kilnx-topbar-right form { display: inline; margin: 0; }
+        .kilnx-logout { background: rgba(63,63,70,0.4); color: #a1a1aa; border: none; padding: 0.35rem 0.75rem; border-radius: 0.375rem; font-size: 0.8rem; font-weight: 500; cursor: pointer; font-family: inherit; transition: all 0.15s; }
+        .kilnx-logout:hover { background: rgba(63,63,70,0.7); color: #fff; }
+      </style>
+    </head>
+    <body class="h-full bg-zinc-950 text-zinc-100 font-[system-ui,-apple-system,sans-serif] antialiased">
+      <div class="h-full flex flex-col">
+        {nav}
+        <main class="flex-1 flex flex-col overflow-hidden">
+          {page.content}
+        </main>
+      </div>
+      <script>
+        // Auto-scroll chat to bottom
+        var chat = document.getElementById('chat-messages');
+        if (chat) chat.scrollTop = chat.scrollHeight;
+        // Confirm deletes
+        document.querySelectorAll('[data-confirm]').forEach(function(el) {
+          el.addEventListener('submit', function(e) {
+            if (!confirm(el.dataset.confirm)) e.preventDefault();
+          });
+        });
+      </script>
+    </body>
+    </html>
+
+# ============================================================
+# PAGES
+# ============================================================
+
+# Room list (home)
+page / requires auth layout chat title "Rooms"
+  query rooms: SELECT r.id, r.name, r.description, r.created,
+               u.name as creator,
+               COUNT(DISTINCT m.id) as msg_count,
+               (SELECT body FROM message WHERE room_id = r.id ORDER BY created DESC LIMIT 1) as last_msg
+               FROM room r
+               JOIN user u ON u.id = r.creator_id
+               LEFT JOIN message m ON m.room_id = r.id
+               GROUP BY r.id
+               ORDER BY r.created DESC
+  html
+    <div class="max-w-2xl mx-auto w-full px-4 sm:px-6 py-10">
+      <div class="flex items-center justify-between mb-8">
+        <h1 class="text-2xl font-bold tracking-tight text-white">Rooms</h1>
+        <a href="/profile" class="text-sm text-zinc-400 hover:text-orange-400 transition">My Profile</a>
+      </div>
+      <form method="POST" action="/rooms/create" class="flex gap-3 mb-10">
+        <input type="hidden" name="_csrf" value="{csrf}">
+        <input type="text" name="name" placeholder="New room name..." required minlength="2" class="flex-1 px-4 py-2.5 bg-zinc-900 border border-zinc-700/60 rounded-lg text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 transition">
+        <button type="submit" class="px-5 py-2.5 bg-orange-700 hover:bg-orange-600 text-white text-sm font-semibold rounded-lg transition-all hover:shadow-lg hover:shadow-orange-700/20 active:scale-[0.97] shrink-0">Create</button>
+      </form>
+      <div class="space-y-2">
+        {{each rooms}}
+        <a href="/chat/{id}" class="fade-up group block p-4 bg-zinc-900/50 border border-zinc-800/50 rounded-xl hover:bg-zinc-900 hover:border-zinc-700/60 transition-all hover:-translate-y-px hover:shadow-lg hover:shadow-black/30">
+          <div class="flex items-center justify-between mb-1">
+            <div class="flex items-center gap-3">
+              <span class="flex items-center justify-center w-9 h-9 rounded-lg bg-orange-500/10 text-orange-400 font-bold text-sm shrink-0">#</span>
+              <span class="font-semibold text-zinc-100 group-hover:text-white transition">{name}</span>
+            </div>
+            <span class="text-xs text-zinc-500 bg-zinc-800/80 px-2.5 py-1 rounded-full shrink-0">{msg_count} msgs</span>
+          </div>
+          <div class="ml-12 text-xs text-zinc-500 truncate">
+            {{if last_msg}}{last_msg|truncate:80}{{else}}No messages yet{{end}}
+          </div>
+        </a>
+        {{else}}
+        <div class="text-center py-20">
+          <div class="text-5xl mb-4 opacity-60">💬</div>
+          <p class="text-zinc-500 mb-1">No rooms yet.</p>
+          <p class="text-zinc-600 text-sm">Create your first room above to get started.</p>
+        </div>
+        {{end}}
+      </div>
+    </div>
+
+# Chat room
+page /chat/:id requires auth layout chat
+  query room: SELECT r.id, r.name, r.description, r.created, r.creator_id,
+              u.name as creator
+              FROM room r
+              JOIN user u ON u.id = r.creator_id
+              WHERE r.id = :id
+  query messages: SELECT m.id, m.body, m.author_id, u.name as author, m.created
+                  FROM message m
+                  JOIN user u ON u.id = m.author_id
+                  WHERE m.room_id = :id
+                  ORDER BY m.created ASC
+                  paginate 100
+  html
+    <div class="flex flex-col flex-1 overflow-hidden max-w-3xl mx-auto w-full">
+      <div class="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-zinc-800/50 shrink-0">
+        <div class="flex items-center gap-3">
+          <a href="/" class="text-zinc-500 hover:text-zinc-300 transition" title="Back to rooms">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+          </a>
+          <span class="text-orange-400 font-bold">#</span>
+          <div>
+            <h1 class="text-base font-semibold text-white">{room.name}</h1>
+            <p class="text-[11px] text-zinc-500">Created by {room.creator} {room.created|timeago}</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <form method="POST" action="/rooms/{room.id}/delete" data-confirm="Delete this room and all messages?" class="inline">
+            <input type="hidden" name="_csrf" value="{csrf}">
+            <button type="submit" class="p-1.5 text-zinc-600 hover:text-red-400 transition rounded" title="Delete room">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+          </form>
+        </div>
+      </div>
+      <div id="chat-messages" class="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-0.5" hx-get="/chat/{room.id}/messages" hx-trigger="every 3s" hx-swap="innerHTML transition:false">
+        {{each messages}}
+        <div class="fade-up group flex gap-3 py-2 px-3 -mx-3 rounded-lg hover:bg-zinc-900/60 transition relative">
+          <div class="shrink-0 w-8 h-8 rounded-full bg-orange-500/15 flex items-center justify-center text-orange-400 text-xs font-bold mt-0.5">{author|truncate:1}</div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-baseline gap-2">
+              <span class="text-sm font-semibold text-orange-300">{author}</span>
+              <time class="text-[11px] text-zinc-600 group-hover:text-zinc-500 transition">{created|timeago}</time>
+            </div>
+            <p class="text-sm text-zinc-300 break-words leading-relaxed">{body}</p>
+          </div>
+          <form method="POST" action="/messages/{id}/delete" class="hidden group-hover:flex items-start pt-1" data-confirm="Delete this message?">
+            <input type="hidden" name="_csrf" value="{csrf}">
+            <button type="submit" class="p-1 text-zinc-700 hover:text-red-400 transition rounded" title="Delete">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </form>
+        </div>
+        {{else}}
+        <div class="flex items-center justify-center h-full">
+          <div class="text-center py-20">
+            <div class="text-5xl mb-4 opacity-60">👋</div>
+            <p class="text-zinc-400 mb-1">Welcome to #{room.name}</p>
+            <p class="text-zinc-600 text-sm">This is the beginning of the conversation.</p>
+          </div>
+        </div>
+        {{end}}
+      </div>
+      <div class="shrink-0 px-4 sm:px-6 py-3 border-t border-zinc-800/50 bg-zinc-950">
+        <form method="POST" action="/chat/{room.id}/send" class="flex gap-3">
+          <input type="hidden" name="_csrf" value="{csrf}">
+          <input type="text" name="body" placeholder="Type a message..." required autofocus class="flex-1 px-4 py-2.5 bg-zinc-900 border border-zinc-700/60 rounded-lg text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 transition">
+          <button type="submit" class="px-4 py-2.5 bg-orange-700 hover:bg-orange-600 text-white rounded-lg transition-all hover:shadow-lg hover:shadow-orange-700/20 active:scale-[0.97] shrink-0">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+          </button>
+        </form>
+      </div>
+    </div>
+
+# Messages fragment for htmx polling
+fragment /chat/:id/messages
+  query messages: SELECT m.id, m.body, m.author_id, u.name as author, m.created
+                  FROM message m
+                  JOIN user u ON u.id = m.author_id
+                  WHERE m.room_id = :id
+                  ORDER BY m.created ASC
+                  paginate 100
+  html
+    {{each messages}}
+    <div class="group flex gap-3 py-2 px-3 -mx-3 rounded-lg hover:bg-zinc-900/60 transition relative">
+      <div class="shrink-0 w-8 h-8 rounded-full bg-orange-500/15 flex items-center justify-center text-orange-400 text-xs font-bold mt-0.5">{author|truncate:1}</div>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-baseline gap-2">
+          <span class="text-sm font-semibold text-orange-300">{author}</span>
+          <time class="text-[11px] text-zinc-600 group-hover:text-zinc-500 transition">{created|timeago}</time>
+        </div>
+        <p class="text-sm text-zinc-300 break-words leading-relaxed">{body}</p>
+      </div>
+      <form method="POST" action="/messages/{id}/delete" class="hidden group-hover:flex items-start pt-1" data-confirm="Delete this message?">
+        <input type="hidden" name="_csrf" value="{csrf}">
+        <button type="submit" class="p-1 text-zinc-700 hover:text-red-400 transition rounded" title="Delete">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </form>
+    </div>
+    {{else}}
+    <div class="flex items-center justify-center h-full">
+      <div class="text-center py-20">
+        <div class="text-5xl mb-4 opacity-60">👋</div>
+        <p class="text-zinc-400">No messages yet.</p>
+      </div>
+    </div>
+    {{end}}
+
+# Profile page
+page /profile requires auth layout chat title "Profile"
+  query me: SELECT name, email FROM user WHERE id = :current_user.id
+  query stats: SELECT
+               (SELECT COUNT(*) FROM message WHERE author_id = :current_user.id) as msg_count,
+               (SELECT COUNT(DISTINCT room_id) FROM message WHERE author_id = :current_user.id) as rooms_active
+  html
+    <div class="max-w-lg mx-auto w-full px-4 sm:px-6 py-10">
+      <a href="/" class="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-300 transition mb-8">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        Back to rooms
+      </a>
+      <div class="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-6">
+        <div class="flex items-center gap-4 mb-6">
+          <div class="w-16 h-16 rounded-full bg-orange-500/15 flex items-center justify-center text-orange-400 text-2xl font-bold">{me.name|truncate:1}</div>
+          <div>
+            <h1 class="text-xl font-bold text-white">{me.name}</h1>
+            <p class="text-sm text-zinc-500">{me.email}</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="bg-zinc-800/50 rounded-lg p-4 text-center">
+            <div class="text-2xl font-bold text-white">{stats.msg_count}</div>
+            <div class="text-xs text-zinc-500 mt-1">Messages sent</div>
+          </div>
+          <div class="bg-zinc-800/50 rounded-lg p-4 text-center">
+            <div class="text-2xl font-bold text-white">{stats.rooms_active}</div>
+            <div class="text-xs text-zinc-500 mt-1">Rooms active in</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+# Search results
+page /search requires auth layout chat title "Search"
+  query results: SELECT m.id, m.body, u.name as author, m.created,
+                 r.name as room_name, r.id as room_id
+                 FROM message m
+                 JOIN user u ON u.id = m.author_id
+                 JOIN room r ON r.id = m.room_id
+                 WHERE m.body LIKE '%' || :q || '%'
+                 ORDER BY m.created DESC
+                 paginate 50
+  html
+    <div class="max-w-2xl mx-auto w-full px-4 sm:px-6 py-10">
+      <a href="/" class="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-300 transition mb-6">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        Back
+      </a>
+      <form action="/search" method="GET" class="flex gap-3 mb-8">
+        <input type="text" name="q" placeholder="Search messages..." class="flex-1 px-4 py-2.5 bg-zinc-900 border border-zinc-700/60 rounded-lg text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 transition">
+        <button type="submit" class="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg transition shrink-0">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        </button>
+      </form>
+      <p class="text-sm text-zinc-500 mb-4">{results.count} results</p>
+      <div class="space-y-2">
+        {{each results}}
+        <a href="/chat/{room_id}" class="block p-3 bg-zinc-900/50 border border-zinc-800/50 rounded-lg hover:bg-zinc-900 transition">
+          <div class="flex items-baseline gap-2 mb-1">
+            <span class="text-sm font-semibold text-orange-300">{author}</span>
+            <span class="text-[11px] text-zinc-600">in #{room_name}</span>
+            <time class="text-[11px] text-zinc-600">{created|timeago}</time>
+          </div>
+          <p class="text-sm text-zinc-300">{body|truncate:120}</p>
+        </a>
+        {{else}}
+        <p class="text-center text-zinc-500 py-10">No messages found.</p>
+        {{end}}
+      </div>
+    </div>
+
+# ============================================================
+# ACTIONS
+# ============================================================
+
+action /rooms/create method POST requires auth
+  validate
+    name: required min 2
+  query: INSERT INTO room (name, description, creator_id) VALUES (:name, :description, :current_user.id)
+  redirect /
+
+action /chat/:id/send method POST requires auth
+  validate
+    body: required
+  query: INSERT INTO message (body, author_id, room_id) VALUES (:body, :current_user.id, :id)
+  redirect /chat/:id
+
+action /rooms/:id/delete method POST requires auth
+  query: DELETE FROM message WHERE room_id = :id
+  query: DELETE FROM room WHERE id = :id
+  redirect /
+
+action /messages/:id/delete method POST requires auth
+  query: DELETE FROM message WHERE id = :id AND author_id = :current_user.id
+  on not found
+    redirect /
+
+# ============================================================
+# REAL-TIME: SSE stream for live message count
+# ============================================================
+
+stream /stream/rooms
+  every 5s
+  query: SELECT r.id, r.name, COUNT(m.id) as msg_count
+         FROM room r
+         LEFT JOIN message m ON m.room_id = r.id
+         GROUP BY r.id
+  event: rooms-update
+
+# ============================================================
+# TESTS
+# ============================================================
+
+test "homepage requires auth"
+  visit /
+  expect page /login
+
+test "login page loads"
+  visit /login
+  expect page /login contains "Log in"
+
+test "register page loads"
+  visit /register
+  expect page /register contains "Create account"

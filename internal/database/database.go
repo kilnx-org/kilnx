@@ -1,6 +1,7 @@
 package database
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"regexp"
@@ -87,36 +88,120 @@ func (db *DB) Conn() *sql.DB {
 	return db.conn
 }
 
-// Migrate compares models with the current database state and applies changes.
-func (db *DB) Migrate(models []parser.Model) ([]string, error) {
-	var executed []string
+// PlanMigration compares models with the current database state and returns
+// the SQL statements that would be executed, without applying them.
+func (db *DB) PlanMigration(models []parser.Model) ([]string, error) {
+	var stmts []string
 
 	for _, model := range models {
 		if !isValidIdentifier(model.Name) {
-			return executed, fmt.Errorf("invalid model name: %q", model.Name)
+			return stmts, fmt.Errorf("invalid model name: %q", model.Name)
 		}
 
 		exists, err := db.tableExists(model.Name)
 		if err != nil {
-			return executed, err
+			return stmts, err
 		}
 
 		if !exists {
-			stmt := generateCreateTable(model)
-			if _, err := db.conn.Exec(stmt); err != nil {
-				return executed, fmt.Errorf("creating table '%s': %w\nSQL: %s", model.Name, err, stmt)
-			}
-			executed = append(executed, stmt)
+			stmts = append(stmts, generateCreateTable(model))
 		} else {
-			stmts, err := db.migrateExistingTable(model)
+			alterStmts, err := db.planExistingTable(model)
 			if err != nil {
-				return executed, err
+				return stmts, err
 			}
-			executed = append(executed, stmts...)
+			stmts = append(stmts, alterStmts...)
 		}
 	}
 
+	return stmts, nil
+}
+
+// Migrate compares models with the current database state and applies changes.
+func (db *DB) Migrate(models []parser.Model) ([]string, error) {
+	stmts, err := db.PlanMigration(models)
+	if err != nil {
+		return nil, err
+	}
+
+	var executed []string
+	for _, stmt := range stmts {
+		if _, err := db.conn.Exec(stmt); err != nil {
+			return executed, fmt.Errorf("executing migration: %w\nSQL: %s", err, stmt)
+		}
+		executed = append(executed, stmt)
+	}
+
+	// Record migration if any statements were executed
+	if len(executed) > 0 {
+		hash := schemaHash(models)
+		allSQL := strings.Join(executed, ";\n")
+		db.recordMigration(hash, allSQL)
+	}
+
 	return executed, nil
+}
+
+// MigrationRecord represents a recorded migration entry
+type MigrationRecord struct {
+	ID         int
+	SchemaHash string
+	Statements string
+	AppliedAt  string
+}
+
+// MigrationHistory returns all recorded migrations
+func (db *DB) MigrationHistory() ([]MigrationRecord, error) {
+	// Check if table exists first
+	exists, err := db.tableExists("_kilnx_migrations")
+	if err != nil || !exists {
+		return nil, err
+	}
+
+	rows, err := db.conn.Query("SELECT id, schema_hash, statements, applied_at FROM _kilnx_migrations ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []MigrationRecord
+	for rows.Next() {
+		var r MigrationRecord
+		if err := rows.Scan(&r.ID, &r.SchemaHash, &r.Statements, &r.AppliedAt); err != nil {
+			return nil, err
+		}
+		records = append(records, r)
+	}
+	return records, rows.Err()
+}
+
+func (db *DB) recordMigration(hash, stmts string) {
+	db.conn.Exec(
+		"INSERT INTO _kilnx_migrations (schema_hash, statements) VALUES (?, ?)",
+		hash, stmts,
+	)
+}
+
+func schemaHash(models []parser.Model) string {
+	var b strings.Builder
+	for _, m := range models {
+		fmt.Fprintf(&b, "model:%s\n", m.Name)
+		for _, f := range m.Fields {
+			fmt.Fprintf(&b, "  %s:%s", f.Name, f.Type)
+			if f.Required {
+				b.WriteString(":req")
+			}
+			if f.Unique {
+				b.WriteString(":uniq")
+			}
+			if f.Default != "" {
+				fmt.Fprintf(&b, ":def=%s", f.Default)
+			}
+			b.WriteString("\n")
+		}
+	}
+	h := sha256.Sum256([]byte(b.String()))
+	return fmt.Sprintf("%x", h[:8])
 }
 
 func (db *DB) tableExists(name string) (bool, error) {
@@ -127,8 +212,9 @@ func (db *DB) tableExists(name string) (bool, error) {
 	return count > 0, err
 }
 
-func (db *DB) migrateExistingTable(model parser.Model) ([]string, error) {
-	var executed []string
+// planExistingTable returns ALTER TABLE statements needed without executing them
+func (db *DB) planExistingTable(model parser.Model) ([]string, error) {
+	var stmts []string
 
 	existing, err := db.getColumns(model.Name)
 	if err != nil {
@@ -138,7 +224,7 @@ func (db *DB) migrateExistingTable(model parser.Model) ([]string, error) {
 	for _, field := range model.Fields {
 		colName := fieldToColumnName(field)
 		if !isValidIdentifier(colName) {
-			return executed, fmt.Errorf("invalid column name: %q", colName)
+			return stmts, fmt.Errorf("invalid column name: %q", colName)
 		}
 		if _, ok := existing[colName]; ok {
 			continue
@@ -149,15 +235,10 @@ func (db *DB) migrateExistingTable(model parser.Model) ([]string, error) {
 
 		stmt := fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"%s\" %s%s",
 			model.Name, colName, sqlType, defaultClause)
-
-		if _, err := db.conn.Exec(stmt); err != nil {
-			return executed, fmt.Errorf("adding column '%s' to '%s': %w\nSQL: %s",
-				colName, model.Name, err, stmt)
-		}
-		executed = append(executed, stmt)
+		stmts = append(stmts, stmt)
 	}
 
-	return executed, nil
+	return stmts, nil
 }
 
 func (db *DB) getColumns(table string) (map[string]bool, error) {
@@ -299,6 +380,12 @@ func (db *DB) MigrateInternal() error {
 			role TEXT NOT NULL DEFAULT '',
 			data TEXT NOT NULL DEFAULT '{}',
 			expires_at DATETIME NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS _kilnx_migrations (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			schema_hash TEXT NOT NULL,
+			statements TEXT NOT NULL,
+			applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS _kilnx_jobs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
