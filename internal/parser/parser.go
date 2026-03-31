@@ -658,9 +658,12 @@ func (p *parserState) parsePage() (Page, error) {
 					page.Layout = p.advance().Value
 				}
 			case "title":
-				p.advance()
+				titleTok := p.advance()
 				if p.current().Type == lexer.TokenString {
 					page.Title = p.advance().Value
+				} else {
+					page.Title = p.extractTitleFromSourceLine(titleTok.Line, titleTok.Column)
+					p.skipToEndOfModifier()
 				}
 			case "requires":
 				p.advance()
@@ -832,6 +835,50 @@ func (p *parserState) extractSQLFromLine(lineNum int) string {
 		return strings.TrimSpace(line)
 	}
 	return strings.TrimSpace(line[idx+1:])
+}
+
+// extractTitleFromSourceLine extracts a dynamic title expression from the source line.
+// For "page /docs/:slug title {doc.title} layout main", it returns "{doc.title}".
+func (p *parserState) extractTitleFromSourceLine(lineNum, titleCol int) string {
+	if lineNum < 1 || lineNum > len(p.lines) {
+		return ""
+	}
+	line := p.lines[lineNum-1]
+
+	// Find start: skip past "title " from the title keyword column
+	start := titleCol + len("title")
+	if start >= len(line) {
+		return ""
+	}
+	// Skip whitespace after "title"
+	for start < len(line) && line[start] == ' ' {
+		start++
+	}
+
+	rest := line[start:]
+
+	// Trim at known page modifier keywords that appear as standalone words
+	modifiers := []string{" layout ", " requires ", " method "}
+	for _, mod := range modifiers {
+		if idx := strings.Index(rest, mod); idx >= 0 {
+			rest = rest[:idx]
+		}
+	}
+
+	return strings.TrimSpace(rest)
+}
+
+// skipToEndOfModifier advances past tokens until hitting a page modifier keyword or newline
+func (p *parserState) skipToEndOfModifier() {
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+		if p.current().Type == lexer.TokenKeyword {
+			v := p.current().Value
+			if v == "layout" || v == "requires" || v == "method" {
+				break
+			}
+		}
+		p.advance()
+	}
 }
 
 // skipToEndOfLine advances past all tokens on the current line

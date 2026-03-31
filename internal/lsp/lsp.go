@@ -46,7 +46,9 @@ func Serve() {
 						CompletionProvider: &completionOptions{
 							TriggerCharacters: []string{" ", "\n"},
 						},
-						HoverProvider: true,
+						HoverProvider:          true,
+					DefinitionProvider:     true,
+					DocumentSymbolProvider: true,
 					},
 				},
 			}
@@ -95,6 +97,32 @@ func Serve() {
 			var params hoverParams
 			if json.Unmarshal(req.Params, &params) == nil {
 				result := getHover(files[params.TextDocument.URI], params.Position)
+				resp := jsonRPCResponse{
+					JSONRPC: "2.0",
+					ID:      req.ID,
+					Result:  result,
+				}
+				writeMessage(writer, resp)
+			}
+
+		case "textDocument/definition":
+			var params hoverParams
+			if json.Unmarshal(req.Params, &params) == nil {
+				result := getDefinition(files[params.TextDocument.URI], params.Position, params.TextDocument.URI)
+				resp := jsonRPCResponse{
+					JSONRPC: "2.0",
+					ID:      req.ID,
+					Result:  result,
+				}
+				writeMessage(writer, resp)
+			}
+
+		case "textDocument/documentSymbol":
+			var params struct {
+				TextDocument textDocumentIdentifier `json:"textDocument"`
+			}
+			if json.Unmarshal(req.Params, &params) == nil {
+				result := getDocumentSymbols(files[params.TextDocument.URI])
 				resp := jsonRPCResponse{
 					JSONRPC: "2.0",
 					ID:      req.ID,
@@ -205,6 +233,11 @@ func getCompletions(content string, pos position) []completionItem {
 
 	var items []completionItem
 
+	// Parse the document to get context-aware completions
+	stripped := lexer.StripComments(content)
+	tokens := lexer.Tokenize(stripped)
+	app, _ := parser.Parse(tokens, stripped)
+
 	if indent == 0 {
 		// Top-level keywords
 		for _, kw := range topLevelKeywords {
@@ -215,6 +248,41 @@ func getCompletions(content string, pos position) []completionItem {
 			})
 		}
 	} else {
+		trimmed := strings.TrimSpace(currentLine)
+
+		// Context-aware: after "layout" keyword, suggest layout names
+		if strings.HasPrefix(trimmed, "layout ") || strings.HasSuffix(trimmed, "layout") {
+			if app != nil {
+				for _, l := range app.Layouts {
+					items = append(items, completionItem{
+						Label:  l.Name,
+						Kind:   2, // Module
+						Detail: "Layout: " + l.Name,
+					})
+				}
+			}
+			return items
+		}
+
+		// Context-aware: in SQL context, suggest model names as table names
+		if strings.Contains(trimmed, "FROM") || strings.Contains(trimmed, "JOIN") ||
+			strings.Contains(trimmed, "INTO") || strings.Contains(trimmed, "UPDATE") {
+			if app != nil {
+				for _, m := range app.Models {
+					fields := make([]string, len(m.Fields))
+					for i, f := range m.Fields {
+						fields[i] = f.Name
+					}
+					items = append(items, completionItem{
+						Label:  m.Name,
+						Kind:   5, // Class
+						Detail: "Table: " + strings.Join(fields, ", "),
+					})
+				}
+			}
+			return items
+		}
+
 		// Inside a block: suggest body keywords and field types
 		for _, kw := range bodyKeywords {
 			items = append(items, completionItem{
@@ -229,6 +297,17 @@ func getCompletions(content string, pos position) []completionItem {
 				Kind:   12, // Value
 				Detail: ft.Detail,
 			})
+		}
+
+		// Add model names for reference fields
+		if app != nil {
+			for _, m := range app.Models {
+				items = append(items, completionItem{
+					Label:  m.Name,
+					Kind:   5,
+					Detail: "Model (for reference field)",
+				})
+			}
 		}
 	}
 
@@ -246,12 +325,64 @@ func getHover(content string, pos position) *hoverResult {
 		return nil
 	}
 
+	// Check keyword docs first
 	if desc, ok := keywordDocs[word]; ok {
 		return &hoverResult{
 			Contents: markupContent{
 				Kind:  "markdown",
 				Value: fmt.Sprintf("**%s**\n\n%s", word, desc),
 			},
+		}
+	}
+
+	// Try to parse and show model/layout info
+	stripped := lexer.StripComments(content)
+	tokens := lexer.Tokenize(stripped)
+	app, _ := parser.Parse(tokens, stripped)
+	if app == nil {
+		return nil
+	}
+
+	// Hover on model name: show fields
+	for _, m := range app.Models {
+		if m.Name == word {
+			var fields []string
+			for _, f := range m.Fields {
+				constraint := ""
+				if f.Required {
+					constraint += " required"
+				}
+				if f.Unique {
+					constraint += " unique"
+				}
+				if f.Default != "" {
+					constraint += " default " + f.Default
+				}
+				fields = append(fields, fmt.Sprintf("- **%s**: %s%s", f.Name, f.Type, constraint))
+			}
+			return &hoverResult{
+				Contents: markupContent{
+					Kind:  "markdown",
+					Value: fmt.Sprintf("**model %s**\n\n%s", m.Name, strings.Join(fields, "\n")),
+				},
+			}
+		}
+	}
+
+	// Hover on layout name
+	for _, l := range app.Layouts {
+		if l.Name == word {
+			queryCount := len(l.Queries)
+			info := fmt.Sprintf("**layout %s**\n\nPlaceholders: `{page.title}`, `{page.content}`, `{nav}`", l.Name)
+			if queryCount > 0 {
+				info += fmt.Sprintf("\n\nQueries: %d", queryCount)
+			}
+			return &hoverResult{
+				Contents: markupContent{
+					Kind:  "markdown",
+					Value: info,
+				},
+			}
 		}
 	}
 
@@ -391,9 +522,11 @@ type initializeResult struct {
 }
 
 type serverCapabilities struct {
-	TextDocumentSync   int                `json:"textDocumentSync"`
-	CompletionProvider *completionOptions `json:"completionProvider,omitempty"`
-	HoverProvider      bool               `json:"hoverProvider"`
+	TextDocumentSync       int                `json:"textDocumentSync"`
+	CompletionProvider     *completionOptions `json:"completionProvider,omitempty"`
+	HoverProvider          bool               `json:"hoverProvider"`
+	DefinitionProvider     bool               `json:"definitionProvider"`
+	DocumentSymbolProvider bool               `json:"documentSymbolProvider"`
 }
 
 type completionOptions struct {
@@ -429,6 +562,306 @@ type lspDiagnostic struct {
 type publishDiagnosticsParams struct {
 	URI         string          `json:"uri"`
 	Diagnostics []lspDiagnostic `json:"diagnostics"`
+}
+
+// LSP Location type for go-to-definition
+type lspLocation struct {
+	URI   string   `json:"uri"`
+	Range lspRange `json:"range"`
+}
+
+// LSP DocumentSymbol type
+type documentSymbol struct {
+	Name           string           `json:"name"`
+	Kind           int              `json:"kind"`
+	Range          lspRange         `json:"range"`
+	SelectionRange lspRange         `json:"selectionRange"`
+	Children       []documentSymbol `json:"children,omitempty"`
+}
+
+// getDefinition finds the definition of the symbol under cursor
+func getDefinition(content string, pos position, uri string) *lspLocation {
+	lines := strings.Split(content, "\n")
+	if pos.Line >= len(lines) {
+		return nil
+	}
+	word := wordAt(lines[pos.Line], pos.Character)
+	if word == "" {
+		return nil
+	}
+
+	// Try to parse the file to find definitions
+	stripped := lexer.StripComments(content)
+	tokens := lexer.Tokenize(stripped)
+	app, err := parser.Parse(tokens, stripped)
+	if err != nil {
+		return nil
+	}
+
+	// Search for model definitions
+	for _, m := range app.Models {
+		if m.Name == word {
+			line := findDefinitionLine(lines, "model", word)
+			if line >= 0 {
+				return &lspLocation{
+					URI:   uri,
+					Range: lineRange(line),
+				}
+			}
+		}
+	}
+
+	// Search for layout definitions
+	for _, l := range app.Layouts {
+		if l.Name == word {
+			line := findDefinitionLine(lines, "layout", word)
+			if line >= 0 {
+				return &lspLocation{
+					URI:   uri,
+					Range: lineRange(line),
+				}
+			}
+		}
+	}
+
+	// Search for page/action/fragment paths
+	for _, p := range app.Pages {
+		if p.Path == "/"+word || p.Path == word {
+			line := findDefinitionLine(lines, "page", p.Path)
+			if line >= 0 {
+				return &lspLocation{
+					URI:   uri,
+					Range: lineRange(line),
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// getDocumentSymbols returns an outline of all definitions in the file
+func getDocumentSymbols(content string) []documentSymbol {
+	stripped := lexer.StripComments(content)
+	tokens := lexer.Tokenize(stripped)
+	app, err := parser.Parse(tokens, stripped)
+	if err != nil {
+		return nil
+	}
+
+	lines := strings.Split(content, "\n")
+	var symbols []documentSymbol
+
+	// Models (Class = 5)
+	for _, m := range app.Models {
+		line := findDefinitionLine(lines, "model", m.Name)
+		if line < 0 {
+			continue
+		}
+		sym := documentSymbol{
+			Name:           m.Name,
+			Kind:           5, // Class
+			Range:          lineRange(line),
+			SelectionRange: lineRange(line),
+		}
+		for _, f := range m.Fields {
+			fline := findFieldLine(lines, f.Name, line+1)
+			if fline >= 0 {
+				sym.Children = append(sym.Children, documentSymbol{
+					Name:           fmt.Sprintf("%s: %s", f.Name, f.Type),
+					Kind:           8, // Field
+					Range:          lineRange(fline),
+					SelectionRange: lineRange(fline),
+				})
+			}
+		}
+		symbols = append(symbols, sym)
+	}
+
+	// Pages (Function = 12)
+	for _, p := range app.Pages {
+		line := findDefinitionLine(lines, "page", p.Path)
+		if line < 0 {
+			continue
+		}
+		name := "page " + p.Path
+		if p.Title != "" {
+			name += " - " + p.Title
+		}
+		symbols = append(symbols, documentSymbol{
+			Name:           name,
+			Kind:           12,
+			Range:          lineRange(line),
+			SelectionRange: lineRange(line),
+		})
+	}
+
+	// Actions (Function = 12)
+	for _, a := range app.Actions {
+		line := findDefinitionLine(lines, "action", a.Path)
+		if line < 0 {
+			continue
+		}
+		symbols = append(symbols, documentSymbol{
+			Name:           "action " + a.Path + " " + a.Method,
+			Kind:           12,
+			Range:          lineRange(line),
+			SelectionRange: lineRange(line),
+		})
+	}
+
+	// Fragments (Function = 12)
+	for _, f := range app.Fragments {
+		line := findDefinitionLine(lines, "fragment", f.Path)
+		if line < 0 {
+			continue
+		}
+		symbols = append(symbols, documentSymbol{
+			Name:           "fragment " + f.Path,
+			Kind:           12,
+			Range:          lineRange(line),
+			SelectionRange: lineRange(line),
+		})
+	}
+
+	// Layouts (Module = 2)
+	for _, l := range app.Layouts {
+		line := findDefinitionLine(lines, "layout", l.Name)
+		if line < 0 {
+			continue
+		}
+		symbols = append(symbols, documentSymbol{
+			Name:           "layout " + l.Name,
+			Kind:           2,
+			Range:          lineRange(line),
+			SelectionRange: lineRange(line),
+		})
+	}
+
+	// APIs (Interface = 11)
+	for _, a := range app.APIs {
+		line := findDefinitionLine(lines, "api", a.Path)
+		if line < 0 {
+			continue
+		}
+		symbols = append(symbols, documentSymbol{
+			Name:           "api " + a.Path,
+			Kind:           11,
+			Range:          lineRange(line),
+			SelectionRange: lineRange(line),
+		})
+	}
+
+	// Streams (Event = 24)
+	for _, s := range app.Streams {
+		line := findDefinitionLine(lines, "stream", s.Path)
+		if line < 0 {
+			continue
+		}
+		symbols = append(symbols, documentSymbol{
+			Name:           "stream " + s.Path,
+			Kind:           24,
+			Range:          lineRange(line),
+			SelectionRange: lineRange(line),
+		})
+	}
+
+	// Sockets (Event = 24)
+	for _, s := range app.Sockets {
+		line := findDefinitionLine(lines, "socket", s.Path)
+		if line < 0 {
+			continue
+		}
+		symbols = append(symbols, documentSymbol{
+			Name:           "socket " + s.Path,
+			Kind:           24,
+			Range:          lineRange(line),
+			SelectionRange: lineRange(line),
+		})
+	}
+
+	// Webhooks (Event = 24)
+	for _, w := range app.Webhooks {
+		line := findDefinitionLine(lines, "webhook", w.Path)
+		if line < 0 {
+			continue
+		}
+		symbols = append(symbols, documentSymbol{
+			Name:           "webhook " + w.Path,
+			Kind:           24,
+			Range:          lineRange(line),
+			SelectionRange: lineRange(line),
+		})
+	}
+
+	// Jobs (Function = 12)
+	for _, j := range app.Jobs {
+		line := findDefinitionLine(lines, "job", j.Name)
+		if line < 0 {
+			continue
+		}
+		symbols = append(symbols, documentSymbol{
+			Name:           "job " + j.Name,
+			Kind:           12,
+			Range:          lineRange(line),
+			SelectionRange: lineRange(line),
+		})
+	}
+
+	// Schedules (Function = 12)
+	for _, s := range app.Schedules {
+		line := findDefinitionLine(lines, "schedule", s.Name)
+		if line < 0 {
+			continue
+		}
+		symbols = append(symbols, documentSymbol{
+			Name:           "schedule " + s.Name,
+			Kind:           12,
+			Range:          lineRange(line),
+			SelectionRange: lineRange(line),
+		})
+	}
+
+	return symbols
+}
+
+// findDefinitionLine scans source lines for "keyword name" pattern
+func findDefinitionLine(lines []string, keyword, name string) int {
+	prefix := keyword + " " + name
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, prefix) {
+			// Ensure it's a whole word match
+			rest := trimmed[len(prefix):]
+			if rest == "" || rest[0] == ' ' || rest[0] == '\n' || rest[0] == '\r' {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// findFieldLine scans for "name:" pattern starting from a given line
+func findFieldLine(lines []string, fieldName string, startLine int) int {
+	prefix := fieldName + ":"
+	for i := startLine; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(trimmed, prefix) {
+			return i
+		}
+		// Stop if we hit the next top-level definition
+		if len(trimmed) > 0 && trimmed[0] != ' ' && trimmed[0] != '\t' && i > startLine {
+			break
+		}
+	}
+	return -1
+}
+
+func lineRange(line int) lspRange {
+	return lspRange{
+		Start: position{Line: line, Character: 0},
+		End:   position{Line: line, Character: 999},
+	}
 }
 
 // Completion data

@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"bufio"
 	"fmt"
+	"net"
 	"net/http"
 	"runtime"
 	"time"
@@ -90,4 +92,19 @@ type loggingResponseWriter struct {
 func (lw *loggingResponseWriter) WriteHeader(code int) {
 	lw.statusCode = code
 	lw.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack proxies to the underlying ResponseWriter for WebSocket support.
+func (lw *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := lw.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, fmt.Errorf("underlying ResponseWriter does not support hijacking")
+}
+
+// Flush proxies to the underlying ResponseWriter for SSE support.
+func (lw *loggingResponseWriter) Flush() {
+	if f, ok := lw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }

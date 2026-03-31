@@ -35,10 +35,10 @@ func main() {
 		}
 	case "migrate":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: kilnx migrate <file.kilnx>")
+			fmt.Println("Usage: kilnx migrate <file.kilnx> [--dry-run|--status]")
 			os.Exit(1)
 		}
-		if err := cmdMigrate(os.Args[2]); err != nil {
+		if err := cmdMigrate(os.Args[2], os.Args[3:]); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -166,7 +166,18 @@ func cmdRun(filename string) error {
 	return runtime.WatchAndServe(filename, db, port)
 }
 
-func cmdMigrate(filename string) error {
+func cmdMigrate(filename string, flags []string) error {
+	dryRun := false
+	status := false
+	for _, f := range flags {
+		switch f {
+		case "--dry-run":
+			dryRun = true
+		case "--status":
+			status = true
+		}
+	}
+
 	app, err := loadApp(filename)
 	if err != nil {
 		return err
@@ -187,6 +198,58 @@ func cmdMigrate(filename string) error {
 	}
 	defer db.Close()
 
+	if err := db.MigrateInternal(); err != nil {
+		return err
+	}
+
+	if status {
+		// Show migration history
+		history, err := db.MigrationHistory()
+		if err != nil {
+			return err
+		}
+		if len(history) == 0 {
+			fmt.Println("No migration history.")
+		} else {
+			fmt.Printf("Migration history (%d entries):\n", len(history))
+			for _, r := range history {
+				fmt.Printf("  #%d  %s  hash=%s\n", r.ID, r.AppliedAt, r.SchemaHash)
+			}
+		}
+
+		// Show pending changes
+		pending, err := db.PlanMigration(app.Models)
+		if err != nil {
+			return err
+		}
+		fmt.Println()
+		if len(pending) == 0 {
+			fmt.Println("Database is up to date.")
+		} else {
+			fmt.Printf("Pending changes (%d):\n", len(pending))
+			for _, stmt := range pending {
+				printMigrationStmt(stmt)
+			}
+		}
+		return nil
+	}
+
+	if dryRun {
+		stmts, err := db.PlanMigration(app.Models)
+		if err != nil {
+			return err
+		}
+		if len(stmts) == 0 {
+			fmt.Println("Nothing to migrate. Database is up to date.")
+			return nil
+		}
+		fmt.Printf("Would apply %d migration(s):\n", len(stmts))
+		for _, stmt := range stmts {
+			fmt.Printf("\n%s;\n", stmt)
+		}
+		return nil
+	}
+
 	stmts, err := db.Migrate(app.Models)
 	if err != nil {
 		return err
@@ -199,23 +262,26 @@ func cmdMigrate(filename string) error {
 
 	fmt.Printf("Applied %d migration(s):\n", len(stmts))
 	for _, stmt := range stmts {
-		// Print a short summary of each statement
-		if strings.HasPrefix(stmt, "CREATE TABLE") {
-			table := strings.Fields(stmt)[2]
-			fmt.Printf("  + Created table '%s'\n", table)
-		} else if strings.HasPrefix(stmt, "ALTER TABLE") {
-			parts := strings.Fields(stmt)
-			if len(parts) > 5 {
-				fmt.Printf("  + Added column '%s' to '%s'\n", parts[5], parts[2])
-			} else {
-				fmt.Printf("  %s\n", stmt)
-			}
-		} else {
-			fmt.Printf("  %s\n", stmt)
-		}
+		printMigrationStmt(stmt)
 	}
 
 	return nil
+}
+
+func printMigrationStmt(stmt string) {
+	if strings.HasPrefix(stmt, "CREATE TABLE") {
+		table := strings.Fields(stmt)[2]
+		fmt.Printf("  + Created table '%s'\n", table)
+	} else if strings.HasPrefix(stmt, "ALTER TABLE") {
+		parts := strings.Fields(stmt)
+		if len(parts) > 5 {
+			fmt.Printf("  + Added column '%s' to '%s'\n", parts[5], parts[2])
+		} else {
+			fmt.Printf("  %s\n", stmt)
+		}
+	} else {
+		fmt.Printf("  %s\n", stmt)
+	}
 }
 
 func cmdTest(filename string) error {
@@ -328,6 +394,8 @@ func printUsage() {
 	fmt.Println("  check <file.kilnx>      Run static analysis")
 	fmt.Println("  build <file.kilnx> [-o] Compile to standalone binary")
 	fmt.Println("  migrate <file.kilnx>    Apply database migrations")
+	fmt.Println("          --dry-run       Show SQL without applying")
+	fmt.Println("          --status        Show migration history and pending changes")
 	fmt.Println("  test <file.kilnx>       Run declarative tests")
 	fmt.Println("  lsp                     Start Language Server Protocol server")
 	fmt.Println("  version                 Print version")

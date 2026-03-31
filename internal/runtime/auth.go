@@ -568,20 +568,21 @@ func (s *Server) renderLoginPage(w http.ResponseWriter, r *http.Request, errorMs
 		identityType = "text"
 	}
 
-	body := fmt.Sprintf(`%s    <form method="POST" class="kilnx-form">
+	body := fmt.Sprintf(`    <p class="kilnx-auth-sub">Sign in to your account</p>
+%s    <form method="POST" class="kilnx-form">
       <input type="hidden" name="_csrf" value="%s">
       <div class="kilnx-field">
         <label for="identity">%s</label>
-        <input type="%s" id="identity" name="identity" required>
+        <input type="%s" id="identity" name="identity" placeholder="%s" required>
       </div>
       <div class="kilnx-field">
         <label for="password">Password</label>
-        <input type="password" id="password" name="password" required>
+        <input type="password" id="password" name="password" placeholder="Enter your password" required>
       </div>
       <button type="submit" class="kilnx-btn">Log in</button>
     </form>
-    <p style="margin-top:1rem;font-size:0.85rem;color:#888">Don't have an account? <a href="/register">Register</a></p>
-`, errorHTML, csrf, identityLabel, identityType)
+    <p style="margin-top:1.25rem;font-size:0.85rem;text-align:center">Don't have an account? <a href="/register">Register</a></p>
+`, errorHTML, csrf, identityLabel, identityType, strings.ToLower(identityLabel)+"@example.com")
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(renderAuthPage("Log in", body, app.Pages)))
@@ -603,24 +604,25 @@ func (s *Server) renderRegisterPage(w http.ResponseWriter, r *http.Request, erro
 		identityType = "text"
 	}
 
-	body := fmt.Sprintf(`%s    <form method="POST" class="kilnx-form">
+	body := fmt.Sprintf(`    <p class="kilnx-auth-sub">Create your account</p>
+%s    <form method="POST" class="kilnx-form">
       <input type="hidden" name="_csrf" value="%s">
       <div class="kilnx-field">
         <label for="name">Name</label>
-        <input type="text" id="name" name="name" required>
+        <input type="text" id="name" name="name" placeholder="Your name" required>
       </div>
       <div class="kilnx-field">
         <label for="identity">%s</label>
-        <input type="%s" id="identity" name="identity" required>
+        <input type="%s" id="identity" name="identity" placeholder="%s" required>
       </div>
       <div class="kilnx-field">
         <label for="password">Password</label>
-        <input type="password" id="password" name="password" required minlength="6">
+        <input type="password" id="password" name="password" placeholder="Min 6 characters" required minlength="6">
       </div>
-      <button type="submit" class="kilnx-btn">Register</button>
+      <button type="submit" class="kilnx-btn">Create account</button>
     </form>
-    <p style="margin-top:1rem;font-size:0.85rem;color:#888">Already have an account? <a href="%s">Log in</a></p>
-`, errorHTML, csrf, identityLabel, identityType, app.Auth.LoginPath)
+    <p style="margin-top:1.25rem;font-size:0.85rem;text-align:center">Already have an account? <a href="%s">Log in</a></p>
+`, errorHTML, csrf, identityLabel, identityType, strings.ToLower(identityLabel)+"@example.com", app.Auth.LoginPath)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(renderAuthPage("Register", body, app.Pages)))
@@ -633,25 +635,42 @@ func renderAuthPage(title, body string, pages []parser.Page) string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>%s</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 470 469'><g transform='translate(0,470) scale(0.1,-0.1)' fill='%%23e64a19'><path d='M360 2850 l0-1850 111 0 111 0 240 233c132 127 256 245 274 260l34 28 0 530 0 529 1220 0 1220 0 0-522-1-523 273-267 273-267 113-1 112 0 0 1850 0 1850-1990 0-1990 0 0-1850z M1410 1877l0-473-349-347-349-347-356 0-356 0 2-352c2-194 6-352 11-350 4 1 333 2 732 2l725 0 0 288 0 288 116 215c64 117 156 288 205 379l89 164 0 503 0 503-235 0-235 0 0-473z M2120 2243c0-60-1-322-2-583l-2-475-178-374-178-374 0-213 0-214 590 0 590 0 0 214 0 214-111 233c-61 129-139 290-173 359l-61 125-5 595-5 595-232 3-233 2 0-107z M2820 1848l0-502 92-170c51-94 143-265 205-381l113-210 0-287 0-288 735 0 735 0 0 350 0 350-355 0-355 0-350 346-350 347 0 473 0 474-235 0-235 0 0-502z'/></g></svg>">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #1a1a1a; max-width: 400px; margin: 4rem auto; padding: 1rem; }
-    h2 { margin-bottom: 1.5rem; font-size: 1.5rem; }
-    .kilnx-form { display: flex; flex-direction: column; gap: 0.75rem; }
-    .kilnx-field { display: flex; flex-direction: column; gap: 0.25rem; }
-    .kilnx-field label { font-size: 0.85rem; font-weight: 500; color: #555; }
-    .kilnx-field input { padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; font-size: 0.9rem; font-family: inherit; }
-    .kilnx-field input:focus { outline: none; border-color: #4a7aba; box-shadow: 0 0 0 2px rgba(74,122,186,0.15); }
-    .kilnx-btn { padding: 0.5rem 1.25rem; background: #1a1a1a; color: white; border: none; border-radius: 4px; font-size: 0.9rem; cursor: pointer; }
-    .kilnx-btn:hover { background: #333; }
-    .kilnx-alert { padding: 0.75rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
-    .kilnx-alert-error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
-    a { color: #4a7aba; }
+    body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #e4e4e7; background: #09090b; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1rem; -webkit-font-smoothing: antialiased; }
+    .kilnx-auth-card { width: 100%%; max-width: 400px; background: #18181b; border: 1px solid #27272a; border-radius: 12px; padding: 2rem; box-shadow: 0 8px 30px rgba(0,0,0,0.4); }
+    .kilnx-auth-logo { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; }
+    .kilnx-auth-logo svg { width: 28px; height: 28px; }
+    .kilnx-auth-logo span { font-size: 1.1rem; font-weight: 700; color: #ff6e40; letter-spacing: -0.02em; }
+    h2 { margin-bottom: 0.25rem; font-size: 1.5rem; font-weight: 700; color: #fafafa; letter-spacing: -0.02em; }
+    .kilnx-auth-sub { font-size: 0.85rem; color: #71717a; margin-bottom: 1.5rem; }
+    .kilnx-form { display: flex; flex-direction: column; gap: 0.875rem; }
+    .kilnx-field { display: flex; flex-direction: column; gap: 0.3rem; }
+    .kilnx-field label { font-size: 0.8rem; font-weight: 500; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.04em; }
+    .kilnx-field input { padding: 0.625rem 0.75rem; background: #09090b; border: 1px solid #3f3f46; border-radius: 8px; font-size: 0.9rem; font-family: inherit; color: #fafafa; outline: none; transition: border-color 0.2s, box-shadow 0.2s; }
+    .kilnx-field input:hover { border-color: #52525b; }
+    .kilnx-field input:focus { border-color: #e64a19; box-shadow: 0 0 0 3px rgba(230,74,25,0.2); }
+    .kilnx-field input::placeholder { color: #52525b; }
+    .kilnx-btn { padding: 0.625rem 1.25rem; background: #e64a19; color: white; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; font-family: inherit; transition: background 0.2s, box-shadow 0.2s, transform 0.1s; margin-top: 0.25rem; }
+    .kilnx-btn:hover { background: #ff6e40; box-shadow: 0 0 20px rgba(230,74,25,0.25); }
+    .kilnx-btn:active { transform: scale(0.98); }
+    .kilnx-alert { padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.85rem; }
+    .kilnx-alert-error { background: rgba(239,68,68,0.1); color: #fca5a5; border: 1px solid rgba(239,68,68,0.2); }
+    a { color: #ff6e40; text-decoration: none; transition: color 0.2s; }
+    a:hover { color: #ffab91; }
+    p { color: #71717a; }
   </style>
 </head>
 <body>
+  <div class="kilnx-auth-card">
+  <div class="kilnx-auth-logo">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 470 469"><g transform="translate(0,470) scale(0.1,-0.1)" fill="#e64a19" stroke="none"><path d="M360 2850 l0-1850 111 0 111 0 240 233c132 127 256 245 274 260l34 28 0 530 0 529 1220 0 1220 0 0-522-1-523 273-267 273-267 113-1 112 0 0 1850 0 1850-1990 0-1990 0 0-1850z M1410 1877l0-473-349-347-349-347-356 0-356 0 2-352c2-194 6-352 11-350 4 1 333 2 732 2l725 0 0 288 0 288 116 215c64 117 156 288 205 379l89 164 0 503 0 503-235 0-235 0 0-473z M2120 2243c0-60-1-322-2-583l-2-475-178-374-178-374 0-213 0-214 590 0 590 0 0 214 0 214-111 233c-61 129-139 290-173 359l-61 125-5 595-5 595-232 3-233 2 0-107z M2820 1848l0-502 92-170c51-94 143-265 205-381l113-210 0-287 0-288 735 0 735 0 0 350 0 350-355 0-355 0-350 346-350 347 0 473 0 474-235 0-235 0 0-502z"/></g></svg>
+    <span>kilnx</span>
+  </div>
   <h2>%s</h2>
-%s</body>
+%s  </div>
+</body>
 </html>
 `, html.EscapeString(title), html.EscapeString(title), body)
 }

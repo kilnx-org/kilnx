@@ -47,7 +47,7 @@ func (db *DB) QueryRows(sql string) ([]Row, error) {
 	return results, rows.Err()
 }
 
-var paramRe = regexp.MustCompile(`:([a-zA-Z_][a-zA-Z0-9_]*)`)
+var paramRe = regexp.MustCompile(`:([a-zA-Z_][a-zA-Z0-9_.]*)`)
 
 // ExecWithParams executes a SQL statement with named parameters from a map.
 // Named params like :name, :email are replaced with positional ? params.

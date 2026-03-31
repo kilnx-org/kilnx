@@ -286,9 +286,15 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 
 	pathParams := matchPathParams(p.Path, r.URL.Path)
 
-	// Make current_user available as a query result
+	// Make current_user available as a query result and as SQL params
 	if ctx.currentUser != nil {
 		ctx.queries["current_user"] = []database.Row{ctx.currentUser.Data}
+		pathParams["current_user.id"] = ctx.currentUser.UserID
+		pathParams["current_user.identity"] = ctx.currentUser.Identity
+		pathParams["current_user.role"] = ctx.currentUser.Role
+		pathParams["current_user_id"] = ctx.currentUser.UserID
+		pathParams["current_user_identity"] = ctx.currentUser.Identity
+		pathParams["current_user_role"] = ctx.currentUser.Role
 	}
 
 	// Expose URL query parameters to templates and SQL
@@ -412,6 +418,19 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 						queries:  make(map[string][]database.Row),
 						paginate: make(map[string]PaginateInfo),
 					}
+					// Build params from path and current_user (same as page queries)
+					layoutParams := make(map[string]string)
+					for k, v := range pathParams {
+						layoutParams[k] = v
+					}
+					if ctx.currentUser != nil {
+						layoutParams["current_user.id"] = ctx.currentUser.UserID
+						layoutParams["current_user.identity"] = ctx.currentUser.Identity
+						layoutParams["current_user.role"] = ctx.currentUser.Role
+						layoutParams["current_user_id"] = ctx.currentUser.UserID
+						layoutParams["current_user_identity"] = ctx.currentUser.Identity
+						layoutParams["current_user_role"] = ctx.currentUser.Role
+					}
 					for _, q := range layout.Queries {
 						if q.SQL == "" {
 							continue
@@ -420,11 +439,28 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 						if name == "" {
 							name = "_last"
 						}
-						rows, err := s.db.QueryRows(q.SQL)
+						var rows []database.Row
+						var err error
+						if len(layoutParams) > 0 {
+							rows, err = s.db.QueryRowsWithParams(q.SQL, layoutParams)
+						} else {
+							rows, err = s.db.QueryRows(q.SQL)
+						}
 						if err == nil {
 							layoutCtx.queries[name] = rows
 						}
 					}
+				}
+				// Propagate current_user to layout context
+				if layoutCtx == nil {
+					layoutCtx = &renderContext{
+						queries:  make(map[string][]database.Row),
+						paginate: make(map[string]PaginateInfo),
+					}
+				}
+				layoutCtx.currentUser = ctx.currentUser
+				if ctx.currentUser != nil {
+					layoutCtx.queries["current_user"] = ctx.queries["current_user"]
 				}
 				return renderWithLayout(layout, title, nav, content, layoutCtx)
 			}
@@ -703,9 +739,12 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 		formData[k] = v
 	}
 
-	// Add current_user fields
+	// Add current_user fields (both dot and underscore formats)
 	session := s.getSession(r)
 	if session != nil {
+		formData["current_user.id"] = session.UserID
+		formData["current_user.identity"] = session.Identity
+		formData["current_user.role"] = session.Role
 		formData["current_user_id"] = session.UserID
 		formData["current_user_identity"] = session.Identity
 		formData["current_user_role"] = session.Role
