@@ -169,6 +169,15 @@ var builtinFilters = map[string]func(string, []string) string{
 	"strip": func(v string, _ []string) string {
 		return strings.TrimSpace(v)
 	},
+	"markdown": func(v string, _ []string) string {
+		return renderMarkdown(v)
+	},
+	"links": func(v string, _ []string) string {
+		return linkify(v)
+	},
+	"unfurl": func(v string, _ []string) string {
+		return v + unfurlURLs(v)
+	},
 }
 
 // applyFilters runs a filter chain on a value, returns (result, isRaw)
@@ -819,4 +828,59 @@ func interpolateEscaped(text string, ctx *renderContext) string {
 
 		return match
 	})
+}
+
+// renderMarkdown converts a subset of markdown to HTML.
+// Supports: **bold**, *italic*, `inline code`, ```code blocks```,
+// [links](url), ~strikethrough~, and newlines to <br>.
+func renderMarkdown(text string) string {
+	// Escape HTML first (markdown output is raw)
+	text = html.EscapeString(text)
+
+	// Code blocks: ```...```
+	codeBlockRe := regexp.MustCompile("(?s)```(\\w*)\\n?(.*?)```")
+	text = codeBlockRe.ReplaceAllStringFunc(text, func(m string) string {
+		parts := codeBlockRe.FindStringSubmatch(m)
+		code := parts[2]
+		return "<pre><code>" + code + "</code></pre>"
+	})
+
+	// Inline code: `...`
+	inlineCodeRe := regexp.MustCompile("`([^`]+)`")
+	text = inlineCodeRe.ReplaceAllString(text, "<code>$1</code>")
+
+	// Bold: **text**
+	boldRe := regexp.MustCompile(`\*\*([^*]+)\*\*`)
+	text = boldRe.ReplaceAllString(text, "<strong>$1</strong>")
+
+	// Italic: *text*
+	italicRe := regexp.MustCompile(`\*([^*]+)\*`)
+	text = italicRe.ReplaceAllString(text, "<em>$1</em>")
+
+	// Strikethrough: ~text~
+	strikeRe := regexp.MustCompile(`~([^~]+)~`)
+	text = strikeRe.ReplaceAllString(text, "<del>$1</del>")
+
+	// Links: [text](url)
+	linkRe := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	text = linkRe.ReplaceAllString(text, `<a href="$2" target="_blank" rel="noopener">$1</a>`)
+
+	// @mentions
+	mentionRe := regexp.MustCompile(`@([a-zA-Z0-9_]+)`)
+	text = mentionRe.ReplaceAllString(text, `<span style="color:#1d9bd1;background:rgba(29,155,209,0.1);padding:1px 4px;border-radius:3px;font-weight:600">@$1</span>`)
+
+	// Auto-link bare URLs
+	text = linkify(text)
+
+	// Newlines to <br>
+	text = strings.ReplaceAll(text, "\n", "<br>")
+
+	return text
+}
+
+// linkify converts bare URLs in text to clickable <a> tags.
+var urlRe = regexp.MustCompile(`(^|[\s(])(https?://[^\s<>")\]]+)`)
+
+func linkify(text string) string {
+	return urlRe.ReplaceAllString(text, `$1<a href="$2" target="_blank" rel="noopener">$2</a>`)
 }

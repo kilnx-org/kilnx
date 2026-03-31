@@ -98,6 +98,13 @@ func (s *Server) Start() error {
 		w.Write(data)
 	})
 
+	// Serve uploaded files
+	uploadsDir := "uploads"
+	if s.app.Config != nil && s.app.Config.UploadsDir != "" {
+		uploadsDir = s.app.Config.UploadsDir
+	}
+	mux.Handle("/_uploads/", http.StripPrefix("/_uploads/", http.FileServer(http.Dir(uploadsDir))))
+
 	// Health check for PaaS platforms and load balancers (GET only)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -155,6 +162,14 @@ func (s *Server) Start() error {
 			}
 			if r.URL.Path == "/register" {
 				s.handleRegister(w, r)
+				return
+			}
+			if r.URL.Path == "/forgot-password" {
+				s.handleForgotPassword(w, r)
+				return
+			}
+			if r.URL.Path == "/reset-password" {
+				s.handleResetPassword(w, r)
 				return
 			}
 		}
@@ -375,6 +390,23 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 			continue
 		}
 		ctx.queries[queryName] = rows
+	}
+
+	// Execute fetch nodes
+	for _, node := range p.Body {
+		if node.Type != parser.NodeFetch {
+			continue
+		}
+		fetchName := node.Name
+		if fetchName == "" {
+			fetchName = "_fetch"
+		}
+		rows, err := executeFetch(node, pathParams)
+		if err != nil {
+			fmt.Printf("  fetch error: %v\n", err)
+			continue
+		}
+		ctx.queries[fetchName] = rows
 	}
 
 	var body strings.Builder
@@ -976,6 +1008,20 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			tmpFile.Close()
 			formData["_generated_pdf"] = tmpFile.Name()
 			fmt.Printf("  generated pdf: %s\n", tmpFile.Name())
+
+		case parser.NodeFetch:
+			fetchName := node.Name
+			if fetchName == "" {
+				fetchName = "_fetch"
+			}
+			rows, err := executeFetch(node, formData)
+			if err != nil {
+				fmt.Printf("  fetch error in action: %v\n", err)
+			} else if len(rows) > 0 {
+				for k, v := range rows[0] {
+					formData["fetch."+k] = v
+				}
+			}
 
 		case parser.NodeRedirect:
 			path := node.Value

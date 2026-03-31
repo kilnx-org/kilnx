@@ -907,6 +907,7 @@ var bodyKeywords = []keywordInfo{
 	{"method", "HTTP method (POST, PUT, DELETE)"},
 	{"title", "Page title"},
 	{"retry", "Job retry count"},
+	{"fetch", "HTTP request (fetch name: GET/POST url)"},
 }
 
 var fieldTypes = []keywordInfo{
@@ -967,4 +968,5 @@ var keywordDocs = map[string]string{
 	"retry":        "Job retry count. Syntax: `retry N`. Failed jobs retry with exponential backoff.",
 	"translations": "Defines i18n translation strings. Use `{t.key}` in templates.",
 	"limit":        "Defines rate limiting rules per path pattern. Supports per-user and per-IP limits.",
+	"fetch":        "Makes an HTTP request to an external API. Syntax: `fetch name: GET/POST url`. Supports `header` and `body` blocks. Results available via `{name.field}` in templates.",
 }

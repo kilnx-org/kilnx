@@ -191,6 +191,7 @@ const (
 	NodeOn                   // on success/error/not found branching
 	NodeBroadcast            // broadcast to :room
 	NodeGeneratePDF          // generate pdf from template X with data Y
+	NodeFetch                // fetch data: GET https://api.example.com/endpoint
 )
 
 type Node struct {
@@ -218,6 +219,10 @@ type Node struct {
 	TemplateName  string            // for generate pdf: template name
 	DataQueryName string            // for generate pdf: data query name
 	EmailAttach   string            // for send email: attachment file path or param
+	FetchURL      string            // for fetch: the URL to request
+	FetchMethod   string            // for fetch: GET, POST, PUT, DELETE
+	FetchHeaders  map[string]string // for fetch: request headers
+	FetchBody     map[string]string // for fetch: POST body params
 }
 
 type Validation struct {
@@ -744,6 +749,10 @@ func (p *parserState) parseBody() []Node {
 				continue
 			case "broadcast":
 				node := p.parseBroadcastNode()
+				nodes = append(nodes, node)
+				continue
+			case "fetch":
+				node := p.parseFetchNode()
 				nodes = append(nodes, node)
 				continue
 			}
@@ -2763,4 +2772,127 @@ func (p *parserState) parseGeneratePDFNode() Node {
 
 	p.skipToEndOfLine()
 	return node
+}
+
+// parseFetchNode parses:
+//
+//	fetch weather: GET https://api.weather.com/v1?city=:city
+//	  header Authorization: env API_KEY
+//	  body amount: :amount
+func (p *parserState) parseFetchNode() Node {
+	node := Node{
+		Type:         NodeFetch,
+		FetchMethod:  "GET",
+		FetchHeaders: make(map[string]string),
+		FetchBody:    make(map[string]string),
+	}
+
+	fetchLine := p.current().Line
+
+	// consume "fetch"
+	p.advance()
+
+	// fetch name (optional): "fetch weather: GET ..."
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		next := p.peek()
+		if next.Type == lexer.TokenColon {
+			node.Name = p.advance().Value
+			p.advance() // consume ':'
+		} else {
+			val := strings.ToUpper(p.current().Value)
+			if val == "GET" || val == "POST" || val == "PUT" || val == "DELETE" || val == "PATCH" {
+				node.FetchMethod = val
+				p.advance()
+			}
+		}
+	}
+
+	// HTTP method (if name was consumed, method comes next)
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		val := strings.ToUpper(p.current().Value)
+		if val == "GET" || val == "POST" || val == "PUT" || val == "DELETE" || val == "PATCH" {
+			node.FetchMethod = val
+			p.advance()
+		}
+	}
+
+	// URL - extract from raw source line to preserve special chars
+	if fetchLine >= 1 && fetchLine <= len(p.lines) {
+		line := p.lines[fetchLine-1]
+		methods := []string{" GET ", " POST ", " PUT ", " DELETE ", " PATCH "}
+		for _, m := range methods {
+			if idx := strings.Index(strings.ToUpper(line), m); idx >= 0 {
+				node.FetchURL = strings.TrimSpace(line[idx+len(m):])
+				break
+			}
+		}
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	// Parse indented body: header and body declarations
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+
+			tok := p.current()
+
+			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "header" {
+				headerLine := tok.Line
+				p.advance()
+				if headerLine >= 1 && headerLine <= len(p.lines) {
+					line := strings.TrimSpace(p.lines[headerLine-1])
+					rest := strings.TrimPrefix(line, "header ")
+					if colonIdx := strings.Index(rest, ":"); colonIdx > 0 {
+						key := strings.TrimSpace(rest[:colonIdx])
+						val := strings.TrimSpace(rest[colonIdx+1:])
+						if strings.HasPrefix(val, "env ") {
+							node.FetchHeaders[key] = "env:" + strings.TrimSpace(strings.TrimPrefix(val, "env "))
+						} else {
+							node.FetchHeaders[key] = strings.Trim(val, "\"'")
+						}
+					}
+				}
+				p.skipToEndOfLine()
+				continue
+			}
+
+			if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "body" {
+				bodyLine := tok.Line
+				p.advance()
+				if bodyLine >= 1 && bodyLine <= len(p.lines) {
+					line := strings.TrimSpace(p.lines[bodyLine-1])
+					rest := strings.TrimPrefix(line, "body ")
+					if colonIdx := strings.Index(rest, ":"); colonIdx > 0 {
+						key := strings.TrimSpace(rest[:colonIdx])
+						val := strings.TrimSpace(rest[colonIdx+1:])
+						node.FetchBody[key] = strings.Trim(val, "\"'")
+					}
+				}
+				p.skipToEndOfLine()
+				continue
+			}
+
+			p.advance()
+		}
+	}
+
+	return node
+}
+
+// peek returns the next token without advancing
+func (p *parserState) peek() lexer.Token {
+	if p.pos+1 < len(p.tokens) {
+		return p.tokens[p.pos+1]
+	}
+	return lexer.Token{Type: lexer.TokenEOF}
 }
