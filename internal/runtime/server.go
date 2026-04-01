@@ -105,6 +105,20 @@ func (s *Server) Start() error {
 	}
 	mux.Handle("/_uploads/", http.StripPrefix("/_uploads/", http.FileServer(http.Dir(uploadsDir))))
 
+	// Serve static files directory
+	staticDir := "static"
+	if s.app.Config != nil && s.app.Config.StaticDir != "" {
+		staticDir = s.app.Config.StaticDir
+	}
+	if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
+		fileServer := http.FileServer(http.Dir(staticDir))
+		mux.Handle("/_static/", http.StripPrefix("/_static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			fileServer.ServeHTTP(w, r)
+		})))
+		fmt.Printf("Serving static files from %s at /_static/\n", staticDir)
+	}
+
 	// Health check for PaaS platforms and load balancers (GET only)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

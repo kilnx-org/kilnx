@@ -47,6 +47,7 @@ type AppConfig struct {
 	Database        string   // env var or default path
 	Port            int      // server port (default 8080)
 	Secret          string   // env var for session secret
+	StaticDir       string   // static files directory (served at /_static/)
 	UploadsDir      string   // upload directory
 	UploadsMaxMB    int      // max upload size in MB
 	DefaultLanguage string   // default i18n language
@@ -2536,6 +2537,8 @@ func (p *parserState) parseConfig() AppConfig {
 					fmt.Fprintf(os.Stderr, "kilnx: config secret is required but not set\n")
 					os.Exit(1)
 				}
+			case "static":
+				cfg.StaticDir = strings.Trim(rawVal, "\"' ")
 			case "uploads":
 				parts := strings.Fields(rawVal)
 				if len(parts) > 0 {
