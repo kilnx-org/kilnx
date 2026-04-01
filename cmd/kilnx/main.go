@@ -352,14 +352,81 @@ func cmdTest(filename string) error {
 }
 
 func loadApp(filename string) (*parser.App, error) {
-	raw, err := os.ReadFile(filename)
+	absEntry, err := filepath.Abs(filename)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", filename, err)
+		return nil, fmt.Errorf("resolving path %s: %w", filename, err)
+	}
+	projectRoot := filepath.Dir(absEntry)
+	source, err := resolveImports(absEntry, projectRoot, nil, 0)
+	if err != nil {
+		return nil, err
 	}
 
-	source := lexer.StripComments(string(raw))
+	source = lexer.StripComments(source)
 	tokens := lexer.Tokenize(source)
 	return parser.Parse(tokens, source)
+}
+
+const maxImportDepth = 64
+
+// resolveImports reads a .kilnx file and recursively resolves import statements.
+// Import syntax: import "path/to/file.kilnx"
+// Paths are relative to the importing file's directory.
+// Security: imported files must have .kilnx extension and stay within projectRoot.
+// Circular imports are detected via the seen map. Depth is limited to 64 levels.
+func resolveImports(absPath, projectRoot string, seen map[string]bool, depth int) (string, error) {
+	if depth > maxImportDepth {
+		return "", fmt.Errorf("import depth exceeds %d levels", maxImportDepth)
+	}
+
+	if seen == nil {
+		seen = make(map[string]bool)
+	}
+	if seen[absPath] {
+		return "", fmt.Errorf("circular import detected: %s", absPath)
+	}
+	seen[absPath] = true
+
+	raw, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", absPath, err)
+	}
+
+	baseDir := filepath.Dir(absPath)
+	var result strings.Builder
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "import ") {
+			importPath := strings.TrimPrefix(trimmed, "import ")
+			importPath = strings.Trim(importPath, "\"' ")
+			if importPath == "" {
+				continue
+			}
+			// Enforce .kilnx extension
+			if !strings.HasSuffix(importPath, ".kilnx") {
+				return "", fmt.Errorf("import must be a .kilnx file: %s", importPath)
+			}
+			resolved, err := filepath.Abs(filepath.Join(baseDir, importPath))
+			if err != nil {
+				return "", fmt.Errorf("resolving import path %s: %w", importPath, err)
+			}
+			// Prevent path traversal outside project root
+			if !strings.HasPrefix(resolved, projectRoot+string(filepath.Separator)) && resolved != projectRoot {
+				return "", fmt.Errorf("import escapes project directory: %s", importPath)
+			}
+			imported, err := resolveImports(resolved, projectRoot, seen, depth+1)
+			if err != nil {
+				return "", fmt.Errorf("importing %s: %w", importPath, err)
+			}
+			result.WriteString(imported)
+			result.WriteString("\n")
+		} else {
+			result.WriteString(line)
+			result.WriteString("\n")
+		}
+	}
+
+	return result.String(), nil
 }
 
 func dbPathFor(kilnxFile string) string {
