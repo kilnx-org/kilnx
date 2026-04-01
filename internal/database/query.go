@@ -103,7 +103,11 @@ func (db *DB) queryRowsInternal(query string, args ...interface{}) ([]Row, error
 		}
 		row := make(Row)
 		for i, col := range columns {
-			row[col] = fmt.Sprintf("%v", values[i])
+			if values[i] == nil {
+				row[col] = ""
+			} else {
+				row[col] = fmt.Sprintf("%v", values[i])
+			}
 		}
 		results = append(results, row)
 	}
@@ -146,7 +150,11 @@ func QueryRowsWithParamsTx(tx *sql.Tx, sqlStr string, params map[string]string) 
 		}
 		row := make(Row)
 		for i, col := range columns {
-			row[col] = fmt.Sprintf("%v", values[i])
+			if values[i] == nil {
+				row[col] = ""
+			} else {
+				row[col] = fmt.Sprintf("%v", values[i])
+			}
 		}
 		results = append(results, row)
 	}

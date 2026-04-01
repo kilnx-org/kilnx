@@ -288,8 +288,8 @@ func renderHTML(content string, ctx *renderContext) string {
 	rawPlaceholders := make(map[string]string)
 	rawCounter := 0
 
-	// Process pipe expressions, but skip those inside {{each}} blocks
-	// (they are handled per-row in processRawInRow during Step 3)
+	// Process all pipe expressions (including raw and other filters)
+	// Skip expressions inside {{each}}...{{end}} blocks (they're handled in Step 3)
 	insideEach := isInsideEachBlock(result)
 	result = filterRe.ReplaceAllStringFunc(result, func(match string) string {
 		parts := filterRe.FindStringSubmatch(match)
@@ -298,7 +298,7 @@ func renderHTML(content string, ctx *renderContext) string {
 		}
 		expr := parts[1]
 		chain := strings.TrimSpace(parts[2])
-		// Defer to processRawInRow if inside {{each}}...{{end}}
+		// Skip if this expression is inside an {{each}} block - defer to processRawInRow
 		matchIdx := strings.Index(result, match)
 		if matchIdx >= 0 && insideEach(matchIdx) {
 			return match
@@ -345,9 +345,9 @@ func generateNonce() string {
 	return hex.EncodeToString(b)
 }
 
-// isInsideEachBlock returns a closure that checks if a byte position in the text
-// falls inside a {{each}}...{{end}} block. Used to skip filter processing in Step 2
-// for expressions that should be resolved per-row in Step 3.
+// isInsideEachBlock returns a closure that checks if a position in the text
+// falls inside a {{each}}...{{end}} block. Used to defer filter processing
+// to the per-row iteration in expandEachBlocks.
 func isInsideEachBlock(text string) func(int) bool {
 	type span struct{ start, end int }
 	var spans []span
