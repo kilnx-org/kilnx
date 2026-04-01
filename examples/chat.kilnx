@@ -28,6 +28,7 @@ model message
   channel: channel required
   reply_to: int default 0
   pinned: bool default false
+  attachment: text
   edited_at: text
   created: timestamp auto
 
@@ -121,20 +122,92 @@ layout slack
 page / title "Kilnx Chat"
   html
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>.kilnx-topbar { display: none !important; }</style>
-    <div class="min-h-screen bg-[#1a1d21] flex items-center justify-center px-4">
-      <div class="text-center max-w-md">
-        <div class="flex items-center justify-center gap-3 mb-6">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 470 469" class="w-10 h-10"><g transform="translate(0,470) scale(0.1,-0.1)" fill="#e64a19" stroke="none"><path d="M360 2850 l0-1850 111 0 111 0 240 233c132 127 256 245 274 260l34 28 0 530 0 529 1220 0 1220 0 0-522-1-523 273-267 273-267 113-1 112 0 0 1850 0 1850-1990 0-1990 0 0-1850z M1410 1877l0-473-349-347-349-347-356 0-356 0 2-352c2-194 6-352 11-350 4 1 333 2 732 2l725 0 0 288 0 288 116 215c64 117 156 288 205 379l89 164 0 503 0 503-235 0-235 0 0-473z M2120 2243c0-60-1-322-2-583l-2-475-178-374-178-374 0-213 0-214 590 0 590 0 0 214 0 214-111 233c-61 129-139 290-173 359l-61 125-5 595-5 595-232 3-233 2 0-107z M2820 1848l0-502 92-170c51-94 143-265 205-381l113-210 0-287 0-288 735 0 735 0 0 350 0 350-355 0-355 0-350 346-350 347 0 473 0 474-235 0-235 0 0-502z"/></g></svg>
-          <h1 class="text-3xl font-bold text-white tracking-tight">Kilnx Chat</h1>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>.kilnx-topbar{display:none!important}body{font-family:'Inter',system-ui,sans-serif}@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}.anim{animation:fadeUp .6s ease both}.anim-d1{animation-delay:.1s}.anim-d2{animation-delay:.2s}.anim-d3{animation-delay:.3s}.anim-d4{animation-delay:.4s}.glow{position:absolute;width:600px;height:600px;border-radius:50%;filter:blur(120px);opacity:.15;pointer-events:none}</style>
+    <div class="min-h-screen bg-[#0c0c0e] text-[#d1d2d3] overflow-hidden">
+      <nav class="flex items-center justify-between px-6 sm:px-10 py-4 relative z-10">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-[#e64a19] flex items-center justify-center"><span class="text-white font-black text-sm">K</span></div>
+          <span class="font-bold text-white text-lg tracking-tight">Kilnx Chat</span>
         </div>
-        <p class="text-[#9a9b9e] mb-8">A real-time chat app built entirely with Kilnx. Channels, threads, editing, search. Zero JavaScript frameworks.</p>
+        <div class="flex items-center gap-3">
+          <a href="/login" class="text-sm text-[#9a9b9e] hover:text-white transition font-medium px-4 py-2">Sign in</a>
+          <a href="/register" class="text-sm bg-white text-[#0c0c0e] font-semibold px-4 py-2 rounded-lg hover:bg-[#e4e4e7] transition">Get started free</a>
+        </div>
+      </nav>
+      <section class="relative px-6 sm:px-10 pt-16 sm:pt-24 pb-20 text-center max-w-4xl mx-auto">
+        <div class="glow bg-[#e64a19] -top-40 left-1/2 -translate-x-1/2"></div>
+        <div class="anim inline-flex items-center gap-2 px-3 py-1 rounded-full border border-[#ffffff15] bg-[#ffffff08] text-xs text-[#9a9b9e] mb-6"><span class="w-1.5 h-1.5 rounded-full bg-[#2bac76] animate-pulse"></span> Now in beta</div>
+        <h1 class="anim anim-d1 text-4xl sm:text-6xl font-extrabold text-white leading-[1.1] tracking-tight mb-6">Team messaging<br><span class="bg-gradient-to-r from-[#e64a19] to-[#ff6e40] bg-clip-text text-transparent">without the bloat</span></h1>
+        <p class="anim anim-d2 text-lg sm:text-xl text-[#9a9b9e] max-w-xl mx-auto mb-10 leading-relaxed">Channels, threads, DMs, reactions, file sharing, markdown, and real-time typing indicators. Built with zero JavaScript frameworks.</p>
+        <div class="anim anim-d3 flex flex-col sm:flex-row gap-3 justify-center mb-16">
+          <a href="/register" class="px-8 py-3.5 bg-[#e64a19] hover:bg-[#ff6e40] text-white font-bold rounded-lg transition-all hover:shadow-xl hover:shadow-[#e64a19]/20 text-sm">Start chatting</a>
+          <a href="https://kilnx.dev" class="px-8 py-3.5 bg-[#ffffff08] border border-[#ffffff15] text-[#d1d2d3] hover:text-white hover:border-[#ffffff30] font-semibold rounded-lg transition text-sm">Learn about Kilnx</a>
+        </div>
+        <div class="anim anim-d4 relative mx-auto max-w-3xl rounded-xl border border-[#ffffff10] bg-[#111113] shadow-2xl shadow-black/50 overflow-hidden">
+          <div class="flex items-center gap-1.5 px-4 py-2.5 border-b border-[#ffffff08]"><span class="w-2.5 h-2.5 rounded-full bg-[#ff5f57]"></span><span class="w-2.5 h-2.5 rounded-full bg-[#ffbd2e]"></span><span class="w-2.5 h-2.5 rounded-full bg-[#28c840]"></span><span class="ml-3 text-xs text-[#616061]">kilnx-chat</span></div>
+          <div class="flex h-[280px] sm:h-[340px]">
+            <div class="w-[180px] bg-[#19171d] border-r border-[#ffffff08] p-3 hidden sm:block">
+              <p class="text-[10px] text-[#9a9b9e] uppercase tracking-wider font-semibold mb-2">Channels</p>
+              <div class="space-y-0.5">
+                <div class="flex items-center gap-1.5 px-2 py-1 rounded bg-[#1164a3] text-white text-xs"><span class="text-[#9a9b9e] text-[10px]">#</span> general</div>
+                <div class="flex items-center gap-1.5 px-2 py-1 rounded text-[#bcbdc0] text-xs"><span class="text-[#9a9b9e] text-[10px]">#</span> engineering</div>
+                <div class="flex items-center gap-1.5 px-2 py-1 rounded text-[#bcbdc0] text-xs"><span class="text-[#9a9b9e] text-[10px]">#</span> design</div>
+              </div>
+              <p class="text-[10px] text-[#9a9b9e] uppercase tracking-wider font-semibold mt-4 mb-2">DMs</p>
+              <div class="space-y-0.5">
+                <div class="flex items-center gap-1.5 px-2 py-1 text-[#bcbdc0] text-xs"><span class="w-1.5 h-1.5 rounded-full bg-[#2bac76]"></span> Sarah</div>
+                <div class="flex items-center gap-1.5 px-2 py-1 text-[#bcbdc0] text-xs"><span class="w-1.5 h-1.5 rounded-full bg-[#616061]"></span> Alex</div>
+              </div>
+            </div>
+            <div class="flex-1 flex flex-col">
+              <div class="px-4 py-2 border-b border-[#ffffff08] flex items-center gap-2"><span class="text-[#e8912d] font-bold">#</span><span class="text-white text-sm font-semibold">general</span></div>
+              <div class="flex-1 px-4 py-3 space-y-3 overflow-hidden">
+                <div class="flex gap-2.5"><div class="w-7 h-7 rounded bg-[#6366f1] flex items-center justify-center text-white text-[9px] font-bold shrink-0">S</div><div><div class="flex items-baseline gap-1.5"><span class="text-xs font-bold text-white">Sarah</span><span class="text-[9px] text-[#616061]">2m ago</span></div><p class="text-xs text-[#d1d2d3]">Just pushed the new auth flow. Can someone review? <span style="color:#1d9bd1;background:rgba(29,155,209,0.1);padding:1px 3px;border-radius:2px;font-weight:600;font-size:10px">@Alex</span></p><div class="flex gap-1 mt-1"><span class="text-[10px] px-1.5 py-0.5 rounded border border-[#ffffff10] bg-[#ffffff05]">👍 2</span><span class="text-[10px] px-1.5 py-0.5 rounded border border-[#ffffff10] bg-[#ffffff05]">🔥 1</span></div></div></div>
+                <div class="flex gap-2.5"><div class="w-7 h-7 rounded bg-[#e64a19] flex items-center justify-center text-white text-[9px] font-bold shrink-0">A</div><div><div class="flex items-baseline gap-1.5"><span class="text-xs font-bold text-white">Alex</span><span class="text-[9px] text-[#616061]">1m ago</span></div><p class="text-xs text-[#d1d2d3]">Looking at it now. The <code style="background:#222529;padding:1px 4px;border-radius:3px;font-size:10px;color:#ff6e40">bcrypt</code> integration looks solid.</p><div class="mt-1"><a href="#" class="text-[9px] text-[#1d9bd1] font-semibold">2 replies</a></div></div></div>
+                <div class="flex gap-2.5"><div class="w-7 h-7 rounded bg-[#2bac76] flex items-center justify-center text-white text-[9px] font-bold shrink-0">M</div><div><div class="flex items-baseline gap-1.5"><span class="text-xs font-bold text-white">Maria</span><span class="text-[9px] text-[#616061]">just now</span></div><p class="text-xs text-[#d1d2d3]">Ship it! 🚀</p></div></div>
+              </div>
+              <div class="px-3 py-2 border-t border-[#ffffff08]"><div class="text-[9px] text-[#9a9b9e] mb-1">Alex is typing...</div><div class="bg-[#222529] border border-[#565856] rounded px-3 py-1.5 text-[11px] text-[#616061]">Message #general</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="px-6 sm:px-10 py-20 max-w-5xl mx-auto">
+        <h2 class="text-2xl sm:text-3xl font-bold text-white text-center mb-4 tracking-tight">Everything your team needs</h2>
+        <p class="text-[#9a9b9e] text-center mb-14 max-w-lg mx-auto">All the features you expect from a modern messenger, declared in a single file.</p>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div class="p-5 rounded-xl border border-[#ffffff08] bg-[#111113] hover:border-[#ffffff15] transition"><div class="text-2xl mb-3">💬</div><h3 class="font-semibold text-white text-sm mb-1">Channels</h3><p class="text-xs text-[#9a9b9e] leading-relaxed">Organize conversations by topic. Create, favorite, pin, and search across all channels.</p></div>
+          <div class="p-5 rounded-xl border border-[#ffffff08] bg-[#111113] hover:border-[#ffffff15] transition"><div class="text-2xl mb-3">🧵</div><h3 class="font-semibold text-white text-sm mb-1">Threads</h3><p class="text-xs text-[#9a9b9e] leading-relaxed">Keep discussions organized. Reply to any message without cluttering the main channel.</p></div>
+          <div class="p-5 rounded-xl border border-[#ffffff08] bg-[#111113] hover:border-[#ffffff15] transition"><div class="text-2xl mb-3">✏️</div><h3 class="font-semibold text-white text-sm mb-1">Rich text</h3><p class="text-xs text-[#9a9b9e] leading-relaxed">Markdown formatting with toolbar. Bold, italic, code, links, and @mentions.</p></div>
+          <div class="p-5 rounded-xl border border-[#ffffff08] bg-[#111113] hover:border-[#ffffff15] transition"><div class="text-2xl mb-3">📎</div><h3 class="font-semibold text-white text-sm mb-1">File sharing</h3><p class="text-xs text-[#9a9b9e] leading-relaxed">Attach documents, images, and files to any message. Drag and drop or click to upload.</p></div>
+          <div class="p-5 rounded-xl border border-[#ffffff08] bg-[#111113] hover:border-[#ffffff15] transition"><div class="text-2xl mb-3">⚡</div><h3 class="font-semibold text-white text-sm mb-1">Real-time</h3><p class="text-xs text-[#9a9b9e] leading-relaxed">See who's typing in real-time via WebSocket. Messages update automatically.</p></div>
+          <div class="p-5 rounded-xl border border-[#ffffff08] bg-[#111113] hover:border-[#ffffff15] transition"><div class="text-2xl mb-3">🔒</div><h3 class="font-semibold text-white text-sm mb-1">Secure by default</h3><p class="text-xs text-[#9a9b9e] leading-relaxed">CSRF protection, bcrypt passwords, rate limiting, signed sessions. No configuration needed.</p></div>
+        </div>
+      </section>
+      <section class="px-6 sm:px-10 py-16 text-center border-t border-[#ffffff08]">
+        <p class="text-xs text-[#616061] uppercase tracking-widest font-semibold mb-3">How it's built</p>
+        <h2 class="text-2xl sm:text-3xl font-bold text-white mb-4 tracking-tight">One file. Zero dependencies.</h2>
+        <p class="text-[#9a9b9e] max-w-md mx-auto mb-8">This entire application is a single <code class="bg-[#222529] px-2 py-0.5 rounded text-[#ff6e40] text-sm">.kilnx</code> file. No package.json, no node_modules, no webpack. Just declare what you want.</p>
+        <div class="inline-flex items-center gap-4 px-6 py-3 rounded-xl border border-[#ffffff08] bg-[#111113]">
+          <div class="text-center"><div class="text-2xl font-bold text-white">28</div><div class="text-[10px] text-[#616061] uppercase">keywords</div></div>
+          <div class="w-px h-8 bg-[#ffffff10]"></div>
+          <div class="text-center"><div class="text-2xl font-bold text-white">~700</div><div class="text-[10px] text-[#616061] uppercase">lines</div></div>
+          <div class="w-px h-8 bg-[#ffffff10]"></div>
+          <div class="text-center"><div class="text-2xl font-bold text-white">0</div><div class="text-[10px] text-[#616061] uppercase">npm packages</div></div>
+        </div>
+      </section>
+      <section class="px-6 sm:px-10 py-20 text-center">
+        <h2 class="text-2xl sm:text-3xl font-bold text-white mb-4 tracking-tight">Ready to try?</h2>
+        <p class="text-[#9a9b9e] mb-8 max-w-sm mx-auto">Create an account and start a conversation in seconds.</p>
         <div class="flex flex-col sm:flex-row gap-3 justify-center">
-          <a href="/login" class="px-6 py-3 bg-[#007a5a] hover:bg-[#148567] text-white font-bold rounded-md transition text-sm">Sign in</a>
-          <a href="/register" class="px-6 py-3 bg-transparent border border-[#565856] text-[#d1d2d3] hover:text-white hover:border-[#9a9b9e] font-bold rounded-md transition text-sm">Create account</a>
+          <a href="/register" class="px-8 py-3.5 bg-[#e64a19] hover:bg-[#ff6e40] text-white font-bold rounded-lg transition-all hover:shadow-xl hover:shadow-[#e64a19]/20 text-sm">Get started free</a>
+          <a href="/login" class="px-8 py-3.5 bg-[#ffffff08] border border-[#ffffff15] text-[#d1d2d3] hover:text-white hover:border-[#ffffff30] font-semibold rounded-lg transition text-sm">Sign in</a>
         </div>
-        <p class="text-[#616061] text-xs mt-8">Built with <a href="https://kilnx.dev" class="text-[#e64a19] hover:underline">Kilnx</a> in ~400 lines of declarative code.</p>
-      </div>
+      </section>
+      <footer class="px-6 sm:px-10 py-8 border-t border-[#ffffff08] flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div class="flex items-center gap-2"><div class="w-6 h-6 rounded bg-[#e64a19] flex items-center justify-center"><span class="text-white font-black text-[10px]">K</span></div><span class="text-sm text-[#616061]">Kilnx Chat</span></div>
+        <p class="text-xs text-[#616061]">Built with <a href="https://kilnx.dev" class="text-[#e64a19] hover:text-[#ff6e40] transition">Kilnx</a>. The backend language for the htmx era.</p>
+      </footer>
     </div>
 
 # Home (after login, redirects to first channel or create)
@@ -156,87 +229,76 @@ page /home requires auth layout slack title "Home"
 
 # Channel view (main chat)
 page /channel/:id requires auth layout slack
-  query ch: SELECT c.id, c.name, c.description, c.created, u.name as creator
-            FROM channel c JOIN user u ON u.id = c.creator_id
-            WHERE c.id = :id
-  query messages: SELECT m.id, m.body, m.author_id, m.reply_to, m.edited_at, m.created,
-                  u.name as author, u.avatar_color,
-                  (SELECT COUNT(*) FROM message r WHERE r.reply_to = m.id) as reply_count
-                  FROM message m
-                  JOIN user u ON u.id = m.author_id
-                  WHERE m.channel_id = :id AND m.reply_to = 0
-                  ORDER BY m.created ASC
-                  paginate 100
+  query ch: SELECT c.id, c.name, c.description, c.created, u.name as creator FROM channel c JOIN user u ON u.id = c.creator_id WHERE c.id = :id
+  query messages: SELECT m.id, m.body, m.author_id, m.reply_to, m.edited_at, m.pinned, m.attachment, m.created, u.name as author, u.avatar_color, (SELECT COUNT(*) FROM message r WHERE r.reply_to = m.id) as reply_count, (SELECT GROUP_CONCAT(emoji || ':' || cnt, ',') FROM (SELECT emoji, COUNT(*) as cnt FROM reaction WHERE message_id = m.id GROUP BY emoji)) as reactions FROM message m JOIN user u ON u.id = m.author_id WHERE m.channel_id = :id AND m.reply_to = 0 ORDER BY m.created ASC paginate 100
   html
-    <!-- Channel header -->
-    <div class="h-[49px] flex items-center justify-between px-4 border-b border-[#ffffff0d] shrink-0">
-      <div class="flex items-center gap-2 min-w-0">
-        <span class="text-[#e8912d] font-bold text-lg">#</span>
-        <h1 class="font-bold text-white text-[15px] truncate">{ch.name}</h1>
-        {{if ch.description}}
-        <span class="text-[#9a9b9e] text-xs truncate hidden sm:inline ml-2">{ch.description|truncate:60}</span>
+    <div class="flex flex-col flex-1 overflow-hidden">
+      <div class="h-[49px] flex items-center justify-between px-4 border-b border-[#ffffff0d] shrink-0">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="text-[#e8912d] font-bold text-lg">#</span>
+          <h1 class="font-bold text-white text-[15px] truncate">{ch.name}</h1>
+          {{if ch.description}}<span class="text-[#9a9b9e] text-xs truncate hidden sm:inline ml-2">{ch.description|truncate:60}</span>{{end}}
+        </div>
+        <div class="flex items-center gap-1">
+          <form method="POST" action="/channels/{ch.id}/favorite" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><button type="submit" class="p-1.5 text-[#9a9b9e] hover:text-[#e8912d] transition rounded" title="Favorite">&#9734;</button></form>
+          <a href="/search" class="p-1.5 text-[#9a9b9e] hover:text-white transition rounded" title="Search"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg></a>
+          <form method="POST" action="/channels/{ch.id}/delete" data-confirm="Delete #{ch.name} and all messages?" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><button type="submit" class="p-1.5 text-[#9a9b9e] hover:text-red-400 transition rounded" title="Delete"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></form>
+        </div>
+      </div>
+      <div id="chat-messages" class="flex-1 overflow-y-auto px-5 py-4" hx-get="/channel/{ch.id}/messages" hx-trigger="every 3s" hx-swap="innerHTML transition:false">
+        {{each messages}}
+        <div class="msg-row flex gap-3 py-1.5 px-2 -mx-2 rounded-lg relative" id="msg-{id}" data-date="{created|date:\"2006-01-02\"}">
+          <div class="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-white text-xs font-bold mt-0.5" style="background:{avatar_color}">{author|truncate:1}</div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-baseline gap-2">
+              {{if pinned}}<span class="text-[#e8912d] text-[11px]" title="Pinned">📌</span>{{end}}
+              <span class="text-[15px] font-bold text-white">{author}</span>
+              <time class="text-[11px] text-[#616061]">{created|timeago}</time>
+              {{if edited_at}}<span class="text-[11px] text-[#616061]">(edited)</span>{{end}}
+            </div>
+            <p class="text-[15px] text-[#d1d2d3] leading-[1.46] break-words">{body|markdown|unfurl|raw}</p>
+            {{if attachment}}<div class="mt-2"><a href="{attachment}" target="_blank" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#ffffff08] border border-[#ffffff15] rounded-lg text-xs text-[#1d9bd1] hover:bg-[#ffffff10] transition"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg> Attachment</a></div>{{end}}
+            {{if reactions}}<div class="reactions mt-1">{reactions|raw}</div>{{end}}
+            {{if reply_count}}<a href="/channel/{ch.id}/thread/{id}" class="inline-flex items-center gap-1.5 mt-1 text-[#1d9bd1] text-xs font-semibold hover:underline"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg> {reply_count} replies</a>{{end}}
+          </div>
+          <div class="msg-actions absolute -top-3 right-2 flex items-center bg-[#1a1d21] border border-[#ffffff1a] rounded-lg shadow-lg overflow-hidden">
+            <form method="POST" action="/messages/{id}/react" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><input type="hidden" name="channel_id" value="{ch.id}"><button type="submit" name="emoji" value="👍" class="p-1.5 hover:bg-[#ffffff0d] transition text-sm">👍</button></form>
+            <form method="POST" action="/messages/{id}/react" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><input type="hidden" name="channel_id" value="{ch.id}"><button type="submit" name="emoji" value="🔥" class="p-1.5 hover:bg-[#ffffff0d] transition text-sm">🔥</button></form>
+            <form method="POST" action="/messages/{id}/react" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><input type="hidden" name="channel_id" value="{ch.id}"><button type="submit" name="emoji" value="❤️" class="p-1.5 hover:bg-[#ffffff0d] transition text-sm">❤️</button></form>
+            <a href="/channel/{ch.id}/edit/{id}" class="p-1.5 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] transition" title="Edit"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></a>
+            <a href="/channel/{ch.id}/thread/{id}" class="p-1.5 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] transition" title="Reply"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg></a>
+            <form method="POST" action="/messages/{id}/pin" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><input type="hidden" name="channel_id" value="{ch.id}"><button type="submit" class="p-1.5 text-[#9a9b9e] hover:text-[#e8912d] hover:bg-[#ffffff0d] transition">📌</button></form>
+            <form method="POST" action="/messages/{id}/delete" data-confirm="Delete?" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><button type="submit" class="p-1.5 text-[#9a9b9e] hover:text-red-400 hover:bg-[#ffffff0d] transition"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></form>
+          </div>
+        </div>
+        {{else}}
+        <div class="py-20 text-center"><div class="text-4xl mb-3">👋</div><h2 class="text-xl font-bold text-white mb-1">Welcome to #{ch.name}</h2><p class="text-[#9a9b9e] text-sm">This is the very beginning of the <strong class="text-white">#{ch.name}</strong> channel.</p></div>
         {{end}}
       </div>
-      <div class="flex items-center gap-1">
-        <form method="POST" action="/channels/{ch.id}/favorite" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><button type="submit" class="p-1.5 text-[#9a9b9e] hover:text-[#e8912d] transition rounded" title="Favorite">&#9734;</button></form>
-        <a href="/search" class="p-1.5 text-[#9a9b9e] hover:text-white transition rounded" title="Search">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-        </a>
-        <form method="POST" action="/channels/{ch.id}/delete" data-confirm="Delete #{ch.name} and all messages?" class="inline">
+      <div id="typing-indicator" class="px-5 h-6 text-xs text-[#9a9b9e] shrink-0"></div>
+      <div class="px-5 pb-4 shrink-0">
+        <form method="POST" action="/channel/{ch.id}/send" enctype="multipart/form-data" class="bg-[#222529] border border-[#565856] rounded-lg focus-within:border-[#1d9bd1] transition overflow-hidden">
           <input type="hidden" name="_csrf" value="{csrf}">
-          <button type="submit" class="p-1.5 text-[#9a9b9e] hover:text-red-400 transition rounded" title="Delete channel">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-          </button>
+          <div class="flex items-center gap-1 px-3 py-1.5 border-b border-[#ffffff0d]">
+            <button type="button" onclick="wrapText('**','**')" class="p-1 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] rounded transition text-xs font-bold" title="Bold">B</button>
+            <button type="button" onclick="wrapText('*','*')" class="p-1 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] rounded transition text-xs italic" title="Italic">I</button>
+            <button type="button" onclick="wrapText('~','~')" class="p-1 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] rounded transition text-xs line-through" title="Strikethrough">S</button>
+            <button type="button" onclick="wrapText('`','`')" class="p-1 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] rounded transition text-xs font-mono" title="Code">&lt;/&gt;</button>
+            <button type="button" onclick="wrapText('[','](url)')" class="p-1 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] rounded transition" title="Link"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg></button>
+            <div class="flex-1"></div>
+            <label class="p-1 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] rounded transition cursor-pointer" title="Attach file"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg><input type="file" name="attachment" class="hidden" onchange="this.closest('label').querySelector('svg').style.color='#1d9bd1'"></label>
+          </div>
+          <div class="flex items-center">
+            <input type="text" id="msg-input" name="body" placeholder="Message #{ch.name}" required autofocus class="flex-1 px-4 py-2.5 bg-transparent text-[15px] text-[#d1d2d3] placeholder-[#616061] outline-none" oninput="sendTyping()" autocomplete="off">
+            <button type="submit" class="p-2 mr-2 text-[#9a9b9e] hover:text-[#1d9bd1] transition rounded"><svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
+          </div>
         </form>
       </div>
     </div>
-    <!-- Messages -->
-    <div id="chat-messages" class="flex-1 overflow-y-auto px-5 py-4" hx-get="/channel/{ch.id}/messages" hx-trigger="every 3s" hx-swap="innerHTML transition:false">
-      {{each messages}}
-      <div class="msg-row flex gap-3 py-1.5 px-2 -mx-2 rounded-lg relative" id="msg-{id}">
-        <div class="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-white text-xs font-bold mt-0.5" style="background:{avatar_color}">{author|truncate:1}</div>
-        <div class="min-w-0 flex-1">
-          <div class="flex items-baseline gap-2">
-            <span class="text-[15px] font-bold text-white">{author}</span>
-            <time class="text-[11px] text-[#616061]">{created|timeago}</time>
-            {{if edited_at}}<span class="text-[11px] text-[#616061]">(edited)</span>{{end}}
-          </div>
-          <p class="text-[15px] text-[#d1d2d3] leading-[1.46] break-words">{body|markdown|unfurl|raw}</p>
-          {{if reply_count}}
-          <a href="/channel/{ch.id}/thread/{id}" class="inline-flex items-center gap-1.5 mt-1 text-[#1d9bd1] text-xs font-semibold hover:underline">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-            {reply_count} replies
-          </a>
-          {{end}}
-        </div>
-        <!-- Hover actions -->
-        <div class="msg-actions absolute -top-3 right-2 flex items-center bg-[#1a1d21] border border-[#ffffff1a] rounded-lg shadow-lg overflow-hidden">
-          <form method="POST" action="/messages/{id}/react" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><input type="hidden" name="channel_id" value="{ch.id}"><button type="submit" name="emoji" value="👍" class="p-1.5 hover:bg-[#ffffff0d] transition text-sm" title="Like">👍</button></form>
-          <form method="POST" action="/messages/{id}/react" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><input type="hidden" name="channel_id" value="{ch.id}"><button type="submit" name="emoji" value="🔥" class="p-1.5 hover:bg-[#ffffff0d] transition text-sm" title="Fire">🔥</button></form>
-          <a href="/channel/{ch.id}/edit/{id}" class="p-1.5 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] transition" title="Edit"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></a>
-          <a href="/channel/{ch.id}/thread/{id}" class="p-1.5 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] transition" title="Reply"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg></a>
-          <form method="POST" action="/messages/{id}/pin" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><input type="hidden" name="channel_id" value="{ch.id}"><button type="submit" class="p-1.5 text-[#9a9b9e] hover:text-[#e8912d] hover:bg-[#ffffff0d] transition" title="Pin">📌</button></form>
-          <form method="POST" action="/messages/{id}/delete" data-confirm="Delete?" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><button type="submit" class="p-1.5 text-[#9a9b9e] hover:text-red-400 hover:bg-[#ffffff0d] transition"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></form>
-        </div>
-      </div>
-      {{else}}
-      <div class="py-20 text-center">
-        <div class="text-4xl mb-3">👋</div>
-        <h2 class="text-xl font-bold text-white mb-1">Welcome to #{ch.name}</h2>
-        <p class="text-[#9a9b9e] text-sm">This is the very beginning of the <strong class="text-white">#{ch.name}</strong> channel. Send a message to get started.</p>
-      </div>
-      {{end}}
-    </div>
-    <!-- Message input -->
-    <div class="px-5 pb-4 shrink-0">
-      <form method="POST" action="/channel/{ch.id}/send" class="relative">
-        <input type="hidden" name="_csrf" value="{csrf}">
-        <input type="text" name="body" placeholder="Message #{ch.name}" required autofocus class="w-full px-4 py-3 bg-[#222529] border border-[#565856] rounded-lg text-[15px] text-[#d1d2d3] placeholder-[#616061] outline-none focus:border-[#1d9bd1] transition pr-12">
-        <button type="submit" class="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-[#9a9b9e] hover:text-[#1d9bd1] transition rounded">
-          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-        </button>
-      </form>
-    </div>
+    <script>
+      function wrapText(before,after){var i=document.getElementById('msg-input');var s=i.selectionStart,e=i.selectionEnd,t=i.value;i.value=t.slice(0,s)+before+t.slice(s,e)+after+t.slice(e);i.focus();i.setSelectionRange(s+before.length,e+before.length)}
+      var ws,typingTimer;function sendTyping(){if(!ws||ws.readyState!==1){try{ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws/typing/{ch.id}');ws.onmessage=function(e){var d=document.getElementById('typing-indicator');d.textContent=e.data;clearTimeout(typingTimer);typingTimer=setTimeout(function(){d.textContent=''},3000)}}catch(e){}}if(ws&&ws.readyState===1)ws.send('{me.name} is typing...')}
+    </script>
 
 # Edit message page
 page /channel/:cid/edit/:mid requires auth layout slack
@@ -424,52 +486,28 @@ page /search requires auth layout slack title "Search"
 # Messages fragment for htmx polling
 fragment /channel/:id/messages
   query ch: SELECT id FROM channel WHERE id = :id
-  query messages: SELECT m.id, m.body, m.author_id, m.reply_to, m.edited_at, m.created,
-                  u.name as author, u.avatar_color,
-                  (SELECT COUNT(*) FROM message r WHERE r.reply_to = m.id) as reply_count
-                  FROM message m
-                  JOIN user u ON u.id = m.author_id
-                  WHERE m.channel_id = :id AND m.reply_to = 0
-                  ORDER BY m.created ASC
-                  paginate 100
+  query messages: SELECT m.id, m.body, m.author_id, m.reply_to, m.edited_at, m.pinned, m.attachment, m.created, u.name as author, u.avatar_color, (SELECT COUNT(*) FROM message r WHERE r.reply_to = m.id) as reply_count, (SELECT GROUP_CONCAT(emoji || ':' || cnt, ',') FROM (SELECT emoji, COUNT(*) as cnt FROM reaction WHERE message_id = m.id GROUP BY emoji)) as reactions FROM message m JOIN user u ON u.id = m.author_id WHERE m.channel_id = :id AND m.reply_to = 0 ORDER BY m.created ASC paginate 100
   html
     {{each messages}}
     <div class="msg-row flex gap-3 py-1.5 px-2 -mx-2 rounded-lg relative" id="msg-{id}">
       <div class="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-white text-xs font-bold mt-0.5" style="background:{avatar_color}">{author|truncate:1}</div>
       <div class="min-w-0 flex-1">
-        <div class="flex items-baseline gap-2">
-          <span class="text-[15px] font-bold text-white">{author}</span>
-          <time class="text-[11px] text-[#616061]">{created|timeago}</time>
-          {{if edited_at}}<span class="text-[11px] text-[#616061]">(edited)</span>{{end}}
-        </div>
+        <div class="flex items-baseline gap-2">{{if pinned}}<span class="text-[#e8912d] text-[11px]">📌</span>{{end}}<span class="text-[15px] font-bold text-white">{author}</span><time class="text-[11px] text-[#616061]">{created|timeago}</time>{{if edited_at}}<span class="text-[11px] text-[#616061]">(edited)</span>{{end}}</div>
         <p class="text-[15px] text-[#d1d2d3] leading-[1.46] break-words">{body|markdown|unfurl|raw}</p>
-        {{if reply_count}}
-        <a href="/channel/{ch.id}/thread/{id}" class="inline-flex items-center gap-1.5 mt-1 text-[#1d9bd1] text-xs font-semibold hover:underline">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-          {reply_count} replies
-        </a>
-        {{end}}
+        {{if attachment}}<div class="mt-2"><a href="{attachment}" target="_blank" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#ffffff08] border border-[#ffffff15] rounded-lg text-xs text-[#1d9bd1] hover:bg-[#ffffff10] transition"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg> Attachment</a></div>{{end}}
+        {{if reactions}}<div class="reactions mt-1">{reactions|raw}</div>{{end}}
+        {{if reply_count}}<a href="/channel/{ch.id}/thread/{id}" class="inline-flex items-center gap-1.5 mt-1 text-[#1d9bd1] text-xs font-semibold hover:underline"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg> {reply_count} replies</a>{{end}}
       </div>
       <div class="msg-actions absolute -top-3 right-2 flex items-center bg-[#1a1d21] border border-[#ffffff1a] rounded-lg shadow-lg overflow-hidden">
-        <a href="/channel/{ch.id}/edit/{id}" class="p-1.5 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] transition" title="Edit">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-        </a>
-        <a href="/channel/{ch.id}/thread/{id}" class="p-1.5 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] transition" title="Reply">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-        </a>
-        <form method="POST" action="/messages/{id}/delete" data-confirm="Delete message?" class="inline">
-          <input type="hidden" name="_csrf" value="{csrf}">
-          <button type="submit" class="p-1.5 text-[#9a9b9e] hover:text-red-400 hover:bg-[#ffffff0d] transition">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-          </button>
-        </form>
+        <form method="POST" action="/messages/{id}/react" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><input type="hidden" name="channel_id" value="{ch.id}"><button type="submit" name="emoji" value="👍" class="p-1.5 hover:bg-[#ffffff0d] transition text-sm">👍</button></form>
+        <form method="POST" action="/messages/{id}/react" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><input type="hidden" name="channel_id" value="{ch.id}"><button type="submit" name="emoji" value="🔥" class="p-1.5 hover:bg-[#ffffff0d] transition text-sm">🔥</button></form>
+        <a href="/channel/{ch.id}/edit/{id}" class="p-1.5 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] transition" title="Edit"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></a>
+        <a href="/channel/{ch.id}/thread/{id}" class="p-1.5 text-[#9a9b9e] hover:text-white hover:bg-[#ffffff0d] transition" title="Reply"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg></a>
+        <form method="POST" action="/messages/{id}/delete" data-confirm="Delete?" class="inline"><input type="hidden" name="_csrf" value="{csrf}"><button type="submit" class="p-1.5 text-[#9a9b9e] hover:text-red-400 hover:bg-[#ffffff0d] transition"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button></form>
       </div>
     </div>
     {{else}}
-    <div class="py-20 text-center">
-      <div class="text-4xl mb-3">👋</div>
-      <p class="text-[#9a9b9e]">No messages yet. Start the conversation!</p>
-    </div>
+    <div class="py-20 text-center"><p class="text-[#9a9b9e]">No messages yet.</p></div>
     {{end}}
 
 # ============================================================
@@ -485,7 +523,7 @@ action /channels/create method POST requires auth
 action /channel/:id/send method POST requires auth
   validate
     body: required
-  query: INSERT INTO message (body, author_id, channel_id) VALUES (:body, :current_user.id, :id)
+  query: INSERT INTO message (body, author_id, channel_id, attachment) VALUES (:body, :current_user.id, :id, :attachment)
   redirect /channel/:id
 
 action /channel/:cid/thread/:mid/reply method POST requires auth
@@ -501,8 +539,9 @@ action /messages/:id/edit method POST requires auth
   redirect /channel/:channel_id
 
 action /messages/:id/delete method POST requires auth
+  query: DELETE FROM reaction WHERE message_id = :id
   query: DELETE FROM message WHERE id = :id AND author_id = :current_user.id
-  redirect /home
+  redirect /channel/:channel_id
 
 action /channels/:id/delete method POST requires auth
   query: DELETE FROM message WHERE channel_id = :id
@@ -512,6 +551,11 @@ action /channels/:id/delete method POST requires auth
 # ============================================================
 # REAL-TIME
 # ============================================================
+
+# WebSocket for typing indicators
+socket /ws/typing/:room
+  on message
+    broadcast to :room
 
 stream /stream/channels
   every 5s
