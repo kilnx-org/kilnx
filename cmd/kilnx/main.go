@@ -352,14 +352,64 @@ func cmdTest(filename string) error {
 }
 
 func loadApp(filename string) (*parser.App, error) {
-	raw, err := os.ReadFile(filename)
+	source, err := resolveImports(filename, nil)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", filename, err)
+		return nil, err
 	}
 
-	source := lexer.StripComments(string(raw))
+	source = lexer.StripComments(source)
 	tokens := lexer.Tokenize(source)
 	return parser.Parse(tokens, source)
+}
+
+// resolveImports reads a .kilnx file and recursively resolves import statements.
+// Import syntax: import "path/to/file.kilnx"
+// Paths are relative to the importing file's directory.
+// Circular imports are detected via the seen map.
+func resolveImports(filename string, seen map[string]bool) (string, error) {
+	absPath, err := filepath.Abs(filename)
+	if err != nil {
+		return "", fmt.Errorf("resolving path %s: %w", filename, err)
+	}
+
+	if seen == nil {
+		seen = make(map[string]bool)
+	}
+	if seen[absPath] {
+		return "", fmt.Errorf("circular import detected: %s", filename)
+	}
+	seen[absPath] = true
+
+	raw, err := os.ReadFile(filename)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", filename, err)
+	}
+
+	baseDir := filepath.Dir(filename)
+	var result strings.Builder
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "import ") {
+			// Extract path: import "file.kilnx" or import file.kilnx
+			importPath := strings.TrimPrefix(trimmed, "import ")
+			importPath = strings.Trim(importPath, "\"' ")
+			if importPath == "" {
+				continue
+			}
+			resolved := filepath.Join(baseDir, importPath)
+			imported, err := resolveImports(resolved, seen)
+			if err != nil {
+				return "", fmt.Errorf("importing %s from %s: %w", importPath, filename, err)
+			}
+			result.WriteString(imported)
+			result.WriteString("\n")
+		} else {
+			result.WriteString(line)
+			result.WriteString("\n")
+		}
+	}
+
+	return result.String(), nil
 }
 
 func dbPathFor(kilnxFile string) string {
