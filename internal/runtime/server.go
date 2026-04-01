@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -105,18 +106,23 @@ func (s *Server) Start() error {
 	}
 	mux.Handle("/_uploads/", http.StripPrefix("/_uploads/", http.FileServer(http.Dir(uploadsDir))))
 
-	// Serve static files directory
+	// Serve static files directory (validated to prevent path traversal)
 	staticDir := "static"
 	if s.app.Config != nil && s.app.Config.StaticDir != "" {
 		staticDir = s.app.Config.StaticDir
 	}
-	if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
-		fileServer := http.FileServer(http.Dir(staticDir))
-		mux.Handle("/_static/", http.StripPrefix("/_static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Cache-Control", "public, max-age=3600")
-			fileServer.ServeHTTP(w, r)
-		})))
-		fmt.Printf("Serving static files from %s at /_static/\n", staticDir)
+	if absStatic, err := filepath.Abs(staticDir); err == nil {
+		cwd, _ := os.Getwd()
+		if strings.HasPrefix(absStatic, cwd) {
+			if info, err := os.Stat(absStatic); err == nil && info.IsDir() {
+				fileServer := http.FileServer(http.Dir(absStatic))
+				mux.Handle("/_static/", http.StripPrefix("/_static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Cache-Control", "public, max-age=3600")
+					fileServer.ServeHTTP(w, r)
+				})))
+				fmt.Printf("Serving static files from %s at /_static/\n", staticDir)
+			}
+		}
 	}
 
 	// Health check for PaaS platforms and load balancers (GET only)
