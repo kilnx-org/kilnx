@@ -39,7 +39,11 @@ func (db *DB) QueryRows(sql string) ([]Row, error) {
 
 		row := make(Row)
 		for i, col := range columns {
-			row[col] = fmt.Sprintf("%v", values[i])
+			if values[i] == nil {
+				row[col] = ""
+			} else {
+				row[col] = fmt.Sprintf("%v", values[i])
+			}
 		}
 		results = append(results, row)
 	}
