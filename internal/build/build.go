@@ -73,7 +73,6 @@ func generateMainGo(source string) string {
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/kilnx-org/kilnx/internal/analyzer"
 	"github.com/kilnx-org/kilnx/internal/database"
