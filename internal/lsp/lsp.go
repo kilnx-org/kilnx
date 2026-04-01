@@ -47,8 +47,8 @@ func Serve() {
 							TriggerCharacters: []string{" ", "\n"},
 						},
 						HoverProvider:          true,
-					DefinitionProvider:     true,
-					DocumentSymbolProvider: true,
+						DefinitionProvider:     true,
+						DocumentSymbolProvider: true,
 					},
 				},
 			}
