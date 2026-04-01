@@ -113,13 +113,13 @@ func main() {
 	optimizer.Optimize(app)
 
 	port := 8080
-	dbPath := "app.db"
+	dbURL := "app.db"
 	if app.Config != nil {
 		if app.Config.Port > 0 {
 			port = app.Config.Port
 		}
 		if app.Config.Database != "" {
-			dbPath = strings.TrimPrefix(app.Config.Database, "sqlite://")
+			dbURL = resolveEnvValue(app.Config.Database)
 		}
 	}
 
@@ -138,11 +138,11 @@ func main() {
 			fmt.Sscanf(os.Args[i+1], "%d", &port)
 		}
 		if arg == "--db" && i+1 < len(os.Args) {
-			dbPath = os.Args[i+1]
+			dbURL = os.Args[i+1]
 		}
 	}
 
-	db, err := database.Open(dbPath)
+	db, err := database.Open(dbURL)
 	if err != nil {
 		fmt.Printf("Database error: %v\n", err)
 		os.Exit(1)
@@ -171,6 +171,21 @@ func main() {
 		fmt.Printf("Server error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func resolveEnvValue(val string) string {
+	if !strings.HasPrefix(val, "env ") {
+		return val
+	}
+	parts := strings.Fields(val)
+	envName := parts[1]
+	if v := os.Getenv(envName); v != "" {
+		return v
+	}
+	if len(parts) >= 4 && parts[2] == "default" {
+		return strings.Trim(strings.Join(parts[3:], " "), "\"'")
+	}
+	return ""
 }
 `
 }

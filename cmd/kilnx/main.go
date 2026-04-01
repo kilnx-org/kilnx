@@ -119,15 +119,13 @@ func cmdRun(filename string) error {
 
 	// Resolve config
 	port := 8080
-	dbPath := dbPathFor(filename)
+	dbURL := dbPathFor(filename)
 	if app.Config != nil {
 		if app.Config.Port > 0 {
 			port = app.Config.Port
 		}
 		if app.Config.Database != "" {
-			dbPath = app.Config.Database
-			// Handle sqlite:// prefix
-			dbPath = strings.TrimPrefix(dbPath, "sqlite://")
+			dbURL = resolveEnvValue(app.Config.Database)
 		}
 	}
 
@@ -141,7 +139,7 @@ func cmdRun(filename string) error {
 		}
 	}
 
-	db, err := database.Open(dbPath)
+	db, err := database.Open(dbURL)
 	if err != nil {
 		return err
 	}
@@ -159,7 +157,7 @@ func cmdRun(filename string) error {
 			return err
 		}
 		if len(stmts) > 0 {
-			fmt.Printf("Auto-migrated %d change(s) to %s\n", len(stmts), dbPath)
+			fmt.Printf("Auto-migrated %d change(s) to %s\n", len(stmts), dbURL)
 		}
 	}
 
@@ -188,11 +186,14 @@ func cmdMigrate(filename string, flags []string) error {
 		return nil
 	}
 
-	dbPath := dbPathFor(filename)
-	fmt.Printf("Database: %s\n", dbPath)
+	dbURL := dbPathFor(filename)
+	if app.Config != nil && app.Config.Database != "" {
+		dbURL = resolveEnvValue(app.Config.Database)
+	}
+	fmt.Printf("Database: %s\n", dbURL)
 	fmt.Printf("Models:   %d\n\n", len(app.Models))
 
-	db, err := database.Open(dbPath)
+	db, err := database.Open(dbURL)
 	if err != nil {
 		return err
 	}
@@ -427,6 +428,27 @@ func resolveImports(absPath, projectRoot string, seen map[string]bool, depth int
 	}
 
 	return result.String(), nil
+}
+
+// resolveEnvValue handles config values that may reference environment variables.
+// Syntax: "env VAR_NAME" or "env VAR_NAME default fallback_value"
+// If the value does not start with "env ", it is returned as-is.
+func resolveEnvValue(val string) string {
+	if !strings.HasPrefix(val, "env ") {
+		// Strip sqlite:// prefix for backward compat with bare path configs
+		return val
+	}
+	parts := strings.Fields(val)
+	// "env DATABASE_URL"
+	envName := parts[1]
+	if v := os.Getenv(envName); v != "" {
+		return v
+	}
+	// "env DATABASE_URL default sqlite://app.db"
+	if len(parts) >= 4 && parts[2] == "default" {
+		return strings.Trim(strings.Join(parts[3:], " "), "\"'")
+	}
+	return ""
 }
 
 func dbPathFor(kilnxFile string) string {
