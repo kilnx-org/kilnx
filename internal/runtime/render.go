@@ -288,7 +288,9 @@ func renderHTML(content string, ctx *renderContext) string {
 	rawPlaceholders := make(map[string]string)
 	rawCounter := 0
 
-	// Process all pipe expressions (including raw and other filters)
+	// Process pipe expressions, but skip those inside {{each}} blocks
+	// (they are handled per-row in processRawInRow during Step 3)
+	insideEach := isInsideEachBlock(result)
 	result = filterRe.ReplaceAllStringFunc(result, func(match string) string {
 		parts := filterRe.FindStringSubmatch(match)
 		if len(parts) < 3 {
@@ -296,6 +298,11 @@ func renderHTML(content string, ctx *renderContext) string {
 		}
 		expr := parts[1]
 		chain := strings.TrimSpace(parts[2])
+		// Defer to processRawInRow if inside {{each}}...{{end}}
+		matchIdx := strings.Index(result, match)
+		if matchIdx >= 0 && insideEach(matchIdx) {
+			return match
+		}
 		val := resolveValue(expr, ctx, nil)
 		if val == "{"+expr+"}" {
 			return match // not resolved, leave unchanged
@@ -336,6 +343,43 @@ func generateNonce() string {
 	b := make([]byte, 8)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// isInsideEachBlock returns a closure that checks if a byte position in the text
+// falls inside a {{each}}...{{end}} block. Used to skip filter processing in Step 2
+// for expressions that should be resolved per-row in Step 3.
+func isInsideEachBlock(text string) func(int) bool {
+	type span struct{ start, end int }
+	var spans []span
+	remaining := text
+	offset := 0
+	for {
+		idx := strings.Index(remaining, "{{each ")
+		if idx < 0 {
+			break
+		}
+		tagEnd := strings.Index(remaining[idx:], "}}")
+		if tagEnd < 0 {
+			break
+		}
+		bodyStart := idx + tagEnd + 2
+		_, _, endPos := findMatchingEnd(remaining[bodyStart:])
+		if endPos < 0 {
+			break
+		}
+		endAbs := bodyStart + endPos
+		spans = append(spans, span{offset + idx, offset + endAbs})
+		remaining = remaining[endAbs:]
+		offset += endAbs
+	}
+	return func(pos int) bool {
+		for _, s := range spans {
+			if pos >= s.start && pos < s.end {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // expandEachBlocks processes all {{each queryName}}...{{else}}...{{end}} blocks.
