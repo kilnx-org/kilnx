@@ -271,29 +271,11 @@ func (db *DB) getColumns(table string) (map[string]bool, error) {
 	defer rows.Close()
 
 	columns := make(map[string]bool)
-
-	// Detect column count to handle both SQLite PRAGMA (6 cols) and
-	// PostgreSQL information_schema (1 col: column_name)
-	colNames, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-	nameIdx := 0
-	if len(colNames) > 1 {
-		// SQLite PRAGMA table_info returns: cid, name, type, notnull, dflt_value, pk
-		nameIdx = 1
-	}
-
 	for rows.Next() {
-		values := make([]interface{}, len(colNames))
-		ptrs := make([]interface{}, len(colNames))
-		for i := range values {
-			ptrs[i] = &values[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
+		var name string
+		if err := rows.Scan(&name); err != nil {
 			return nil, err
 		}
-		name := fmt.Sprintf("%v", values[nameIdx])
 		columns[name] = true
 	}
 	if err := rows.Err(); err != nil {

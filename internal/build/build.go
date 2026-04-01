@@ -119,7 +119,7 @@ func main() {
 			port = app.Config.Port
 		}
 		if app.Config.Database != "" {
-			dbURL = resolveEnvValue(app.Config.Database)
+			dbURL = app.Config.Database
 		}
 	}
 
@@ -171,21 +171,6 @@ func main() {
 		fmt.Printf("Server error: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-func resolveEnvValue(val string) string {
-	if !strings.HasPrefix(val, "env ") {
-		return val
-	}
-	parts := strings.Fields(val)
-	envName := parts[1]
-	if v := os.Getenv(envName); v != "" {
-		return v
-	}
-	if len(parts) >= 4 && parts[2] == "default" {
-		return strings.Trim(strings.Join(parts[3:], " "), "\"'")
-	}
-	return ""
 }
 `
 }

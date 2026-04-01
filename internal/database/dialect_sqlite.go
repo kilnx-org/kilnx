@@ -2,6 +2,7 @@ package database
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/kilnx-org/kilnx/internal/parser"
@@ -32,7 +33,7 @@ func (SqliteDialect) TableExistsSQL() string {
 }
 
 func (SqliteDialect) ColumnsSQL(table string) string {
-	return fmt.Sprintf("PRAGMA table_info(\"%s\")", table)
+	return fmt.Sprintf(`SELECT name FROM pragma_table_info("%s")`, table)
 }
 
 func (SqliteDialect) AutoIncrementPK() string {
@@ -76,6 +77,9 @@ func (d SqliteDialect) FieldToDefault(f parser.Field) string {
 			}
 			return " DEFAULT 0"
 		case parser.FieldInt, parser.FieldFloat:
+			if _, err := strconv.ParseFloat(f.Default, 64); err != nil {
+				return ""
+			}
 			return fmt.Sprintf(" DEFAULT %s", f.Default)
 		default:
 			escaped := strings.ReplaceAll(f.Default, "'", "''")

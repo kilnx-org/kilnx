@@ -2,6 +2,7 @@ package database
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/kilnx-org/kilnx/internal/parser"
@@ -80,6 +81,9 @@ func (d PostgresDialect) FieldToDefault(f parser.Field) string {
 			}
 			return " DEFAULT FALSE"
 		case parser.FieldInt, parser.FieldFloat:
+			if _, err := strconv.ParseFloat(f.Default, 64); err != nil {
+				return ""
+			}
 			return fmt.Sprintf(" DEFAULT %s", f.Default)
 		default:
 			escaped := strings.ReplaceAll(f.Default, "'", "''")
