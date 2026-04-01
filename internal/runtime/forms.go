@@ -263,7 +263,8 @@ func extractFormData(r *http.Request, config *parser.AppConfig) map[string]strin
 					defer dst.Close()
 					io.Copy(dst, file)
 
-					data[key] = filePath
+					// Store the web-accessible path
+					data[key] = "/_uploads/" + fileName
 				}
 			}
 		}

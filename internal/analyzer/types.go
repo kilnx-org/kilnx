@@ -510,6 +510,12 @@ func checkTemplateInterpolations(app *parser.App, schema *Schema) []Diagnostic {
 		localQueries := make(map[string]string)
 		localAliases := make(map[string]map[string]bool) // queryName -> set of aliases
 		for _, n := range nodes {
+			// fetch nodes provide dynamic data - mark as known to skip validation
+			if n.Type == parser.NodeFetch && n.Name != "" {
+				localQueries[n.Name] = "_fetch"
+				// Allow any field access on fetch results
+				localAliases[n.Name] = map[string]bool{"*": true}
+			}
 			if n.Type == parser.NodeQuery && n.Name != "" && n.SQL != "" {
 				tokens := tokenizeSQL(n.SQL)
 				refs := extractTableRefs(tokens)
@@ -579,7 +585,7 @@ func checkTemplateInterpolations(app *parser.App, schema *Schema) []Diagnostic {
 				}
 
 				// Check if field is a known SQL alias or joined column
-				if aliases, ok := localAliases[queryName]; ok && aliases[fieldName] {
+				if aliases, ok := localAliases[queryName]; ok && (aliases[fieldName] || aliases["*"]) {
 					continue
 				}
 

@@ -381,6 +381,11 @@ func (db *DB) MigrateInternal() error {
 			data TEXT NOT NULL DEFAULT '{}',
 			expires_at DATETIME NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS _kilnx_password_resets (
+			token TEXT PRIMARY KEY,
+			email TEXT NOT NULL,
+			expires_at DATETIME NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS _kilnx_migrations (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			schema_hash TEXT NOT NULL,

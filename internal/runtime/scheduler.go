@@ -393,6 +393,24 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 				}
 			}
 
+		case parser.NodeFetch:
+			fetchName := node.Name
+			if fetchName == "" {
+				fetchName = "_fetch"
+			}
+			rows, err := executeFetch(node, params)
+			if err != nil {
+				fmt.Printf("  fetch error: %v\n", err)
+			} else {
+				ctx.queries[fetchName] = rows
+				// Make fetch results available as params for subsequent nodes
+				if len(rows) > 0 {
+					for k, v := range rows[0] {
+						params["fetch."+k] = v
+					}
+				}
+			}
+
 		case parser.NodeSendEmail:
 			recipient := resolveEmailRecipient(node.EmailTo, params)
 			// Resolve recipient from SQL query if specified

@@ -10,7 +10,9 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"net/smtp"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -582,6 +584,7 @@ func (s *Server) renderLoginPage(w http.ResponseWriter, r *http.Request, errorMs
       <button type="submit" class="kilnx-btn">Log in</button>
     </form>
     <p style="margin-top:1.25rem;font-size:0.85rem;text-align:center">Don't have an account? <a href="/register">Register</a></p>
+    <p style="margin-top:0.5rem;font-size:0.85rem;text-align:center"><a href="/forgot-password">Forgot password?</a></p>
 `, errorHTML, csrf, identityLabel, identityType, strings.ToLower(identityLabel)+"@example.com")
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -676,6 +679,281 @@ func renderAuthPage(title, body string, pages []parser.Page) string {
 }
 
 // sanitizeIdentifier ensures a SQL identifier contains only safe characters
+// handleForgotPassword renders the forgot password form and processes reset requests
+func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		s.renderForgotPasswordPage(w, r, "")
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		s.renderForgotPasswordPage(w, r, "Invalid request")
+		return
+	}
+
+	csrf := r.FormValue("_csrf")
+	if !validateCSRFToken(csrf) {
+		s.renderForgotPasswordPage(w, r, "Invalid CSRF token. Please try again.")
+		return
+	}
+
+	email := strings.TrimSpace(r.FormValue("email"))
+	if email == "" {
+		s.renderForgotPasswordPage(w, r, "Email is required")
+		return
+	}
+
+	app := s.getApp()
+	if app.Auth == nil || s.db == nil {
+		s.renderForgotPasswordPage(w, r, "Password reset is not available")
+		return
+	}
+
+	// Check if user exists
+	table := sanitizeIdentifier(app.Auth.Table)
+	identity := sanitizeIdentifier(app.Auth.Identity)
+	rows, err := s.db.QueryRowsWithParams(
+		fmt.Sprintf(`SELECT id, %s FROM "%s" WHERE %s = :email`, identity, table, identity),
+		map[string]string{"email": email},
+	)
+	if err != nil || len(rows) == 0 {
+		// Don't reveal whether the email exists
+		s.renderForgotPasswordSuccess(w, r)
+		return
+	}
+
+	// Generate reset token
+	tokenBytes := make([]byte, 32)
+	rand.Read(tokenBytes)
+	token := hex.EncodeToString(tokenBytes)
+
+	// Store token (expires in 1 hour)
+	s.db.ExecWithParams(
+		`DELETE FROM _kilnx_password_resets WHERE email = :email`,
+		map[string]string{"email": email},
+	)
+	s.db.ExecWithParams(
+		`INSERT INTO _kilnx_password_resets (token, email, expires_at) VALUES (:token, :email, datetime('now', '+1 hour'))`,
+		map[string]string{"token": token, "email": email},
+	)
+
+	// Build reset URL
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	resetURL := fmt.Sprintf("%s://%s/reset-password?token=%s", scheme, r.Host, token)
+
+	// Try to send email, fall back to console
+	sent := false
+	smtpHost := os.Getenv("KILNX_SMTP_HOST")
+	smtpFrom := os.Getenv("KILNX_SMTP_FROM")
+	if smtpHost != "" && smtpFrom != "" {
+		smtpPort := os.Getenv("KILNX_SMTP_PORT")
+		if smtpPort == "" {
+			smtpPort = "587"
+		}
+		smtpUser := os.Getenv("KILNX_SMTP_USER")
+		smtpPass := os.Getenv("KILNX_SMTP_PASS")
+
+		msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: Password Reset\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"+
+			"<p>Click the link below to reset your password:</p>"+
+			"<p><a href=\"%s\">Reset Password</a></p>"+
+			"<p>This link expires in 1 hour.</p>",
+			smtpFrom, email, resetURL)
+
+		var auth smtp.Auth
+		if smtpUser != "" {
+			auth = smtp.PlainAuth("", smtpUser, smtpPass, smtpHost)
+		}
+		err := smtp.SendMail(smtpHost+":"+smtpPort, auth, smtpFrom, []string{email}, []byte(msg))
+		if err == nil {
+			sent = true
+		} else {
+			fmt.Printf("  password reset email failed: %v\n", err)
+		}
+	}
+
+	if !sent {
+		fmt.Printf("\n  ╔══════════════════════════════════════════╗\n")
+		fmt.Printf("  ║  PASSWORD RESET LINK (SMTP not configured) ║\n")
+		fmt.Printf("  ╠══════════════════════════════════════════╣\n")
+		fmt.Printf("  ║  Email: %s\n", email)
+		fmt.Printf("  ║  Link:  %s\n", resetURL)
+		fmt.Printf("  ╚══════════════════════════════════════════╝\n\n")
+	}
+
+	s.renderForgotPasswordSuccess(w, r)
+}
+
+// handleResetPassword processes the password reset form
+func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		http.Redirect(w, r, "/forgot-password", http.StatusSeeOther)
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		// Validate token
+		if s.db == nil {
+			http.Error(w, "Not available", http.StatusInternalServerError)
+			return
+		}
+		rows, err := s.db.QueryRowsWithParams(
+			`SELECT email FROM _kilnx_password_resets WHERE token = :token AND expires_at > datetime('now')`,
+			map[string]string{"token": token},
+		)
+		if err != nil || len(rows) == 0 {
+			s.renderResetPasswordPage(w, r, token, "This reset link is invalid or has expired.")
+			return
+		}
+		s.renderResetPasswordPage(w, r, token, "")
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		s.renderResetPasswordPage(w, r, token, "Invalid request")
+		return
+	}
+
+	csrf := r.FormValue("_csrf")
+	if !validateCSRFToken(csrf) {
+		s.renderResetPasswordPage(w, r, token, "Invalid CSRF token. Please try again.")
+		return
+	}
+
+	password := r.FormValue("password")
+	passwordConfirm := r.FormValue("password_confirm")
+
+	if len(password) < 6 {
+		s.renderResetPasswordPage(w, r, token, "Password must be at least 6 characters")
+		return
+	}
+	if password != passwordConfirm {
+		s.renderResetPasswordPage(w, r, token, "Passwords do not match")
+		return
+	}
+
+	// Validate token and get email
+	rows, err := s.db.QueryRowsWithParams(
+		`SELECT email FROM _kilnx_password_resets WHERE token = :token AND expires_at > datetime('now')`,
+		map[string]string{"token": token},
+	)
+	if err != nil || len(rows) == 0 {
+		s.renderResetPasswordPage(w, r, token, "This reset link is invalid or has expired.")
+		return
+	}
+
+	email := rows[0]["email"]
+
+	// Hash new password
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		s.renderResetPasswordPage(w, r, token, "An error occurred. Please try again.")
+		return
+	}
+
+	// Update password
+	app := s.getApp()
+	table := sanitizeIdentifier(app.Auth.Table)
+	identity := sanitizeIdentifier(app.Auth.Identity)
+	passField := sanitizeIdentifier(app.Auth.Password)
+
+	err = s.db.ExecWithParams(
+		fmt.Sprintf(`UPDATE "%s" SET %s = :password WHERE %s = :email`, table, passField, identity),
+		map[string]string{"password": string(hashed), "email": email},
+	)
+	if err != nil {
+		s.renderResetPasswordPage(w, r, token, "Failed to update password. Please try again.")
+		return
+	}
+
+	// Delete used token
+	s.db.ExecWithParams(
+		`DELETE FROM _kilnx_password_resets WHERE token = :token`,
+		map[string]string{"token": token},
+	)
+
+	// Redirect to login with success
+	loginPath := "/login"
+	if app.Auth != nil && app.Auth.LoginPath != "" {
+		loginPath = app.Auth.LoginPath
+	}
+	http.Redirect(w, r, loginPath, http.StatusSeeOther)
+}
+
+func (s *Server) renderForgotPasswordPage(w http.ResponseWriter, r *http.Request, errorMsg string) {
+	csrf := generateCSRFToken()
+	errorHTML := ""
+	if errorMsg != "" {
+		errorHTML = fmt.Sprintf("    <div class=\"kilnx-alert kilnx-alert-error\">%s</div>\n", html.EscapeString(errorMsg))
+	}
+
+	app := s.getApp()
+	body := fmt.Sprintf(`    <p class="kilnx-auth-sub">Enter your email to receive a reset link</p>
+%s    <form method="POST" class="kilnx-form">
+      <input type="hidden" name="_csrf" value="%s">
+      <div class="kilnx-field">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" placeholder="you@example.com" required>
+      </div>
+      <button type="submit" class="kilnx-btn">Send reset link</button>
+    </form>
+    <p style="margin-top:1.25rem;font-size:0.85rem;text-align:center"><a href="%s">Back to login</a></p>
+`, errorHTML, csrf, app.Auth.LoginPath)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(renderAuthPage("Forgot password", body, app.Pages)))
+}
+
+func (s *Server) renderForgotPasswordSuccess(w http.ResponseWriter, r *http.Request) {
+	app := s.getApp()
+	body := fmt.Sprintf(`    <p class="kilnx-auth-sub">Check your email</p>
+    <p style="font-size:0.9rem;color:#a1a1aa;margin-bottom:1.5rem">If an account exists with that email, we sent a password reset link. Check your inbox.</p>
+    <p style="font-size:0.85rem;text-align:center"><a href="%s">Back to login</a></p>
+`, app.Auth.LoginPath)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(renderAuthPage("Check your email", body, app.Pages)))
+}
+
+func (s *Server) renderResetPasswordPage(w http.ResponseWriter, r *http.Request, token, errorMsg string) {
+	csrf := generateCSRFToken()
+	errorHTML := ""
+	if errorMsg != "" {
+		errorHTML = fmt.Sprintf("    <div class=\"kilnx-alert kilnx-alert-error\">%s</div>\n", html.EscapeString(errorMsg))
+	}
+
+	body := fmt.Sprintf(`    <p class="kilnx-auth-sub">Choose a new password</p>
+%s    <form method="POST" action="/reset-password?token=%s" class="kilnx-form">
+      <input type="hidden" name="_csrf" value="%s">
+      <div class="kilnx-field">
+        <label for="password">New password</label>
+        <input type="password" id="password" name="password" placeholder="Min 6 characters" required minlength="6">
+      </div>
+      <div class="kilnx-field">
+        <label for="password_confirm">Confirm password</label>
+        <input type="password" id="password_confirm" name="password_confirm" placeholder="Repeat password" required minlength="6">
+      </div>
+      <button type="submit" class="kilnx-btn">Reset password</button>
+    </form>
+`, errorHTML, html.EscapeString(token), csrf)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(renderAuthPage("Reset password", body, nil)))
+}
+
 func sanitizeIdentifier(name string) string {
 	var b strings.Builder
 	for _, c := range name {
