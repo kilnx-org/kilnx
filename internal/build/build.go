@@ -73,7 +73,6 @@ func generateMainGo(source string) string {
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/kilnx-org/kilnx/internal/analyzer"
 	"github.com/kilnx-org/kilnx/internal/database"
@@ -113,13 +112,13 @@ func main() {
 	optimizer.Optimize(app)
 
 	port := 8080
-	dbPath := "app.db"
+	dbURL := "app.db"
 	if app.Config != nil {
 		if app.Config.Port > 0 {
 			port = app.Config.Port
 		}
 		if app.Config.Database != "" {
-			dbPath = strings.TrimPrefix(app.Config.Database, "sqlite://")
+			dbURL = app.Config.Database
 		}
 	}
 
@@ -138,11 +137,11 @@ func main() {
 			fmt.Sscanf(os.Args[i+1], "%d", &port)
 		}
 		if arg == "--db" && i+1 < len(os.Args) {
-			dbPath = os.Args[i+1]
+			dbURL = os.Args[i+1]
 		}
 	}
 
-	db, err := database.Open(dbPath)
+	db, err := database.Open(dbURL)
 	if err != nil {
 		fmt.Printf("Database error: %v\n", err)
 		os.Exit(1)

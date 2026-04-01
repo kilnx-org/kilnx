@@ -520,7 +520,7 @@ func TestTxHandleQueryRowsWithParams(t *testing.T) {
 // ---------- Param binding edge cases ----------
 
 func TestBindParamsMissingLeftAsIs(t *testing.T) {
-	query, args := bindParams(
+	query, args := bindParams(SqliteDialect{},
 		"SELECT * FROM t WHERE a = :known AND b = :missing",
 		map[string]string{"known": "val"},
 	)
@@ -555,7 +555,7 @@ func TestBindParamsSpecialCharactersInValues(t *testing.T) {
 }
 
 func TestBindParamsEmptyMap(t *testing.T) {
-	query, args := bindParams("SELECT 1", map[string]string{})
+	query, args := bindParams(SqliteDialect{}, "SELECT 1", map[string]string{})
 	if query != "SELECT 1" {
 		t.Errorf("unexpected query: %s", query)
 	}
@@ -565,7 +565,7 @@ func TestBindParamsEmptyMap(t *testing.T) {
 }
 
 func TestBindParamsDuplicateParam(t *testing.T) {
-	query, args := bindParams(
+	query, args := bindParams(SqliteDialect{},
 		"SELECT * FROM t WHERE a = :x OR b = :x",
 		map[string]string{"x": "val"},
 	)
@@ -581,6 +581,7 @@ func TestBindParamsDuplicateParam(t *testing.T) {
 // ---------- SQL type mapping ----------
 
 func TestFieldToSQLTypeMapping(t *testing.T) {
+	d := SqliteDialect{}
 	tests := []struct {
 		fieldType parser.FieldType
 		expected  string
@@ -599,9 +600,9 @@ func TestFieldToSQLTypeMapping(t *testing.T) {
 		{parser.FieldReference, "INTEGER"},
 	}
 	for _, tc := range tests {
-		got := fieldToSQLType(parser.Field{Type: tc.fieldType})
+		got := d.FieldToSQLType(parser.Field{Type: tc.fieldType})
 		if got != tc.expected {
-			t.Errorf("fieldToSQLType(%s) = %s, want %s", tc.fieldType, got, tc.expected)
+			t.Errorf("FieldToSQLType(%s) = %s, want %s", tc.fieldType, got, tc.expected)
 		}
 	}
 }
@@ -609,32 +610,36 @@ func TestFieldToSQLTypeMapping(t *testing.T) {
 // ---------- Default values ----------
 
 func TestFieldToDefaultTimestampAuto(t *testing.T) {
+	d := SqliteDialect{}
 	f := parser.Field{Type: parser.FieldTimestamp, Auto: true}
-	got := fieldToDefault(f)
+	got := d.FieldToDefault(f)
 	if got != " DEFAULT CURRENT_TIMESTAMP" {
 		t.Errorf("expected DEFAULT CURRENT_TIMESTAMP, got %q", got)
 	}
 }
 
 func TestFieldToDefaultBoolAuto(t *testing.T) {
+	d := SqliteDialect{}
 	f := parser.Field{Type: parser.FieldBool, Auto: true}
-	got := fieldToDefault(f)
+	got := d.FieldToDefault(f)
 	if got != " DEFAULT 0" {
 		t.Errorf("expected DEFAULT 0, got %q", got)
 	}
 }
 
 func TestFieldToDefaultBoolTrue(t *testing.T) {
+	d := SqliteDialect{}
 	f := parser.Field{Type: parser.FieldBool, Default: "true"}
-	got := fieldToDefault(f)
+	got := d.FieldToDefault(f)
 	if got != " DEFAULT 1" {
 		t.Errorf("expected DEFAULT 1, got %q", got)
 	}
 }
 
 func TestFieldToDefaultTextEscapeQuotes(t *testing.T) {
+	d := SqliteDialect{}
 	f := parser.Field{Type: parser.FieldText, Default: "it's fine"}
-	got := fieldToDefault(f)
+	got := d.FieldToDefault(f)
 	if got != " DEFAULT 'it''s fine'" {
 		t.Errorf("expected escaped quote, got %q", got)
 	}
@@ -667,13 +672,15 @@ func TestIsValidIdentifier(t *testing.T) {
 // ---------- generateCreateTable ----------
 
 func TestGenerateCreateTableContainsAutoincrement(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
 	model := parser.Model{
 		Name: "book",
 		Fields: []parser.Field{
 			{Name: "title", Type: parser.FieldText, Required: true},
 		},
 	}
-	sql := generateCreateTable(model)
+	sql := db.generateCreateTable(model)
 	if !strings.Contains(sql, "id INTEGER PRIMARY KEY AUTOINCREMENT") {
 		t.Errorf("missing id AUTOINCREMENT in: %s", sql)
 	}
