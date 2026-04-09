@@ -107,7 +107,7 @@ ssh server './myapp'
 
 ## Editor Support
 
-[VS Code extension](https://github.com/kilnx-org/vscode-kilnx) with syntax highlighting, diagnostics, completions, hover docs, and go-to-definition via the built-in LSP server.
+[VS Code extension](https://marketplace.visualstudio.com/items?itemName=atoolz.kilnx-vscode-toolkit) with syntax highlighting, diagnostics, completions, hover docs, and go-to-definition via the built-in LSP server.
 
 ## Try It Online
 
