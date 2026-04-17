@@ -1052,8 +1052,39 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				tx.Commit()
 			}
 			if r.Header.Get("HX-Request") == "true" {
-				w.Header().Set("HX-Redirect", path)
-				w.WriteHeader(http.StatusOK)
+				// For htmx: find a fragment under the redirect path
+				// e.g., redirect to /channel/6 finds fragment /channel/:id/messages
+				rendered := false
+				for _, frag := range app.Fragments {
+					// Check if fragment path starts with same prefix as redirect
+					fragParts := strings.Split(frag.Path, "/")
+					pathParts := strings.Split(path, "/")
+					if len(fragParts) > len(pathParts) {
+						match := true
+						for i, pp := range pathParts {
+							fp := fragParts[i]
+							if fp != pp && !strings.HasPrefix(fp, ":") {
+								match = false
+								break
+							}
+						}
+						if match {
+							// Build the actual fragment URL using redirect path values
+							actualPath := path + "/" + strings.Join(fragParts[len(pathParts):], "/")
+							fakeReq := r.Clone(r.Context())
+							fakeReq.URL.Path = actualPath
+							content := s.renderFragment(frag, fakeReq)
+							w.Header().Set("Content-Type", "text/html; charset=utf-8")
+							w.Write([]byte(content))
+							rendered = true
+							break
+						}
+					}
+				}
+				if !rendered {
+					w.Header().Set("HX-Redirect", path)
+					w.WriteHeader(http.StatusOK)
+				}
 			} else {
 				http.Redirect(w, r, path, http.StatusSeeOther)
 			}
