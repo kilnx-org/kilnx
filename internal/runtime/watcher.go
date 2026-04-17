@@ -3,6 +3,8 @@ package runtime
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kilnx-org/kilnx/internal/database"
@@ -28,12 +30,17 @@ func WatchAndServe(filename string, db *database.DB, port int) error {
 }
 
 func loadApp(filename string) (*parser.App, error) {
-	raw, err := os.ReadFile(filename)
+	absEntry, err := filepath.Abs(filename)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", filename, err)
+		return nil, fmt.Errorf("resolving path %s: %w", filename, err)
+	}
+	projectRoot := filepath.Dir(absEntry)
+	source, err := resolveImports(absEntry, projectRoot, nil, 0)
+	if err != nil {
+		return nil, err
 	}
 
-	source := lexer.StripComments(string(raw))
+	source = lexer.StripComments(source)
 	tokens := lexer.Tokenize(source)
 	app, err := parser.Parse(tokens, source)
 	if err != nil {
@@ -41,6 +48,61 @@ func loadApp(filename string) (*parser.App, error) {
 	}
 
 	return app, nil
+}
+
+const maxImportDepth = 64
+
+func resolveImports(absPath, projectRoot string, seen map[string]bool, depth int) (string, error) {
+	if depth > maxImportDepth {
+		return "", fmt.Errorf("import depth exceeds %d levels", maxImportDepth)
+	}
+	if seen == nil {
+		seen = make(map[string]bool)
+	}
+	if seen[absPath] {
+		return "", fmt.Errorf("circular import detected: %s", absPath)
+	}
+	seen[absPath] = true
+
+	raw, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", absPath, err)
+	}
+
+	baseDir := filepath.Dir(absPath)
+	var result strings.Builder
+	for _, line := range strings.Split(string(raw), "\n") {
+		// import statement must be at column 0, like other top-level keywords
+		// (config, model, page, action). Any indented "import ..." is content,
+		// not an import directive.
+		if strings.HasPrefix(line, "import ") {
+			importPath := strings.TrimPrefix(line, "import ")
+			importPath = strings.Trim(importPath, "\"' \t\r")
+			if importPath == "" {
+				continue
+			}
+			if !strings.HasSuffix(importPath, ".kilnx") {
+				return "", fmt.Errorf("import must be a .kilnx file: %s", importPath)
+			}
+			resolved, err := filepath.Abs(filepath.Join(baseDir, importPath))
+			if err != nil {
+				return "", fmt.Errorf("resolving import path %s: %w", importPath, err)
+			}
+			if !strings.HasPrefix(resolved, projectRoot+string(filepath.Separator)) && resolved != projectRoot {
+				return "", fmt.Errorf("import escapes project directory: %s", importPath)
+			}
+			imported, err := resolveImports(resolved, projectRoot, seen, depth+1)
+			if err != nil {
+				return "", fmt.Errorf("importing %s: %w", importPath, err)
+			}
+			result.WriteString(imported)
+			result.WriteString("\n")
+		} else {
+			result.WriteString(line)
+			result.WriteString("\n")
+		}
+	}
+	return result.String(), nil
 }
 
 func watchFile(filename string, srv *Server) {
