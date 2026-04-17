@@ -134,7 +134,13 @@ type AuthConfig struct {
 }
 
 type Model struct {
-	Name   string
+	Name string
+	// Tenant references another model. Rows of this model are scoped to
+	// that tenant. The compiler auto-synthesizes a required reference
+	// field named after the tenant model (e.g. `tenant: org` adds an
+	// `org_id` column) and the runtime injects a WHERE filter on SELECT
+	// queries against this table.
+	Tenant string
 	Fields []Field
 }
 
@@ -533,6 +539,32 @@ func (p *parserState) parseModel(app *App) (Model, error) {
 			continue
 		}
 
+		// tenant: <model> is a model-level meta directive, not a field.
+		// Must appear before any field declaration.
+		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) &&
+			tok.Value == "tenant" && p.peekIsTenantDirective() {
+			tenantModel, err := p.parseTenantDirective()
+			if err != nil {
+				return model, err
+			}
+			if model.Tenant != "" {
+				return model, fmt.Errorf("line %d: model '%s' already has a tenant directive", tok.Line, model.Name)
+			}
+			if len(model.Fields) > 0 {
+				return model, fmt.Errorf("line %d: tenant directive must appear before field declarations in model '%s'", tok.Line, model.Name)
+			}
+			model.Tenant = tenantModel
+			// Auto-synthesize a required reference field so the schema
+			// generates the <tenant>_id foreign key column.
+			model.Fields = append(model.Fields, Field{
+				Name:      tenantModel,
+				Type:      FieldReference,
+				Reference: tenantModel,
+				Required:  true,
+			})
+			continue
+		}
+
 		// Field names can be keywords (e.g., "title", "query") when used inside a model
 		if tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword {
 			field, err := p.parseField(app)
@@ -547,6 +579,39 @@ func (p *parserState) parseModel(app *App) (Model, error) {
 	}
 
 	return model, nil
+}
+
+// peekIsTenantDirective returns true if the tokens at the current position
+// match the pattern `tenant : <identifier>` (the meta directive), so we can
+// distinguish it from a regular field named "tenant".
+func (p *parserState) peekIsTenantDirective() bool {
+	if p.pos+2 >= len(p.tokens) {
+		return false
+	}
+	if p.tokens[p.pos+1].Type != lexer.TokenColon {
+		return false
+	}
+	third := p.tokens[p.pos+2]
+	if third.Type != lexer.TokenIdentifier && third.Type != lexer.TokenKeyword {
+		return false
+	}
+	// A regular field like `tenant: text required` would have a built-in
+	// field type here. Only treat as directive when the third token is a
+	// model-name identifier (not a built-in type).
+	return !lexer.IsFieldType(third.Value)
+}
+
+// parseTenantDirective parses `tenant: <model>` and returns the referenced
+// model name. Caller has already verified with peekIsTenantDirective.
+func (p *parserState) parseTenantDirective() (string, error) {
+	p.advance() // consume 'tenant'
+	p.advance() // consume ':'
+	name := p.advance().Value
+	// Consume to end of line (trailing garbage ignored, keeps grammar forgiving).
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+		p.advance()
+	}
+	return name, nil
 }
 
 func (p *parserState) parseField(app *App) (Field, error) {

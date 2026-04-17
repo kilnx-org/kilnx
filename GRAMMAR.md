@@ -60,6 +60,37 @@ model comment
   created: timestamp auto
 ```
 
+#### tenant scoping
+
+A model can declare that its rows belong to a tenant (another model) with
+the `tenant:` directive. The directive must appear before any field.
+
+```kilnx
+model org
+  name: text required unique
+
+model user
+  tenant: org
+  email: email unique
+  password: password required
+
+model quote
+  tenant: org
+  number: text required unique
+  total: float default 0
+```
+
+The compiler auto-synthesizes a required reference field for the tenant
+(so `tenant: org` adds an `org_id` foreign key column) and the runtime
+rewrites `SELECT` queries against a tenant-scoped table to include
+`WHERE <table>.<tenant>_id = :current_user.<tenant>_id`. When the query
+already has a `WHERE`, the tenant predicate is joined with `AND`.
+
+Mutations (`INSERT`, `UPDATE`, `DELETE`) are not rewritten automatically:
+you must still include the tenant column explicitly so intent stays visible,
+e.g. `INSERT INTO quote (org_id, number) VALUES (:current_user.org_id, :n)`.
+A compile-time warning on unchecked mutations is planned.
+
 ### permissions
 
 Access rules by role.

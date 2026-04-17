@@ -127,7 +127,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 				continue
 			}
 
-			sql := node.SQL
+			sql := RewriteTenantSQL(node.SQL, s.tenants)
 
 			// Handle pagination
 			if node.Paginate > 0 {

@@ -30,6 +30,7 @@ type Server struct {
 	rateLimiter  *RateLimiter
 	logger       *Logger
 	i18n         *I18n
+	tenants      TenantMap // models with a `tenant: <model>` directive
 	mu           sync.RWMutex
 	port         int
 	scheduleStop chan struct{}
@@ -40,7 +41,7 @@ func NewServer(app *parser.App, db *database.DB, port int) *Server {
 	if app.Config != nil {
 		secret = app.Config.Secret
 	}
-	s := &Server{app: app, db: db, sessions: NewSessionStore(secret), port: port}
+	s := &Server{app: app, db: db, sessions: NewSessionStore(secret), port: port, tenants: BuildTenantMap(app)}
 	// Attach DB to session store for persistence
 	if db != nil {
 		s.sessions.SetDB(db)
@@ -330,6 +331,11 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		pathParams["current_user_id"] = ctx.currentUser.UserID
 		pathParams["current_user_identity"] = ctx.currentUser.Identity
 		pathParams["current_user_role"] = ctx.currentUser.Role
+		// Expose every column of the user row as a bind param so tenant
+		// scoping and user-specific filters can reference them.
+		for k, v := range ctx.currentUser.Data {
+			pathParams["current_user."+k] = v
+		}
 	}
 
 	// Expose URL query parameters to templates and SQL
@@ -354,7 +360,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		if node.Type != parser.NodeQuery || s.db == nil {
 			continue
 		}
-		sql := node.SQL
+		sql := RewriteTenantSQL(node.SQL, s.tenants)
 
 		queryName := node.Name
 		if queryName == "" {
@@ -686,7 +692,7 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 		switch node.Type {
 		case parser.NodeQuery:
 			if s.db != nil {
-				sql := node.SQL
+				sql := RewriteTenantSQL(node.SQL, s.tenants)
 				queryName := node.Name
 				if queryName == "" {
 					queryName = "_last"
@@ -746,7 +752,8 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 		switch node.Type {
 		case parser.NodeQuery:
 			if s.db != nil {
-				rows, err := s.db.QueryRowsWithParams(node.SQL, params)
+				sql := RewriteTenantSQL(node.SQL, s.tenants)
+				rows, err := s.db.QueryRowsWithParams(sql, params)
 				if err != nil {
 					s.logger.LogError("fragment query failed", err)
 					body.WriteString("<p style=\"color:red\">Query error</p>")
@@ -858,9 +865,10 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 
 		case parser.NodeQuery:
 			if tx != nil {
-				trimmed := strings.TrimSpace(strings.ToUpper(node.SQL))
+				sql := RewriteTenantSQL(node.SQL, s.tenants)
+				trimmed := strings.TrimSpace(strings.ToUpper(sql))
 				if strings.HasPrefix(trimmed, "SELECT") {
-					rows, err := tx.QueryRowsWithParams(node.SQL, formData)
+					rows, err := tx.QueryRowsWithParams(sql, formData)
 					if err != nil {
 						lastQueryOk = false
 						lastQueryNotFound = false
@@ -878,7 +886,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 						}
 					}
 				} else {
-					err := tx.ExecWithParams(node.SQL, formData)
+					err := tx.ExecWithParams(sql, formData)
 					if err != nil {
 						lastQueryOk = false
 						lastQueryNotFound = false
@@ -1243,9 +1251,10 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 			}(recipient, subject, emailBody, templateName, paramsCopy)
 		case parser.NodeQuery:
 			if s.db != nil {
-				trimmed := strings.TrimSpace(strings.ToUpper(node.SQL))
+				sql := RewriteTenantSQL(node.SQL, s.tenants)
+				trimmed := strings.TrimSpace(strings.ToUpper(sql))
 				if strings.HasPrefix(trimmed, "SELECT") {
-					rows, err := s.db.QueryRowsWithParams(node.SQL, formData)
+					rows, err := s.db.QueryRowsWithParams(sql, formData)
 					if err != nil {
 						continue
 					}
@@ -1259,7 +1268,7 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 						}
 					}
 				} else {
-					if err := s.db.ExecWithParams(node.SQL, formData); err != nil {
+					if err := s.db.ExecWithParams(sql, formData); err != nil {
 						fmt.Printf("  on-branch query error: %v\n", err)
 					}
 				}
