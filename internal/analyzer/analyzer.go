@@ -524,7 +524,7 @@ func checkNamedParams(sql string, tokens []sqlToken, path string, modelName stri
 			diags = append(diags, Diagnostic{
 				Level: "error",
 				Message: fmt.Sprintf(
-					"named parameter ':%s' does not match any form field or URL parameter. "+
+					"named parameter ':%s' is not a form field or URL parameter. "+
 						"Did you mean ':%s'?",
 					param, suggestion),
 				Context: context,
@@ -537,7 +537,7 @@ func checkNamedParams(sql string, tokens []sqlToken, path string, modelName stri
 			diags = append(diags, Diagnostic{
 				Level: "error",
 				Message: fmt.Sprintf(
-					"named parameter ':%s' does not match any form field or URL parameter. "+
+					"named parameter ':%s' is not a model field or URL parameter. "+
 						"Available: %s",
 					param, strings.Join(avail, ", ")),
 				Context: context,
