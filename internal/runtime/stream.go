@@ -72,7 +72,7 @@ func (s *Server) sendSSEEvent(w http.ResponseWriter, flusher http.Flusher, strea
 
 	sql, tErr := RewriteTenantSQL(stream.SQL, s.tenants, params)
 	if tErr != nil {
-		s.logger.LogError("tenant guard rejected SSE query", tErr)
+		s.logger.LogSecurity("tenant guard rejected SSE query", tErr)
 		fmt.Fprintf(w, "event: error\ndata: query rejected\n\n")
 		flusher.Flush()
 		return

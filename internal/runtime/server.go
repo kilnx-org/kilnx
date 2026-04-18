@@ -352,7 +352,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		}
 		sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
 		if tErr != nil {
-			s.logger.LogError("tenant guard rejected page query", tErr)
+			s.logger.LogSecurity("tenant guard rejected page query", tErr)
 			continue
 		}
 
@@ -407,6 +407,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 			rows, err = s.db.QueryRows(sql)
 		}
 		if err != nil {
+			s.logger.LogError("page query failed", err)
 			continue
 		}
 		ctx.queries[queryName] = rows
@@ -486,7 +487,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 						}
 						sql, tErr := RewriteTenantSQL(q.SQL, s.tenants, layoutParams)
 						if tErr != nil {
-							s.logger.LogError("tenant guard rejected layout query", tErr)
+							s.logger.LogSecurity("tenant guard rejected layout query", tErr)
 							continue
 						}
 						var rows []database.Row
@@ -688,7 +689,7 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 			if s.db != nil {
 				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
 				if tErr != nil {
-					s.logger.LogError("tenant guard rejected fragment query", tErr)
+					s.logger.LogSecurity("tenant guard rejected fragment query", tErr)
 					continue
 				}
 				queryName := node.Name
@@ -752,7 +753,7 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 			if s.db != nil {
 				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, params)
 				if tErr != nil {
-					s.logger.LogError("tenant guard rejected fragment query", tErr)
+					s.logger.LogSecurity("tenant guard rejected fragment query", tErr)
 					body.WriteString("<p style=\"color:red\">Query rejected</p>")
 					continue
 				}
@@ -862,7 +863,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			if tx != nil {
 				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, formData)
 				if tErr != nil {
-					s.logger.LogError("tenant guard rejected action query", tErr)
+					s.logger.LogSecurity("tenant guard rejected action query", tErr)
 					lastQueryOk = false
 					lastQueryNotFound = false
 					continue
@@ -945,7 +946,12 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			recipient := resolveEmailRecipient(node.EmailTo, formData)
 			// Resolve recipient from SQL query if specified
 			if toQuery, ok := node.Props["to_query"]; ok && toQuery != "" && s.db != nil {
-				rows, err := s.db.QueryRowsWithParams(toQuery, formData)
+				scopedToQuery, tErr := RewriteTenantSQL(toQuery, s.tenants, formData)
+				if tErr != nil {
+					s.logger.LogSecurity("tenant guard rejected email recipient query", tErr)
+					continue
+				}
+				rows, err := s.db.QueryRowsWithParams(scopedToQuery, formData)
 				if err == nil && len(rows) > 0 {
 					for _, v := range rows[0] {
 						recipient = v
@@ -1002,7 +1008,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 					if prevNode.Type == parser.NodeQuery && prevNode.Name == dataName {
 						prevSQL, tErr := RewriteTenantSQL(prevNode.SQL, s.tenants, formData)
 						if tErr != nil {
-							s.logger.LogError("tenant guard rejected PDF data query", tErr)
+							s.logger.LogSecurity("tenant guard rejected PDF data query", tErr)
 							continue
 						}
 						rows, err := tx.QueryRowsWithParams(prevSQL, formData)
@@ -1129,7 +1135,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			if node.QuerySQL != "" && tx != nil {
 				respondSQL, tErr := RewriteTenantSQL(node.QuerySQL, s.tenants, formData)
 				if tErr != nil {
-					s.logger.LogError("tenant guard rejected respond query", tErr)
+					s.logger.LogSecurity("tenant guard rejected respond query", tErr)
 					http.Error(w, "Forbidden", http.StatusForbidden)
 					return
 				}
@@ -1239,7 +1245,12 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 		case parser.NodeSendEmail:
 			recipient := resolveEmailRecipient(node.EmailTo, formData)
 			if toQuery, ok := node.Props["to_query"]; ok && toQuery != "" && s.db != nil {
-				rows, err := s.db.QueryRowsWithParams(toQuery, formData)
+				scopedToQuery, tErr := RewriteTenantSQL(toQuery, s.tenants, formData)
+				if tErr != nil {
+					s.logger.LogSecurity("tenant guard rejected email recipient query", tErr)
+					continue
+				}
+				rows, err := s.db.QueryRowsWithParams(scopedToQuery, formData)
 				if err == nil && len(rows) > 0 {
 					for _, v := range rows[0] {
 						recipient = v
@@ -1266,7 +1277,7 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 			if s.db != nil {
 				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, formData)
 				if tErr != nil {
-					s.logger.LogError("tenant guard rejected on-branch query", tErr)
+					s.logger.LogSecurity("tenant guard rejected on-branch query", tErr)
 					continue
 				}
 				trimmed := strings.TrimSpace(strings.ToUpper(sql))

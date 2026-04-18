@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"runtime"
 	"time"
 
@@ -49,6 +50,16 @@ func (l *Logger) LogSlowQuery(sql string, duration time.Duration) {
 			duration.Round(time.Millisecond),
 			truncateSQL(sql))
 	}
+}
+
+// LogSecurity always emits a security-relevant event regardless of the
+// user's `log.errors` config. Routed to stderr so operators never lose
+// the signal that a tenant guard, CSRF check, or similar invariant
+// fired. Nil-tolerant for tests.
+func (l *Logger) LogSecurity(msg string, err error) {
+	line := fmt.Sprintf("[%s] SECURITY: %s: %v\n",
+		time.Now().Format("15:04:05"), msg, err)
+	_, _ = os.Stderr.WriteString(line)
 }
 
 // LogError logs an error, optionally with a goroutine stack trace.

@@ -377,7 +377,7 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 			// escape hatch guarded by role checks.
 			sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, params)
 			if tErr != nil {
-				s.logger.LogError("tenant guard rejected scheduled query", tErr)
+				s.logger.LogSecurity("tenant guard rejected scheduled query", tErr)
 				return fmt.Errorf("tenant guard: %w", tErr)
 			}
 
@@ -426,7 +426,7 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 			if toQuery, ok := node.Props["to_query"]; ok && toQuery != "" && s.db != nil {
 				scopedQuery, tErr := RewriteTenantSQL(toQuery, s.tenants, params)
 				if tErr != nil {
-					s.logger.LogError("tenant guard rejected recipient query", tErr)
+					s.logger.LogSecurity("tenant guard rejected recipient query", tErr)
 				} else {
 					rows, err := s.db.QueryRowsWithParams(scopedQuery, params)
 					if err == nil && len(rows) > 0 {

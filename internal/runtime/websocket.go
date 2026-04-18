@@ -179,7 +179,7 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 				if node.Type == parser.NodeQuery {
 					sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
 					if tErr != nil {
-						s.logger.LogError("tenant guard rejected websocket on-connect query", tErr)
+						s.logger.LogSecurity("tenant guard rejected websocket on-connect query", tErr)
 						continue
 					}
 					rows, err := s.db.QueryRowsWithParams(sql, pathParams)

@@ -210,6 +210,53 @@ func TestRewriteTenantSQL_MutationOnNonTenantTablePasses(t *testing.T) {
 	}
 }
 
+// -------- mutation bypass guards --------
+
+func TestRewriteTenantSQL_MutationNeedleInsideCommentRejected(t *testing.T) {
+	// Bind substring is hidden in a comment: must fail closed.
+	in := "DELETE FROM quote WHERE id = :id /* :current_user.org_id */"
+	_, err := RewriteTenantSQL(in, BuildTenantMap(buildApp(t)), withTenantParam())
+	if !errors.Is(err, ErrUnsafeTenantShape) {
+		t.Fatalf("expected ErrUnsafeTenantShape (comment rejected), got %v", err)
+	}
+}
+
+func TestRewriteTenantSQL_MutationWithSubqueryRejected(t *testing.T) {
+	cases := []string{
+		"UPDATE quote SET x = 1 WHERE id IN (SELECT id FROM quote WHERE org_id = :current_user.org_id)",
+		"DELETE FROM quote WHERE material_id IN (SELECT id FROM material) AND org_id = :current_user.org_id",
+	}
+	for _, in := range cases {
+		_, err := RewriteTenantSQL(in, BuildTenantMap(buildApp(t)), withTenantParam())
+		if !errors.Is(err, ErrUnsafeTenantShape) {
+			t.Errorf("mutation with subquery %q should fail closed, got %v", in, err)
+		}
+	}
+}
+
+func TestRewriteTenantSQL_NonTenantMutationTouchingTenantRejected(t *testing.T) {
+	// Outer table is non-tenant, but inner subquery touches a tenant-scoped
+	// table: the outer mutation could indirectly cross tenants.
+	in := "DELETE FROM material WHERE id IN (SELECT material_id FROM quote)"
+	_, err := RewriteTenantSQL(in, BuildTenantMap(buildApp(t)), withTenantParam())
+	if !errors.Is(err, ErrUnsafeTenantShape) {
+		t.Fatalf("expected ErrUnsafeTenantShape for non-tenant mutation touching tenant table, got %v", err)
+	}
+}
+
+func TestRewriteTenantSQL_StringLiteralMentioningTenantPasses(t *testing.T) {
+	// A harmless string literal containing the word `quote` must NOT
+	// trigger touchesTenantTable false positive.
+	in := "SELECT id FROM material WHERE note = 'do not quote me' AND sku = 'QT-1'"
+	got, err := RewriteTenantSQL(in, BuildTenantMap(buildApp(t)), withTenantParam())
+	if err != nil {
+		t.Fatalf("harmless string literal should pass, got %v", err)
+	}
+	if got != in {
+		t.Errorf("non-tenant table should be unchanged, got %q", got)
+	}
+}
+
 // -------- sensitive current_user field redaction --------
 
 func TestIsSensitiveField(t *testing.T) {

@@ -124,7 +124,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 
 			sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
 			if tErr != nil {
-				s.logger.LogError("tenant guard rejected api query", tErr)
+				s.logger.LogSecurity("tenant guard rejected api query", tErr)
 				writeJSON(w, http.StatusForbidden, map[string]string{
 					"error": "query rejected by tenant policy",
 				})

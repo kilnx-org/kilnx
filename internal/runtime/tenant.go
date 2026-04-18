@@ -60,6 +60,38 @@ var trailingRe = regexp.MustCompile(`(?is)\b(group\s+by|order\s+by|having|limit|
 // fail-closed path.
 var mutationTableRe = regexp.MustCompile(`(?is)^\s*(?:(insert\s+into)|(update)|(delete\s+from))\s+"?([a-zA-Z_][a-zA-Z0-9_]*)"?`)
 
+// sqlCommentRe matches both block comments and line comments. Used to
+// strip comments BEFORE security-sensitive text scans so that an
+// attacker cannot hide a needle or a tenant-table name inside a
+// comment.
+var sqlCommentRe = regexp.MustCompile(`(?s)/\*.*?\*/|--[^\n]*`)
+
+// sqlStringLiteralRe matches single-quoted string literals with the
+// standard SQL doubling escape. Stripping literals before content scans
+// prevents false positives (WHERE note = 'join us today' must not
+// reject on the word JOIN) and false negatives (attacker hiding a
+// needle inside a literal).
+var sqlStringLiteralRe = regexp.MustCompile(`'(?:''|[^'])*'`)
+
+// subqueryInMutationRe is a heuristic that matches a mutation body
+// containing a nested SELECT (subquery). We refuse to reason about
+// nested SELECTs inside INSERT/UPDATE/DELETE because the guarantee we
+// offer is scoping on the outer statement only.
+var subqueryInMutationRe = regexp.MustCompile(`(?is)\(\s*select\s+`)
+
+// stripSQLNoise removes comments and string literals. The returned
+// string preserves overall length by replacing stripped ranges with
+// spaces, so byte positions remain valid for downstream regexps.
+func stripSQLNoise(sql string) string {
+	out := sqlCommentRe.ReplaceAllStringFunc(sql, func(s string) string {
+		return strings.Repeat(" ", len(s))
+	})
+	out = sqlStringLiteralRe.ReplaceAllStringFunc(out, func(s string) string {
+		return strings.Repeat(" ", len(s))
+	})
+	return out
+}
+
 // unsafeShapeSignals are substrings / patterns that indicate the SELECT
 // is outside the rewriter's safe-to-modify envelope. Presence of any one
 // triggers ErrUnsafeTenantShape so the caller fails the query instead of
@@ -89,12 +121,22 @@ func RewriteTenantSQL(sql string, tenants TenantMap, params map[string]string) (
 		return sql, nil
 	}
 
-	trimmed := strings.TrimSpace(sql)
+	// SQL comments are always unsafe in tenant-sensitive SQL: they let an
+	// attacker hide tokens from our scans. Reject before stripping.
+	if sqlCommentRe.MatchString(sql) {
+		return "", fmt.Errorf("%w: %s", ErrUnsafeTenantShape, firstLine(sql))
+	}
+
+	// Strip string literals so harmless content (e.g. WHERE note = 'join us')
+	// does not trigger false positives in shape detection, and so an
+	// attacker cannot hide a tenant-table name inside a literal.
+	scrubbed := stripSQLNoise(sql)
+	trimmed := strings.TrimSpace(scrubbed)
 	lower := strings.ToLower(trimmed)
 
 	// Route mutations through the mutation checker.
 	if isMutationStart(lower) {
-		if err := checkTenantMutation(sql, tenants, params); err != nil {
+		if err := checkTenantMutation(sql, scrubbed, tenants, params); err != nil {
 			return "", err
 		}
 		return sql, nil
@@ -103,35 +145,35 @@ func RewriteTenantSQL(sql string, tenants TenantMap, params map[string]string) (
 	if !strings.HasPrefix(lower, "select") {
 		// Non-SELECT, non-mutation shape (CTE `WITH`, pragma, etc.).
 		// Refuse if any tenant-scoped table is referenced.
-		if touchesTenantTable(sql, tenants) {
+		if touchesTenantTable(scrubbed, tenants) {
 			return "", fmt.Errorf("%w: %s", ErrUnsafeTenantShape, firstLine(sql))
 		}
 		return sql, nil
 	}
 
-	match := tableFromSelectRe.FindStringSubmatchIndex(sql)
+	match := tableFromSelectRe.FindStringSubmatchIndex(scrubbed)
 	if match == nil {
 		// A SELECT without a parseable FROM might still touch a tenant
 		// table (e.g. CTE). If any tenant-scoped model name appears in
 		// the SQL, fail closed.
-		if touchesTenantTable(sql, tenants) {
+		if touchesTenantTable(scrubbed, tenants) {
 			return "", fmt.Errorf("%w: %s", ErrUnsafeTenantShape, firstLine(sql))
 		}
 		return sql, nil
 	}
-	table := sql[match[2]:match[3]]
+	table := scrubbed[match[2]:match[3]]
 	tenant, ok := tenants[strings.ToLower(table)]
 	if !ok {
 		// Primary table is not tenant-scoped, but a JOIN, subquery or CTE
 		// could still pull in tenant-scoped rows. Detect and reject.
-		if touchesTenantTable(sql, tenants) {
+		if touchesTenantTable(scrubbed, tenants) {
 			return "", fmt.Errorf("%w: %s", ErrUnsafeTenantShape, firstLine(sql))
 		}
 		return sql, nil
 	}
 
 	// Reject shapes we know we can't rewrite safely.
-	if unsafeShapeRe.MatchString(sql) {
+	if unsafeShapeRe.MatchString(scrubbed) {
 		return "", fmt.Errorf("%w: %s", ErrUnsafeTenantShape, firstLine(sql))
 	}
 
@@ -167,15 +209,30 @@ func RewriteTenantSQL(sql string, tenants TenantMap, params map[string]string) (
 
 // checkTenantMutation verifies that an INSERT / UPDATE / DELETE on a
 // tenant-scoped table binds the tenant column explicitly. This is not a
-// rewrite: intent must remain visible in the .kilnx source. We accept
-// the mutation if the SQL text textually references
-// `:current_user.<tenant>_id` anywhere.
-func checkTenantMutation(sql string, tenants TenantMap, params map[string]string) error {
-	m := mutationTableRe.FindStringSubmatch(sql)
+// rewrite: intent must remain visible in the .kilnx source. The
+// `scrubbed` argument has had comments and string literals stripped so
+// we do not accept a bind needle hidden inside a comment.
+func checkTenantMutation(sql, scrubbed string, tenants TenantMap, params map[string]string) error {
+	// Subqueries inside mutations are out of scope for the simple
+	// textual guard: the outer statement's scope cannot be verified
+	// by looking at the inner SELECT. Reject and ask the developer
+	// to refactor or split the mutation.
+	if subqueryInMutationRe.MatchString(scrubbed) {
+		return fmt.Errorf("%w: %s", ErrUnsafeTenantShape, firstLine(sql))
+	}
+
+	// Any SQL comment or multi-statement shape is also refused on the
+	// mutation path (the SELECT path reuses unsafeShapeRe; keep mutation
+	// and SELECT consistent).
+	if unsafeShapeRe.MatchString(scrubbed) {
+		return fmt.Errorf("%w: %s", ErrUnsafeTenantShape, firstLine(sql))
+	}
+
+	m := mutationTableRe.FindStringSubmatch(scrubbed)
 	if m == nil {
-		// Unparseable mutation on unknown table: fail closed if any
-		// tenant-scoped model name appears in the SQL.
-		if touchesTenantTable(sql, tenants) {
+		// Unparseable mutation: fail closed if any tenant-scoped model
+		// name appears anywhere in the scrubbed SQL.
+		if touchesTenantTable(scrubbed, tenants) {
 			return fmt.Errorf("%w: %s", ErrUnsafeTenantShape, firstLine(sql))
 		}
 		return nil
@@ -183,10 +240,20 @@ func checkTenantMutation(sql string, tenants TenantMap, params map[string]string
 	table := m[4]
 	tenant, ok := tenants[strings.ToLower(table)]
 	if !ok {
+		// Outer target is non-tenant, but a hidden reference to a
+		// tenant-scoped table elsewhere (string-literal aside) means
+		// the developer may be trying to cross tenants. Refuse.
+		if touchesTenantTable(scrubbed, tenants) {
+			return fmt.Errorf("%w: %s", ErrUnsafeTenantShape, firstLine(sql))
+		}
 		return nil
 	}
+
+	// Require the bind needle in the scrubbed SQL (so it cannot live
+	// inside a comment or string literal) and in the lowercase form
+	// the DB binder will see at execution time.
 	needle := ":current_user." + tenant + "_id"
-	if !strings.Contains(strings.ToLower(sql), strings.ToLower(needle)) {
+	if !strings.Contains(scrubbed, needle) {
 		return fmt.Errorf("%w: %s", ErrMutationNotScoped, firstLine(sql))
 	}
 	if _, present := params["current_user."+tenant+"_id"]; !present {
