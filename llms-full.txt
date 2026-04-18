@@ -1006,12 +1006,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 - `import` treated as directive only at column 0, allowing the token to appear elsewhere
 - Timezone-aware time formats parsed in `date` and `timeago` filters
 - Named parameter error messages clarified
-- `#` characters preserved inside `html` blocks (closes [#32](https://github.com/kilnx-org/kilnx/issues/32), [#33](https://github.com/kilnx-org/kilnx/pull/33))
 
 ### Security
-- Mutation bypass via SQL comment, subquery, and string literal closed
-- Tenant guard fails closed and redacts sensitive user fields when rendering
-- Static directory traversal and import traversal blocked; import depth limited
+- Mutation bypass via SQL comment, subquery, and string literal closed ([#52](https://github.com/kilnx-org/kilnx/pull/52))
+- Tenant guard fails closed and redacts sensitive user fields when rendering ([#52](https://github.com/kilnx-org/kilnx/pull/52))
+- Static directory traversal blocked ([#42](https://github.com/kilnx-org/kilnx/pull/42)); import traversal blocked and depth limited ([#43](https://github.com/kilnx-org/kilnx/pull/43))
 
 ## [0.1.1] - 2026-03-31
 

@@ -31,10 +31,9 @@ Constraints: `required`, `unique`, `default`, `auto`, `min`, `max`.
 
 ## Example apps
 
-- [CRM](https://github.com/kilnx-org/kilnx/blob/main/examples/crm/app.kilnx): JOINs, Tailwind, 813 LOC
-- [Chat](https://github.com/kilnx-org/kilnx/blob/main/examples/chat/app.kilnx): WebSocket, SSE, reactions, threads
-- [Dashboard](https://github.com/kilnx-org/kilnx/blob/main/examples/dashboard/app.kilnx): webhooks, SSE, aggregated SQL
-- [SaaS](https://github.com/kilnx-org/kilnx/blob/main/examples/saas/app.kilnx): roles, i18n, jobs, rate limiting
+- [hello.kilnx](https://github.com/kilnx-org/kilnx/blob/main/examples/hello.kilnx): minimal single-file app
+- [blog.kilnx](https://github.com/kilnx-org/kilnx/blob/main/examples/blog.kilnx): models, auth, pages, actions
+- [kilnx-example-chat](https://github.com/kilnx-org/kilnx-example-chat): multi-file app with WebSocket, SSE, auth, static assets, Dockerfile
 
 ## Optional
 
