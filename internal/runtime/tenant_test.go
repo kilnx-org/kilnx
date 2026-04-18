@@ -214,21 +214,21 @@ func TestRewriteTenantSQL_MutationOnNonTenantTablePasses(t *testing.T) {
 
 func TestIsSensitiveField(t *testing.T) {
 	cases := map[string]bool{
-		"password":                true,
-		"Password":                true,
-		"password_hash":           true,
-		"reset_token":             true,
-		"email_verification_token":true,
-		"api_key":                 true,
-		"apikey":                  true,
-		"secret":                  true,
-		"salt":                    true,
-		"mfa_secret":              true,
-		"email":                   false,
-		"name":                    false,
-		"org_id":                  false,
-		"role":                    false,
-		"locale":                  false,
+		"password":                 true,
+		"Password":                 true,
+		"password_hash":            true,
+		"reset_token":              true,
+		"email_verification_token": true,
+		"api_key":                  true,
+		"apikey":                   true,
+		"secret":                   true,
+		"salt":                     true,
+		"mfa_secret":               true,
+		"email":                    false,
+		"name":                     false,
+		"org_id":                   false,
+		"role":                     false,
+		"locale":                   false,
 	}
 	for name, want := range cases {
 		if got := isSensitiveField(name, ""); got != want {
