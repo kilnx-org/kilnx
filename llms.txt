@@ -31,9 +31,10 @@ Constraints: `required`, `unique`, `default`, `auto`, `min`, `max`.
 
 ## Example apps
 
-- [hello.kilnx](https://github.com/kilnx-org/kilnx/blob/main/examples/hello.kilnx): minimal single-file app
-- [blog.kilnx](https://github.com/kilnx-org/kilnx/blob/main/examples/blog.kilnx): models, auth, pages, actions
-- [kilnx-example-chat](https://github.com/kilnx-org/kilnx-example-chat): multi-file app with WebSocket, SSE, auth, static assets, Dockerfile
+Curated catalog lives in a dedicated repo: [kilnx-org/examples](https://github.com/kilnx-org/examples).
+
+- [hello](https://github.com/kilnx-org/examples/tree/main/hello): two-line minimal app
+- [chat](https://github.com/kilnx-org/examples/tree/main/chat): Slack-style team chat with channels, threads, DMs, reactions, typing indicators, uploads (multi-file, ~280 LOC)
 
 ## Optional
 
