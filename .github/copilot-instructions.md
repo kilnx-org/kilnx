@@ -1,0 +1,1 @@
+See [AGENTS.md](../AGENTS.md) for authoritative instructions when working in this repository or generating Kilnx code. Read [PRINCIPLES.md](../PRINCIPLES.md) and [GRAMMAR.md](../GRAMMAR.md) before writing `.kilnx` source. Do not invent keywords or field types outside those defined there.

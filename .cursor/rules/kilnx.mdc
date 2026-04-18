@@ -1,0 +1,24 @@
+---
+description: Kilnx language conventions and hard rules for generated .kilnx code
+alwaysApply: true
+---
+
+Authoritative references (read before writing):
+
+- [AGENTS.md](mdc:AGENTS.md) — hard rules for agents in this repo
+- [PRINCIPLES.md](mdc:PRINCIPLES.md) — 11 constitutional rules
+- [GRAMMAR.md](mdc:GRAMMAR.md) — complete syntax specification
+- [FEATURES.md](mdc:FEATURES.md) — working feature catalogue
+- [llms.txt](mdc:llms.txt) / [llms-full.txt](mdc:llms-full.txt) — LLM-oriented index and concatenation
+
+Hard rules when generating `.kilnx` code:
+
+- Keywords are finite. Top-level blocks: `config`, `model`, `auth`, `permissions`, `layout`, `page`, `action`, `fragment`, `stream`, `socket`, `api`, `webhook`, `job`, `schedule`, `test`.
+- Field types are finite: `text`, `email`, `int`, `float`, `bool`, `timestamp`, `richtext`, `option`, `password`, `image`, `phone`.
+- Constraints: `required`, `unique`, `default`, `auto`, `min`, `max`.
+- SQL is inline via `query name: SELECT ...`. No ORMs. No string concatenation into SQL.
+- Security (CSRF, bcrypt, session HMAC, HTML escaping, SQL binding) is built in. Do not reimplement it in user code.
+- No JavaScript in generated apps. htmx only for interactivity.
+- No external runtime dependencies in user code. One `.kilnx` file, optionally split via `import` statements.
+
+If the grammar is silent on a construct you want, it does not exist. Propose an RFC issue rather than inventing syntax.
