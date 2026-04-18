@@ -83,11 +83,40 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkModelMinMax(app.Models)...)
 	diags = append(diags, checkAuthRef(app, schema)...)
 	diags = append(diags, checkModelRefs(app, schema)...)
+	diags = append(diags, checkTenantRefs(app, schema)...)
 	diags = append(diags, checkAllSQL(app, schema)...)
 	diags = append(diags, checkSecurity(app, schema)...)
 	diags = append(diags, checkTemplateInterpolations(app, schema)...)
 	diags = append(diags, checkTableColumnRefs(app, schema)...)
 
+	return diags
+}
+
+// checkTenantRefs makes sure every `tenant: <model>` directive points
+// at an actual model in the app, and that a model does not set itself
+// as its own tenant.
+func checkTenantRefs(app *parser.App, schema *Schema) []Diagnostic {
+	var diags []Diagnostic
+	for _, m := range app.Models {
+		if m.Tenant == "" {
+			continue
+		}
+		if m.Tenant == m.Name {
+			diags = append(diags, Diagnostic{
+				Level:   "error",
+				Message: fmt.Sprintf("model '%s' cannot be its own tenant", m.Name),
+				Context: "model " + m.Name,
+			})
+			continue
+		}
+		if _, ok := schema.Tables[m.Tenant]; !ok {
+			diags = append(diags, Diagnostic{
+				Level:   "error",
+				Message: fmt.Sprintf("model '%s' declares tenant '%s' which is not a defined model", m.Name, m.Tenant),
+				Context: "model " + m.Name,
+			})
+		}
+	}
 	return diags
 }
 

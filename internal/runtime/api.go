@@ -54,14 +54,9 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 		for k, v := range formData {
 			pathParams[k] = v
 		}
-		// Add current_user fields
-		session := s.getSession(r)
-		if session != nil {
-			pathParams["current_user_id"] = session.UserID
-			pathParams["current_user_identity"] = session.Identity
-			pathParams["current_user_role"] = session.Role
-		}
 	}
+	// Add current_user fields (available for every method, needed by tenant guard)
+	s.populateCurrentUserParams(pathParams, s.getSession(r))
 
 	pageNum := 1
 	if pg, ok := pathParams["page"]; ok {
@@ -127,7 +122,14 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 				continue
 			}
 
-			sql := node.SQL
+			sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
+			if tErr != nil {
+				s.logger.LogSecurity("tenant guard rejected api query", tErr)
+				writeJSON(w, http.StatusForbidden, map[string]string{
+					"error": "query rejected by tenant policy",
+				})
+				return
+			}
 
 			// Handle pagination
 			if node.Paginate > 0 {
