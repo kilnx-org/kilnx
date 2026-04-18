@@ -103,11 +103,26 @@ func checkAuthPages(app *parser.App) []Diagnostic {
 	if app == nil || app.Auth == nil {
 		return nil
 	}
+	// Every auth path is configurable in the `auth` block
+	// (login:, register:, forgot:, reset:). Fall back to the built-in
+	// defaults if the user did not set them explicitly.
 	loginPath := app.Auth.LoginPath
 	if loginPath == "" {
 		loginPath = "/login"
 	}
-	required := []string{loginPath, "/register", "/forgot-password", "/reset-password"}
+	registerPath := app.Auth.RegisterPath
+	if registerPath == "" {
+		registerPath = "/register"
+	}
+	forgotPath := app.Auth.ForgotPath
+	if forgotPath == "" {
+		forgotPath = "/forgot-password"
+	}
+	resetPath := app.Auth.ResetPath
+	if resetPath == "" {
+		resetPath = "/reset-password"
+	}
+	required := []string{loginPath, registerPath, forgotPath, resetPath}
 	declared := make(map[string]bool)
 	for _, p := range app.Pages {
 		declared[p.Path] = true

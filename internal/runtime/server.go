@@ -177,30 +177,26 @@ func (s *Server) Start() error {
 		// always fall through to user-declared pages; the analyzer
 		// enforces that the app declares a page at each auth path, so
 		// reaching GET here with no page means the user bypassed
-		// `kilnx check`.
-		if app.Auth != nil {
+		// `kilnx check`. All four auth paths honor the values configured
+		// in the `auth` block (e.g. `login: /entrar`, `register: /cadastrar`).
+		if app.Auth != nil && r.Method != http.MethodGet {
 			p := r.URL.Path
-			if r.Method != http.MethodGet {
-				if p == app.Auth.LoginPath {
-					s.handleLogin(w, r)
-					return
-				}
-				if p == "/logout" {
-					s.handleLogout(w, r)
-					return
-				}
-				if p == "/register" {
-					s.handleRegister(w, r)
-					return
-				}
-				if p == "/forgot-password" {
-					s.handleForgotPassword(w, r)
-					return
-				}
-				if p == "/reset-password" {
-					s.handleResetPassword(w, r)
-					return
-				}
+			switch p {
+			case app.Auth.LoginPath:
+				s.handleLogin(w, r)
+				return
+			case app.Auth.LogoutPath:
+				s.handleLogout(w, r)
+				return
+			case app.Auth.RegisterPath:
+				s.handleRegister(w, r)
+				return
+			case app.Auth.ForgotPath:
+				s.handleForgotPassword(w, r)
+				return
+			case app.Auth.ResetPath:
+				s.handleResetPassword(w, r)
+				return
 			}
 		}
 

@@ -276,6 +276,64 @@ func TestAnalyze_AuthPagesRespectCustomLoginPath(t *testing.T) {
 	}
 }
 
+func TestAnalyze_AuthPagesHonorCustomSlugs(t *testing.T) {
+	// All four auth paths configurable: if the app uses Portuguese
+	// slugs, the analyzer must demand those exact paths (not the
+	// english defaults) and must NOT demand the defaults.
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "user", Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+				{Name: "email", Type: parser.FieldEmail},
+				{Name: "password", Type: parser.FieldPassword},
+			}},
+		},
+		Auth: &parser.AuthConfig{
+			Table:        "user",
+			Identity:     "email",
+			Password:     "password",
+			LoginPath:    "/entrar",
+			RegisterPath: "/cadastrar",
+			ForgotPath:   "/senha/esqueci",
+			ResetPath:    "/senha/redefinir",
+		},
+		Pages: []parser.Page{
+			{Path: "/entrar"},
+			{Path: "/cadastrar"},
+			{Path: "/senha/esqueci"},
+			{Path: "/senha/redefinir"},
+		},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "required page") {
+			t.Errorf("all 4 custom slugs declared; unexpected error: %s", d.Message)
+		}
+	}
+
+	// Missing pt-BR page triggers error about THAT path, not /register.
+	app.Pages = []parser.Page{
+		{Path: "/entrar"},
+		{Path: "/senha/esqueci"},
+		{Path: "/senha/redefinir"},
+	}
+	diags = Analyze(app)
+	wantMsg := "'/cadastrar'"
+	dontWant := "'/register'"
+	foundWant := false
+	for _, d := range diags {
+		if strings.Contains(d.Message, dontWant) {
+			t.Errorf("analyzer asked for default '/register' but custom slug is '/cadastrar': %s", d.Message)
+		}
+		if strings.Contains(d.Message, wantMsg) {
+			foundWant = true
+		}
+	}
+	if !foundWant {
+		t.Errorf("expected error mentioning '/cadastrar' (custom register slug), got diagnostics: %+v", diags)
+	}
+}
+
 func TestAnalyze_NoAuthBlock_NoPagesRequired(t *testing.T) {
 	app := &parser.App{
 		Models: []parser.Model{

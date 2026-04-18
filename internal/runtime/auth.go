@@ -502,18 +502,18 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if identity == "" || password == "" {
-		redirectWithError(w, r, "/register", "All fields are required")
+		redirectWithError(w, r, app.Auth.RegisterPath, "All fields are required")
 		return
 	}
 
 	if len(password) < 6 {
-		redirectWithError(w, r, "/register", "Password must be at least 6 characters")
+		redirectWithError(w, r, app.Auth.RegisterPath, "Password must be at least 6 characters")
 		return
 	}
 
 	hash, err := HashPassword(password)
 	if err != nil {
-		redirectWithError(w, r, "/register", "Server error")
+		redirectWithError(w, r, app.Auth.RegisterPath, "Server error")
 		return
 	}
 
@@ -530,10 +530,10 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
-			redirectWithError(w, r, "/register", "An account with that email already exists")
+			redirectWithError(w, r, app.Auth.RegisterPath, "An account with that email already exists")
 			return
 		}
-		redirectWithError(w, r, "/register", "Could not create account")
+		redirectWithError(w, r, app.Auth.RegisterPath, "Could not create account")
 		return
 	}
 
@@ -562,26 +562,26 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	app := s.getApp()
+	if app.Auth == nil || s.db == nil {
+		http.Error(w, "Password reset is not available", http.StatusInternalServerError)
+		return
+	}
+
 	if err := r.ParseForm(); err != nil {
-		redirectWithError(w, r, "/forgot-password", "Invalid request")
+		redirectWithError(w, r, app.Auth.ForgotPath, "Invalid request")
 		return
 	}
 
 	csrf := r.FormValue("_csrf")
 	if !validateCSRFToken(csrf) {
-		redirectWithError(w, r, "/forgot-password", "Invalid CSRF token. Please try again.")
+		redirectWithError(w, r, app.Auth.ForgotPath, "Invalid CSRF token. Please try again.")
 		return
 	}
 
 	email := strings.TrimSpace(r.FormValue("email"))
 	if email == "" {
-		redirectWithError(w, r, "/forgot-password", "Email is required")
-		return
-	}
-
-	app := s.getApp()
-	if app.Auth == nil || s.db == nil {
-		redirectWithError(w, r, "/forgot-password", "Password reset is not available")
+		redirectWithError(w, r, app.Auth.ForgotPath, "Email is required")
 		return
 	}
 
@@ -595,7 +595,7 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	if err != nil || len(rows) == 0 {
 		// Don't reveal whether the email exists; redirect to the page
 		// with ?sent=1 so it can render a generic confirmation.
-		http.Redirect(w, r, "/forgot-password?sent=1", http.StatusSeeOther)
+		http.Redirect(w, r, app.Auth.ForgotPath+"?sent=1", http.StatusSeeOther)
 		return
 	}
 
@@ -660,7 +660,7 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("  ╚══════════════════════════════════════════╝\n\n")
 	}
 
-	http.Redirect(w, r, "/forgot-password?sent=1", http.StatusSeeOther)
+	http.Redirect(w, r, app.Auth.ForgotPath+"?sent=1", http.StatusSeeOther)
 }
 
 // handleResetPassword processes the password reset form
@@ -672,12 +672,18 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if token == "" {
-		http.Redirect(w, r, "/forgot-password", http.StatusSeeOther)
+	app := s.getApp()
+	if app.Auth == nil || s.db == nil {
+		http.Error(w, "Password reset is not available", http.StatusInternalServerError)
 		return
 	}
 
-	resetURL := "/reset-password?token=" + url.QueryEscape(token)
+	if token == "" {
+		http.Redirect(w, r, app.Auth.ForgotPath, http.StatusSeeOther)
+		return
+	}
+
+	resetURL := app.Auth.ResetPath + "?token=" + url.QueryEscape(token)
 
 	if err := r.ParseForm(); err != nil {
 		redirectWithError(w, r, resetURL, "Invalid request")
@@ -722,7 +728,6 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update password
-	app := s.getApp()
 	table := sanitizeIdentifier(app.Auth.Table)
 	identity := sanitizeIdentifier(app.Auth.Identity)
 	passField := sanitizeIdentifier(app.Auth.Password)
@@ -743,11 +748,7 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Redirect to login with success flag
-	loginPath := "/login"
-	if app.Auth != nil && app.Auth.LoginPath != "" {
-		loginPath = app.Auth.LoginPath
-	}
-	http.Redirect(w, r, loginPath+"?reset=1", http.StatusSeeOther)
+	http.Redirect(w, r, app.Auth.LoginPath+"?reset=1", http.StatusSeeOther)
 }
 
 func sanitizeIdentifier(name string) string {

@@ -211,6 +211,82 @@ page /home requires auth
 	}
 }
 
+// TestAuthOverride_CustomSlugs proves all four auth paths are
+// configurable in the auth block. Apps that want Portuguese (or any
+// other language) slugs declare them via `register:`, `forgot:`,
+// `reset:` and the runtime + analyzer honor them end to end.
+func TestAuthOverride_CustomSlugs(t *testing.T) {
+	src := `
+config
+  secret: "test-secret-32-bytes-min-len-padding"
+
+model user
+  name: text required
+  email: email unique
+  password: password required
+
+auth
+  table: user
+  identity: email
+  password: password
+  login: /entrar
+  register: /cadastrar
+  forgot: /senha/esqueci
+  reset: /senha/redefinir
+  after login: /inicio
+
+page /entrar
+  html
+    <div class="marker-entrar">Entrar</div>
+
+page /cadastrar
+  html
+    <div class="marker-cadastrar">Cadastrar</div>
+
+page /senha/esqueci
+  html
+    <div class="marker-esqueci">Esqueci</div>
+
+page /senha/redefinir
+  html
+    <div class="marker-redefinir">Redefinir</div>
+
+page /inicio requires auth
+  html
+    inicio
+`
+	baseURL, cleanup := startTestServer(t, src)
+	defer cleanup()
+
+	cases := []struct{ path, marker string }{
+		{"/entrar", "marker-entrar"},
+		{"/cadastrar", "marker-cadastrar"},
+		{"/senha/esqueci", "marker-esqueci"},
+		{"/senha/redefinir", "marker-redefinir"},
+	}
+	for _, c := range cases {
+		_, body := httpGet(t, baseURL+c.path)
+		if !strings.Contains(body, c.marker) {
+			t.Errorf("GET %s should render user page (expected %q), got:\n%s", c.path, c.marker, body)
+		}
+	}
+
+	// POST on a custom slug still routes to the built-in handler
+	// (CSRF-less POST expected to fail with 403).
+	form := url.Values{}
+	form.Set("name", "Alice")
+	form.Set("identity", "alice@test.com")
+	form.Set("password", "supersecret")
+	resp, err := http.Post(baseURL+"/cadastrar", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("POST /cadastrar: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("POST /cadastrar without CSRF should hit built-in handler (expect 403), got %d", resp.StatusCode)
+	}
+}
+
 // TestAuthOverride_ForgotAndResetHonorOverride covers the remaining
 // auth routes behind the same override rule.
 func TestAuthOverride_ForgotAndResetHonorOverride(t *testing.T) {
