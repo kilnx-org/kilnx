@@ -171,27 +171,50 @@ func (s *Server) Start() error {
 			}
 		}
 
-		// Auth routes (auto-generated when auth block is present)
+		// Auth routes (auto-generated when auth block is present).
+		// A GET request falls through to the normal page routing when the
+		// user declared a `page` at the same path, allowing the app to
+		// override the default UI. POST/PUT/DELETE always hit the built-in
+		// handler because it performs bcrypt hashing, session signing, and
+		// other security-sensitive logic that must not be re-implemented
+		// in user code.
 		if app.Auth != nil {
-			if r.URL.Path == app.Auth.LoginPath {
-				s.handleLogin(w, r)
-				return
+			p := r.URL.Path
+			if p == app.Auth.LoginPath {
+				if r.Method == http.MethodGet && hasUserPage(app, p) {
+					// fall through to page routing
+				} else {
+					s.handleLogin(w, r)
+					return
+				}
 			}
-			if r.URL.Path == "/logout" {
+			if p == "/logout" {
 				s.handleLogout(w, r)
 				return
 			}
-			if r.URL.Path == "/register" {
-				s.handleRegister(w, r)
-				return
+			if p == "/register" {
+				if r.Method == http.MethodGet && hasUserPage(app, p) {
+					// fall through
+				} else {
+					s.handleRegister(w, r)
+					return
+				}
 			}
-			if r.URL.Path == "/forgot-password" {
-				s.handleForgotPassword(w, r)
-				return
+			if p == "/forgot-password" {
+				if r.Method == http.MethodGet && hasUserPage(app, p) {
+					// fall through
+				} else {
+					s.handleForgotPassword(w, r)
+					return
+				}
 			}
-			if r.URL.Path == "/reset-password" {
-				s.handleResetPassword(w, r)
-				return
+			if p == "/reset-password" {
+				if r.Method == http.MethodGet && hasUserPage(app, p) {
+					// fall through
+				} else {
+					s.handleResetPassword(w, r)
+					return
+				}
 			}
 		}
 
@@ -1341,6 +1364,22 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 			}
 		}
 	}
+}
+
+// hasUserPage reports whether the app declares a `page` at exactly the
+// given path (exact match, no :param wildcards). Used by the auth route
+// dispatcher to decide whether a GET request should render the user's
+// custom page instead of the built-in default auth UI.
+func hasUserPage(app *parser.App, path string) bool {
+	if app == nil {
+		return false
+	}
+	for _, p := range app.Pages {
+		if p.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 // matchPath checks if a route pattern matches a URL path.
