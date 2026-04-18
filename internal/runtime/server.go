@@ -189,8 +189,15 @@ func (s *Server) Start() error {
 				}
 			}
 			if p == "/logout" {
-				s.handleLogout(w, r)
-				return
+				// GET may show a confirmation page; if the app declared
+				// one, render it. POST (actual logout) always runs the
+				// built-in handler so the session is invalidated safely.
+				if r.Method == http.MethodGet && hasUserPage(app, p) {
+					// fall through
+				} else {
+					s.handleLogout(w, r)
+					return
+				}
 			}
 			if p == "/register" {
 				if r.Method == http.MethodGet && hasUserPage(app, p) {
@@ -1367,9 +1374,10 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 }
 
 // hasUserPage reports whether the app declares a `page` at exactly the
-// given path (exact match, no :param wildcards). Used by the auth route
-// dispatcher to decide whether a GET request should render the user's
-// custom page instead of the built-in default auth UI.
+// given path. Uses exact string equality (not matchPath) because the
+// auth dispatcher only needs to cover fixed paths like /login and
+// /register; parameterised matching would let a page like /login-extra
+// accidentally shadow the built-in /login.
 func hasUserPage(app *parser.App, path string) bool {
 	if app == nil {
 		return false

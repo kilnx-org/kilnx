@@ -125,9 +125,91 @@ page /home requires auth
 	}
 }
 
-// TestAuthOverride_LoginPathHonorsOverride covers the LoginPath case
-// (configurable via auth block) in addition to /register.
+// TestAuthOverride_LoginPathHonorsOverride uses a non-default LoginPath
+// (/entrar) to prove the dispatcher reads app.Auth.LoginPath dynamically
+// rather than a hardcoded /login string.
 func TestAuthOverride_LoginPathHonorsOverride(t *testing.T) {
+	src := `
+config
+  secret: "test-secret-32-bytes-min-len-padding"
+
+model user
+  name: text required
+  email: email unique
+  password: password required
+
+auth
+  table: user
+  identity: email
+  password: password
+  login: /entrar
+  after login: /home
+
+page /entrar
+  html
+    <div class="custom-login-marker">Custom Login</div>
+
+page /home requires auth
+  html
+    home
+`
+	baseURL, cleanup := startTestServer(t, src)
+	defer cleanup()
+
+	_, body := httpGet(t, baseURL+"/entrar")
+	if !strings.Contains(body, "custom-login-marker") {
+		t.Fatalf("GET /entrar should render user page when declared, got:\n%s", body)
+	}
+}
+
+// TestAuthOverride_CustomLoginPathPOSTStaysBuiltin verifies POST on a
+// non-default LoginPath still goes to the built-in handler so bcrypt
+// comparison and session issuance keep working.
+func TestAuthOverride_CustomLoginPathPOSTStaysBuiltin(t *testing.T) {
+	src := `
+config
+  secret: "test-secret-32-bytes-min-len-padding"
+
+model user
+  name: text required
+  email: email unique
+  password: password required
+
+auth
+  table: user
+  identity: email
+  password: password
+  login: /entrar
+  after login: /home
+
+page /entrar
+  html
+    custom
+
+page /home requires auth
+  html
+    home
+`
+	baseURL, cleanup := startTestServer(t, src)
+	defer cleanup()
+
+	form := url.Values{}
+	form.Set("identity", "alice@test.com")
+	form.Set("password", "supersecret")
+	resp, err := http.Post(baseURL+"/entrar", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("POST /entrar: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 (built-in CSRF check) for POST /entrar without token, got %d", resp.StatusCode)
+	}
+}
+
+// TestAuthOverride_LogoutGETRendersUserPage covers the /logout override.
+// GET goes to the user page (confirmation dialog) when declared; POST
+// always invalidates the session via the built-in handler.
+func TestAuthOverride_LogoutGETRendersUserPage(t *testing.T) {
 	src := `
 config
   secret: "test-secret-32-bytes-min-len-padding"
@@ -144,9 +226,9 @@ auth
   login: /login
   after login: /home
 
-page /login
+page /logout
   html
-    <div class="custom-login-marker">Custom Login</div>
+    <div class="custom-logout-marker">Confirmar saida</div>
 
 page /home requires auth
   html
@@ -155,9 +237,9 @@ page /home requires auth
 	baseURL, cleanup := startTestServer(t, src)
 	defer cleanup()
 
-	_, body := httpGet(t, baseURL+"/login")
-	if !strings.Contains(body, "custom-login-marker") {
-		t.Fatalf("GET /login should render user page when declared, got:\n%s", body)
+	_, body := httpGet(t, baseURL+"/logout")
+	if !strings.Contains(body, "custom-logout-marker") {
+		t.Fatalf("GET /logout should render user page when declared, got:\n%s", body)
 	}
 }
 
