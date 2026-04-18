@@ -126,11 +126,15 @@ type Layout struct {
 }
 
 type AuthConfig struct {
-	Table      string // user table name (default: "user")
-	Identity   string // identity field (default: "email")
-	Password   string // password field (default: "password")
-	LoginPath  string // login page path (default: "/login")
-	AfterLogin string // redirect after login (default: "/")
+	Table        string // user table name (default: "user")
+	Identity     string // identity field (default: "email")
+	Password     string // password field (default: "password")
+	LoginPath    string // login page path (default: "/login")
+	LogoutPath   string // logout POST path (default: "/logout")
+	RegisterPath string // registration page path (default: "/register")
+	ForgotPath   string // forgot-password page path (default: "/forgot-password")
+	ResetPath    string // reset-password page path (default: "/reset-password")
+	AfterLogin   string // redirect after login (default: "/")
 }
 
 type Model struct {
@@ -1341,11 +1345,15 @@ func (p *parserState) parseHTMLNode() Node {
 //	  after login: /dashboard
 func (p *parserState) parseAuth() (AuthConfig, error) {
 	cfg := AuthConfig{
-		Table:      "user",
-		Identity:   "email",
-		Password:   "password",
-		LoginPath:  "/login",
-		AfterLogin: "/",
+		Table:        "user",
+		Identity:     "email",
+		Password:     "password",
+		LoginPath:    "/login",
+		LogoutPath:   "/logout",
+		RegisterPath: "/register",
+		ForgotPath:   "/forgot-password",
+		ResetPath:    "/reset-password",
+		AfterLogin:   "/",
 	}
 
 	// consume "auth"
@@ -1400,6 +1408,14 @@ func (p *parserState) parseAuth() (AuthConfig, error) {
 				cfg.Password = val
 			case "login":
 				cfg.LoginPath = val
+			case "logout":
+				cfg.LogoutPath = val
+			case "register":
+				cfg.RegisterPath = val
+			case "forgot", "forgot_password", "forgot-password":
+				cfg.ForgotPath = val
+			case "reset", "reset_password", "reset-password":
+				cfg.ResetPath = val
 			case "after login":
 				cfg.AfterLogin = val
 			}

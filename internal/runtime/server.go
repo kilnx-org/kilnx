@@ -171,25 +171,30 @@ func (s *Server) Start() error {
 			}
 		}
 
-		// Auth routes (auto-generated when auth block is present)
-		if app.Auth != nil {
-			if r.URL.Path == app.Auth.LoginPath {
+		// Auth routes. When an `auth` block is declared, the runtime owns
+		// the POST side of these endpoints (bcrypt hashing, session
+		// signing, CSRF validation, password reset tokens). GET requests
+		// always fall through to user-declared pages; the analyzer
+		// enforces that the app declares a page at each auth path, so
+		// reaching GET here with no page means the user bypassed
+		// `kilnx check`. All four auth paths honor the values configured
+		// in the `auth` block (e.g. `login: /entrar`, `register: /cadastrar`).
+		if app.Auth != nil && r.Method == http.MethodPost {
+			p := r.URL.Path
+			switch p {
+			case app.Auth.LoginPath:
 				s.handleLogin(w, r)
 				return
-			}
-			if r.URL.Path == "/logout" {
+			case app.Auth.LogoutPath:
 				s.handleLogout(w, r)
 				return
-			}
-			if r.URL.Path == "/register" {
+			case app.Auth.RegisterPath:
 				s.handleRegister(w, r)
 				return
-			}
-			if r.URL.Path == "/forgot-password" {
+			case app.Auth.ForgotPath:
 				s.handleForgotPassword(w, r)
 				return
-			}
-			if r.URL.Path == "/reset-password" {
+			case app.Auth.ResetPath:
 				s.handleResetPassword(w, r)
 				return
 			}
@@ -460,7 +465,11 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 	if app.Config != nil {
 		appName = app.Config.Name
 	}
-	nav := renderNav(allPages, p.Path, ctx.currentUser, appName)
+	logoutPath := ""
+	if app.Auth != nil {
+		logoutPath = app.Auth.LogoutPath
+	}
+	nav := renderNav(allPages, p.Path, ctx.currentUser, appName, logoutPath)
 	content := bodyContent
 	if p.Layout != "" {
 		for _, layout := range app.Layouts {
@@ -571,7 +580,10 @@ func interpolate(text string, ctx *renderContext) string {
 	})
 }
 
-func renderNav(pages []parser.Page, currentPath string, session *Session, appName string) string {
+func renderNav(pages []parser.Page, currentPath string, session *Session, appName string, logoutPath string) string {
+	if logoutPath == "" {
+		logoutPath = "/logout"
+	}
 	var nav strings.Builder
 	nav.WriteString("  <header class=\"kilnx-topbar\">\n")
 	nav.WriteString("    <div class=\"kilnx-topbar-left\">\n")
@@ -611,7 +623,7 @@ func renderNav(pages []parser.Page, currentPath string, session *Session, appNam
 		nav.WriteString(fmt.Sprintf("      <span class=\"kilnx-user\">%s</span>\n",
 			html.EscapeString(session.Identity)))
 		csrf := generateCSRFToken()
-		nav.WriteString(fmt.Sprintf("      <form method=\"POST\" action=\"/logout\" style=\"display:inline;margin:0\"><input type=\"hidden\" name=\"_csrf\" value=\"%s\"><button type=\"submit\" class=\"kilnx-logout\">Logout</button></form>\n", csrf))
+		nav.WriteString(fmt.Sprintf("      <form method=\"POST\" action=\"%s\" style=\"display:inline;margin:0\"><input type=\"hidden\" name=\"_csrf\" value=\"%s\"><button type=\"submit\" class=\"kilnx-logout\">Logout</button></form>\n", html.EscapeString(logoutPath), csrf))
 		nav.WriteString("    </div>\n")
 	}
 	nav.WriteString("  </header>\n")
@@ -619,7 +631,7 @@ func renderNav(pages []parser.Page, currentPath string, session *Session, appNam
 }
 
 func render404(path string, pages []parser.Page) string {
-	nav := renderNav(pages, "", nil, "")
+	nav := renderNav(pages, "", nil, "", "")
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1341,6 +1353,23 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 			}
 		}
 	}
+}
+
+// hasUserPage reports whether the app declares a `page` at exactly the
+// given path. Uses exact string equality (not matchPath) because the
+// auth dispatcher only needs to cover fixed paths like /login and
+// /register; parameterised matching would let a page like /login-extra
+// accidentally shadow the built-in /login.
+func hasUserPage(app *parser.App, path string) bool {
+	if app == nil {
+		return false
+	}
+	for _, p := range app.Pages {
+		if p.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 // matchPath checks if a route pattern matches a URL path.

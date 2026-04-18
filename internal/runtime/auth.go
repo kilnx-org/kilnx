@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"net/smtp"
@@ -345,7 +344,7 @@ func (s *Server) hasPermission(userRole, requiredRole string, perms []parser.Per
 }
 
 func renderForbidden(pages []parser.Page, session *Session) string {
-	nav := renderNav(pages, "", session, "")
+	nav := renderNav(pages, "", session, "", "")
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -395,11 +394,6 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.Method == http.MethodGet {
-		s.renderLoginPage(w, r, "")
-		return
-	}
-
 	r.ParseForm()
 	identity := r.FormValue("identity")
 	password := r.FormValue("password")
@@ -411,7 +405,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if identity == "" || password == "" {
-		s.renderLoginPage(w, r, "All fields are required")
+		redirectWithError(w, r, app.Auth.LoginPath, "All fields are required")
 		return
 	}
 
@@ -419,7 +413,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		sanitizeIdentifier(app.Auth.Table), sanitizeIdentifier(app.Auth.Identity))
 	rows, err := s.db.QueryRowsWithParams(sql, map[string]string{"identity": identity})
 	if err != nil || len(rows) == 0 {
-		s.renderLoginPage(w, r, "Invalid credentials")
+		redirectWithError(w, r, app.Auth.LoginPath, "Invalid credentials")
 		return
 	}
 
@@ -427,7 +421,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	passwordHash := user[app.Auth.Password]
 
 	if !CheckPassword(password, passwordHash) {
-		s.renderLoginPage(w, r, "Invalid credentials")
+		redirectWithError(w, r, app.Auth.LoginPath, "Invalid credentials")
 		return
 	}
 
@@ -496,11 +490,6 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.Method == http.MethodGet {
-		s.renderRegisterPage(w, r, "")
-		return
-	}
-
 	r.ParseForm()
 	identity := r.FormValue("identity")
 	password := r.FormValue("password")
@@ -513,18 +502,18 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if identity == "" || password == "" {
-		s.renderRegisterPage(w, r, "All fields are required")
+		redirectWithError(w, r, app.Auth.RegisterPath, "All fields are required")
 		return
 	}
 
 	if len(password) < 6 {
-		s.renderRegisterPage(w, r, "Password must be at least 6 characters")
+		redirectWithError(w, r, app.Auth.RegisterPath, "Password must be at least 6 characters")
 		return
 	}
 
 	hash, err := HashPassword(password)
 	if err != nil {
-		s.renderRegisterPage(w, r, "Server error")
+		redirectWithError(w, r, app.Auth.RegisterPath, "Server error")
 		return
 	}
 
@@ -541,176 +530,58 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
-			s.renderRegisterPage(w, r, "An account with that email already exists")
+			redirectWithError(w, r, app.Auth.RegisterPath, "An account with that email already exists")
 			return
 		}
-		s.renderRegisterPage(w, r, "Could not create account")
+		redirectWithError(w, r, app.Auth.RegisterPath, "Could not create account")
 		return
 	}
 
 	http.Redirect(w, r, app.Auth.LoginPath, http.StatusSeeOther)
 }
 
-func (s *Server) renderLoginPage(w http.ResponseWriter, r *http.Request, errorMsg string) {
-	app := s.getApp()
-	csrf := generateCSRFToken()
-
-	errorHTML := ""
-	if errorMsg != "" {
-		errorHTML = fmt.Sprintf("    <div class=\"kilnx-alert kilnx-alert-error\">%s</div>\n", html.EscapeString(errorMsg))
+// redirectWithError issues a 303 See Other to `path?error=...` so the
+// user-declared page can re-render with the error visible via a query
+// parameter (`{error|default:""}`). Keeps POST handlers in Go while
+// letting the UI live entirely in .kilnx land.
+func redirectWithError(w http.ResponseWriter, r *http.Request, path, msg string) {
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
 	}
-
-	identityLabel := "Email"
-	if app.Auth != nil && app.Auth.Identity != "email" {
-		identityLabel = strings.ToUpper(app.Auth.Identity[:1]) + app.Auth.Identity[1:]
-	}
-
-	identityType := "email"
-	if app.Auth != nil && app.Auth.Identity != "email" {
-		identityType = "text"
-	}
-
-	body := fmt.Sprintf(`    <p class="kilnx-auth-sub">Sign in to your account</p>
-%s    <form method="POST" class="kilnx-form">
-      <input type="hidden" name="_csrf" value="%s">
-      <div class="kilnx-field">
-        <label for="identity">%s</label>
-        <input type="%s" id="identity" name="identity" placeholder="%s" required>
-      </div>
-      <div class="kilnx-field">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" placeholder="Enter your password" required>
-      </div>
-      <button type="submit" class="kilnx-btn">Log in</button>
-    </form>
-    <p style="margin-top:1.25rem;font-size:0.85rem;text-align:center">Don't have an account? <a href="/register">Register</a></p>
-    <p style="margin-top:0.5rem;font-size:0.85rem;text-align:center"><a href="/forgot-password">Forgot password?</a></p>
-`, errorHTML, csrf, identityLabel, identityType, strings.ToLower(identityLabel)+"@example.com")
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(renderAuthPage("Log in", body, app.Pages)))
+	target := path + sep + "error=" + url.QueryEscape(msg)
+	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
-func (s *Server) renderRegisterPage(w http.ResponseWriter, r *http.Request, errorMsg string) {
-	app := s.getApp()
-	csrf := generateCSRFToken()
-
-	errorHTML := ""
-	if errorMsg != "" {
-		errorHTML = fmt.Sprintf("    <div class=\"kilnx-alert kilnx-alert-error\">%s</div>\n", html.EscapeString(errorMsg))
-	}
-
-	identityLabel := "Email"
-	identityType := "email"
-	if app.Auth != nil && app.Auth.Identity != "email" {
-		identityLabel = strings.ToUpper(app.Auth.Identity[:1]) + app.Auth.Identity[1:]
-		identityType = "text"
-	}
-
-	body := fmt.Sprintf(`    <p class="kilnx-auth-sub">Create your account</p>
-%s    <form method="POST" class="kilnx-form">
-      <input type="hidden" name="_csrf" value="%s">
-      <div class="kilnx-field">
-        <label for="name">Name</label>
-        <input type="text" id="name" name="name" placeholder="Your name" required>
-      </div>
-      <div class="kilnx-field">
-        <label for="identity">%s</label>
-        <input type="%s" id="identity" name="identity" placeholder="%s" required>
-      </div>
-      <div class="kilnx-field">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" placeholder="Min 6 characters" required minlength="6">
-      </div>
-      <button type="submit" class="kilnx-btn">Create account</button>
-    </form>
-    <p style="margin-top:1.25rem;font-size:0.85rem;text-align:center">Already have an account? <a href="%s">Log in</a></p>
-`, errorHTML, csrf, identityLabel, identityType, strings.ToLower(identityLabel)+"@example.com", app.Auth.LoginPath)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(renderAuthPage("Register", body, app.Pages)))
-}
-
-func renderAuthPage(title, body string, pages []parser.Page) string {
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>%s</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 470 469'><g transform='translate(0,470) scale(0.1,-0.1)' fill='%%23e64a19'><path d='M360 2850 l0-1850 111 0 111 0 240 233c132 127 256 245 274 260l34 28 0 530 0 529 1220 0 1220 0 0-522-1-523 273-267 273-267 113-1 112 0 0 1850 0 1850-1990 0-1990 0 0-1850z M1410 1877l0-473-349-347-349-347-356 0-356 0 2-352c2-194 6-352 11-350 4 1 333 2 732 2l725 0 0 288 0 288 116 215c64 117 156 288 205 379l89 164 0 503 0 503-235 0-235 0 0-473z M2120 2243c0-60-1-322-2-583l-2-475-178-374-178-374 0-213 0-214 590 0 590 0 0 214 0 214-111 233c-61 129-139 290-173 359l-61 125-5 595-5 595-232 3-233 2 0-107z M2820 1848l0-502 92-170c51-94 143-265 205-381l113-210 0-287 0-288 735 0 735 0 0 350 0 350-355 0-355 0-350 346-350 347 0 473 0 474-235 0-235 0 0-502z'/></g></svg>">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; color: #e4e4e7; background: #09090b; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1rem; -webkit-font-smoothing: antialiased; }
-    .kilnx-auth-card { width: 100%%; max-width: 400px; background: #18181b; border: 1px solid #27272a; border-radius: 12px; padding: 2rem; box-shadow: 0 8px 30px rgba(0,0,0,0.4); }
-    .kilnx-auth-logo { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.5rem; }
-    .kilnx-auth-logo svg { width: 28px; height: 28px; }
-    .kilnx-auth-logo span { font-size: 1.1rem; font-weight: 700; color: #ff6e40; letter-spacing: -0.02em; }
-    h2 { margin-bottom: 0.25rem; font-size: 1.5rem; font-weight: 700; color: #fafafa; letter-spacing: -0.02em; }
-    .kilnx-auth-sub { font-size: 0.85rem; color: #71717a; margin-bottom: 1.5rem; }
-    .kilnx-form { display: flex; flex-direction: column; gap: 0.875rem; }
-    .kilnx-field { display: flex; flex-direction: column; gap: 0.3rem; }
-    .kilnx-field label { font-size: 0.8rem; font-weight: 500; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.04em; }
-    .kilnx-field input { padding: 0.625rem 0.75rem; background: #09090b; border: 1px solid #3f3f46; border-radius: 8px; font-size: 0.9rem; font-family: inherit; color: #fafafa; outline: none; transition: border-color 0.2s, box-shadow 0.2s; }
-    .kilnx-field input:hover { border-color: #52525b; }
-    .kilnx-field input:focus { border-color: #e64a19; box-shadow: 0 0 0 3px rgba(230,74,25,0.2); }
-    .kilnx-field input::placeholder { color: #52525b; }
-    .kilnx-btn { padding: 0.625rem 1.25rem; background: #e64a19; color: white; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; font-family: inherit; transition: background 0.2s, box-shadow 0.2s, transform 0.1s; margin-top: 0.25rem; }
-    .kilnx-btn:hover { background: #ff6e40; box-shadow: 0 0 20px rgba(230,74,25,0.25); }
-    .kilnx-btn:active { transform: scale(0.98); }
-    .kilnx-alert { padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.85rem; }
-    .kilnx-alert-error { background: rgba(239,68,68,0.1); color: #fca5a5; border: 1px solid rgba(239,68,68,0.2); }
-    a { color: #ff6e40; text-decoration: none; transition: color 0.2s; }
-    a:hover { color: #ffab91; }
-    p { color: #71717a; }
-  </style>
-</head>
-<body>
-  <div class="kilnx-auth-card">
-  <div class="kilnx-auth-logo">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 470 469"><g transform="translate(0,470) scale(0.1,-0.1)" fill="#e64a19" stroke="none"><path d="M360 2850 l0-1850 111 0 111 0 240 233c132 127 256 245 274 260l34 28 0 530 0 529 1220 0 1220 0 0-522-1-523 273-267 273-267 113-1 112 0 0 1850 0 1850-1990 0-1990 0 0-1850z M1410 1877l0-473-349-347-349-347-356 0-356 0 2-352c2-194 6-352 11-350 4 1 333 2 732 2l725 0 0 288 0 288 116 215c64 117 156 288 205 379l89 164 0 503 0 503-235 0-235 0 0-473z M2120 2243c0-60-1-322-2-583l-2-475-178-374-178-374 0-213 0-214 590 0 590 0 0 214 0 214-111 233c-61 129-139 290-173 359l-61 125-5 595-5 595-232 3-233 2 0-107z M2820 1848l0-502 92-170c51-94 143-265 205-381l113-210 0-287 0-288 735 0 735 0 0 350 0 350-355 0-355 0-350 346-350 347 0 473 0 474-235 0-235 0 0-502z"/></g></svg>
-    <span>kilnx</span>
-  </div>
-  <h2>%s</h2>
-%s  </div>
-</body>
-</html>
-`, html.EscapeString(title), html.EscapeString(title), body)
-}
-
-// sanitizeIdentifier ensures a SQL identifier contains only safe characters
-// handleForgotPassword renders the forgot password form and processes reset requests
+// handleForgotPassword processes reset requests. Only POST is served;
+// GET is rendered by the user-declared `page /forgot-password` (enforced
+// at compile time by the analyzer).
 func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		s.renderForgotPasswordPage(w, r, "")
-		return
-	}
-
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	app := s.getApp()
+	if app.Auth == nil || s.db == nil {
+		http.Error(w, "Password reset is not available", http.StatusInternalServerError)
+		return
+	}
+
 	if err := r.ParseForm(); err != nil {
-		s.renderForgotPasswordPage(w, r, "Invalid request")
+		redirectWithError(w, r, app.Auth.ForgotPath, "Invalid request")
 		return
 	}
 
 	csrf := r.FormValue("_csrf")
 	if !validateCSRFToken(csrf) {
-		s.renderForgotPasswordPage(w, r, "Invalid CSRF token. Please try again.")
+		redirectWithError(w, r, app.Auth.ForgotPath, "Invalid CSRF token. Please try again.")
 		return
 	}
 
 	email := strings.TrimSpace(r.FormValue("email"))
 	if email == "" {
-		s.renderForgotPasswordPage(w, r, "Email is required")
-		return
-	}
-
-	app := s.getApp()
-	if app.Auth == nil || s.db == nil {
-		s.renderForgotPasswordPage(w, r, "Password reset is not available")
+		redirectWithError(w, r, app.Auth.ForgotPath, "Email is required")
 		return
 	}
 
@@ -722,8 +593,9 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		map[string]string{"email": email},
 	)
 	if err != nil || len(rows) == 0 {
-		// Don't reveal whether the email exists
-		s.renderForgotPasswordSuccess(w, r)
+		// Don't reveal whether the email exists; redirect to the page
+		// with ?sent=1 so it can render a generic confirmation.
+		http.Redirect(w, r, app.Auth.ForgotPath+"?sent=1", http.StatusSeeOther)
 		return
 	}
 
@@ -747,7 +619,7 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	resetURL := fmt.Sprintf("%s://%s/reset-password?token=%s", scheme, r.Host, token)
+	resetURL := fmt.Sprintf("%s://%s%s?token=%s", scheme, r.Host, app.Auth.ResetPath, token)
 
 	// Try to send email, fall back to console
 	sent := false
@@ -788,48 +660,39 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("  ╚══════════════════════════════════════════╝\n\n")
 	}
 
-	s.renderForgotPasswordSuccess(w, r)
+	http.Redirect(w, r, app.Auth.ForgotPath+"?sent=1", http.StatusSeeOther)
 }
 
 // handleResetPassword processes the password reset form
 func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
-	if token == "" {
-		http.Redirect(w, r, "/forgot-password", http.StatusSeeOther)
-		return
-	}
-
-	if r.Method == http.MethodGet {
-		// Validate token
-		if s.db == nil {
-			http.Error(w, "Not available", http.StatusInternalServerError)
-			return
-		}
-		rows, err := s.db.QueryRowsWithParams(
-			`SELECT email FROM _kilnx_password_resets WHERE token = :token AND expires_at > datetime('now')`,
-			map[string]string{"token": token},
-		)
-		if err != nil || len(rows) == 0 {
-			s.renderResetPasswordPage(w, r, token, "This reset link is invalid or has expired.")
-			return
-		}
-		s.renderResetPasswordPage(w, r, token, "")
-		return
-	}
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	app := s.getApp()
+	if app.Auth == nil || s.db == nil {
+		http.Error(w, "Password reset is not available", http.StatusInternalServerError)
+		return
+	}
+
+	if token == "" {
+		http.Redirect(w, r, app.Auth.ForgotPath, http.StatusSeeOther)
+		return
+	}
+
+	resetURL := app.Auth.ResetPath + "?token=" + url.QueryEscape(token)
+
 	if err := r.ParseForm(); err != nil {
-		s.renderResetPasswordPage(w, r, token, "Invalid request")
+		redirectWithError(w, r, resetURL, "Invalid request")
 		return
 	}
 
 	csrf := r.FormValue("_csrf")
 	if !validateCSRFToken(csrf) {
-		s.renderResetPasswordPage(w, r, token, "Invalid CSRF token. Please try again.")
+		redirectWithError(w, r, resetURL, "Invalid CSRF token. Please try again.")
 		return
 	}
 
@@ -837,11 +700,11 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	passwordConfirm := r.FormValue("password_confirm")
 
 	if len(password) < 6 {
-		s.renderResetPasswordPage(w, r, token, "Password must be at least 6 characters")
+		redirectWithError(w, r, resetURL, "Password must be at least 6 characters")
 		return
 	}
 	if password != passwordConfirm {
-		s.renderResetPasswordPage(w, r, token, "Passwords do not match")
+		redirectWithError(w, r, resetURL, "Passwords do not match")
 		return
 	}
 
@@ -851,7 +714,7 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		map[string]string{"token": token},
 	)
 	if err != nil || len(rows) == 0 {
-		s.renderResetPasswordPage(w, r, token, "This reset link is invalid or has expired.")
+		redirectWithError(w, r, resetURL, "This reset link is invalid or has expired.")
 		return
 	}
 
@@ -860,12 +723,11 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	// Hash new password
 	hashed, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
-		s.renderResetPasswordPage(w, r, token, "An error occurred. Please try again.")
+		redirectWithError(w, r, resetURL, "An error occurred. Please try again.")
 		return
 	}
 
 	// Update password
-	app := s.getApp()
 	table := sanitizeIdentifier(app.Auth.Table)
 	identity := sanitizeIdentifier(app.Auth.Identity)
 	passField := sanitizeIdentifier(app.Auth.Password)
@@ -875,7 +737,7 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		map[string]string{"password": string(hashed), "email": email},
 	)
 	if err != nil {
-		s.renderResetPasswordPage(w, r, token, "Failed to update password. Please try again.")
+		redirectWithError(w, r, resetURL, "Failed to update password. Please try again.")
 		return
 	}
 
@@ -885,73 +747,8 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		map[string]string{"token": token},
 	)
 
-	// Redirect to login with success
-	loginPath := "/login"
-	if app.Auth != nil && app.Auth.LoginPath != "" {
-		loginPath = app.Auth.LoginPath
-	}
-	http.Redirect(w, r, loginPath, http.StatusSeeOther)
-}
-
-func (s *Server) renderForgotPasswordPage(w http.ResponseWriter, r *http.Request, errorMsg string) {
-	csrf := generateCSRFToken()
-	errorHTML := ""
-	if errorMsg != "" {
-		errorHTML = fmt.Sprintf("    <div class=\"kilnx-alert kilnx-alert-error\">%s</div>\n", html.EscapeString(errorMsg))
-	}
-
-	app := s.getApp()
-	body := fmt.Sprintf(`    <p class="kilnx-auth-sub">Enter your email to receive a reset link</p>
-%s    <form method="POST" class="kilnx-form">
-      <input type="hidden" name="_csrf" value="%s">
-      <div class="kilnx-field">
-        <label for="email">Email</label>
-        <input type="email" id="email" name="email" placeholder="you@example.com" required>
-      </div>
-      <button type="submit" class="kilnx-btn">Send reset link</button>
-    </form>
-    <p style="margin-top:1.25rem;font-size:0.85rem;text-align:center"><a href="%s">Back to login</a></p>
-`, errorHTML, csrf, app.Auth.LoginPath)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(renderAuthPage("Forgot password", body, app.Pages)))
-}
-
-func (s *Server) renderForgotPasswordSuccess(w http.ResponseWriter, r *http.Request) {
-	app := s.getApp()
-	body := fmt.Sprintf(`    <p class="kilnx-auth-sub">Check your email</p>
-    <p style="font-size:0.9rem;color:#a1a1aa;margin-bottom:1.5rem">If an account exists with that email, we sent a password reset link. Check your inbox.</p>
-    <p style="font-size:0.85rem;text-align:center"><a href="%s">Back to login</a></p>
-`, app.Auth.LoginPath)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(renderAuthPage("Check your email", body, app.Pages)))
-}
-
-func (s *Server) renderResetPasswordPage(w http.ResponseWriter, r *http.Request, token, errorMsg string) {
-	csrf := generateCSRFToken()
-	errorHTML := ""
-	if errorMsg != "" {
-		errorHTML = fmt.Sprintf("    <div class=\"kilnx-alert kilnx-alert-error\">%s</div>\n", html.EscapeString(errorMsg))
-	}
-
-	body := fmt.Sprintf(`    <p class="kilnx-auth-sub">Choose a new password</p>
-%s    <form method="POST" action="/reset-password?token=%s" class="kilnx-form">
-      <input type="hidden" name="_csrf" value="%s">
-      <div class="kilnx-field">
-        <label for="password">New password</label>
-        <input type="password" id="password" name="password" placeholder="Min 6 characters" required minlength="6">
-      </div>
-      <div class="kilnx-field">
-        <label for="password_confirm">Confirm password</label>
-        <input type="password" id="password_confirm" name="password_confirm" placeholder="Repeat password" required minlength="6">
-      </div>
-      <button type="submit" class="kilnx-btn">Reset password</button>
-    </form>
-`, errorHTML, html.EscapeString(token), csrf)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(renderAuthPage("Reset password", body, nil)))
+	// Redirect to login with success flag
+	http.Redirect(w, r, app.Auth.LoginPath+"?reset=1", http.StatusSeeOther)
 }
 
 func sanitizeIdentifier(name string) string {

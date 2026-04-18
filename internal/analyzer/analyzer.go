@@ -82,6 +82,7 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkModelDefaults(app.Models)...)
 	diags = append(diags, checkModelMinMax(app.Models)...)
 	diags = append(diags, checkAuthRef(app, schema)...)
+	diags = append(diags, checkAuthPages(app)...)
 	diags = append(diags, checkModelRefs(app, schema)...)
 	diags = append(diags, checkTenantRefs(app, schema)...)
 	diags = append(diags, checkAllSQL(app, schema)...)
@@ -89,6 +90,57 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkTemplateInterpolations(app, schema)...)
 	diags = append(diags, checkTableColumnRefs(app, schema)...)
 
+	return diags
+}
+
+// checkAuthPages ensures that an app declaring an `auth` block also
+// declares the four auth entry pages. The runtime only owns the POST
+// side of those routes; the GET side (form, error display, token
+// validation UI) must live in user-declared pages so the app controls
+// branding and i18n. Catching this at compile time prevents a runtime
+// 404 on an otherwise working-looking app.
+func checkAuthPages(app *parser.App) []Diagnostic {
+	if app == nil || app.Auth == nil {
+		return nil
+	}
+	// Every auth path is configurable in the `auth` block
+	// (login:, register:, forgot:, reset:). Fall back to the built-in
+	// defaults if the user did not set them explicitly.
+	loginPath := app.Auth.LoginPath
+	if loginPath == "" {
+		loginPath = "/login"
+	}
+	registerPath := app.Auth.RegisterPath
+	if registerPath == "" {
+		registerPath = "/register"
+	}
+	forgotPath := app.Auth.ForgotPath
+	if forgotPath == "" {
+		forgotPath = "/forgot-password"
+	}
+	resetPath := app.Auth.ResetPath
+	if resetPath == "" {
+		resetPath = "/reset-password"
+	}
+	required := []string{loginPath, registerPath, forgotPath, resetPath}
+	declared := make(map[string]bool)
+	for _, p := range app.Pages {
+		declared[p.Path] = true
+	}
+	var diags []Diagnostic
+	for _, path := range required {
+		if !declared[path] {
+			diags = append(diags, Diagnostic{
+				Level: "error",
+				Message: fmt.Sprintf(
+					"auth block is declared but required page '%s' is missing; "+
+						"declare `page %s` so the app controls the UI "+
+						"(the runtime only owns the POST side of auth routes)",
+					path, path),
+				Context: "auth",
+			})
+		}
+	}
 	return diags
 }
 
