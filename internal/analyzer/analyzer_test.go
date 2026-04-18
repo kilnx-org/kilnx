@@ -582,6 +582,14 @@ func TestAnalyze_InvalidAuthTable(t *testing.T) {
 			{Name: "user", Fields: []parser.Field{{Name: "name", Type: parser.FieldText}}},
 		},
 		Auth: &parser.AuthConfig{Table: "accounts"},
+		// Declare the four auth pages so this test isolates the
+		// auth-table error; otherwise checkAuthPages would also fire.
+		Pages: []parser.Page{
+			{Path: "/login"},
+			{Path: "/register"},
+			{Path: "/forgot-password"},
+			{Path: "/reset-password"},
+		},
 	}
 
 	diags := Analyze(app)

@@ -179,7 +179,7 @@ func (s *Server) Start() error {
 		// reaching GET here with no page means the user bypassed
 		// `kilnx check`. All four auth paths honor the values configured
 		// in the `auth` block (e.g. `login: /entrar`, `register: /cadastrar`).
-		if app.Auth != nil && r.Method != http.MethodGet {
+		if app.Auth != nil && r.Method == http.MethodPost {
 			p := r.URL.Path
 			switch p {
 			case app.Auth.LoginPath:
@@ -465,7 +465,11 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 	if app.Config != nil {
 		appName = app.Config.Name
 	}
-	nav := renderNav(allPages, p.Path, ctx.currentUser, appName)
+	logoutPath := ""
+	if app.Auth != nil {
+		logoutPath = app.Auth.LogoutPath
+	}
+	nav := renderNav(allPages, p.Path, ctx.currentUser, appName, logoutPath)
 	content := bodyContent
 	if p.Layout != "" {
 		for _, layout := range app.Layouts {
@@ -576,7 +580,10 @@ func interpolate(text string, ctx *renderContext) string {
 	})
 }
 
-func renderNav(pages []parser.Page, currentPath string, session *Session, appName string) string {
+func renderNav(pages []parser.Page, currentPath string, session *Session, appName string, logoutPath string) string {
+	if logoutPath == "" {
+		logoutPath = "/logout"
+	}
 	var nav strings.Builder
 	nav.WriteString("  <header class=\"kilnx-topbar\">\n")
 	nav.WriteString("    <div class=\"kilnx-topbar-left\">\n")
@@ -616,7 +623,7 @@ func renderNav(pages []parser.Page, currentPath string, session *Session, appNam
 		nav.WriteString(fmt.Sprintf("      <span class=\"kilnx-user\">%s</span>\n",
 			html.EscapeString(session.Identity)))
 		csrf := generateCSRFToken()
-		nav.WriteString(fmt.Sprintf("      <form method=\"POST\" action=\"/logout\" style=\"display:inline;margin:0\"><input type=\"hidden\" name=\"_csrf\" value=\"%s\"><button type=\"submit\" class=\"kilnx-logout\">Logout</button></form>\n", csrf))
+		nav.WriteString(fmt.Sprintf("      <form method=\"POST\" action=\"%s\" style=\"display:inline;margin:0\"><input type=\"hidden\" name=\"_csrf\" value=\"%s\"><button type=\"submit\" class=\"kilnx-logout\">Logout</button></form>\n", html.EscapeString(logoutPath), csrf))
 		nav.WriteString("    </div>\n")
 	}
 	nav.WriteString("  </header>\n")
@@ -624,7 +631,7 @@ func renderNav(pages []parser.Page, currentPath string, session *Session, appNam
 }
 
 func render404(path string, pages []parser.Page) string {
-	nav := renderNav(pages, "", nil, "")
+	nav := renderNav(pages, "", nil, "", "")
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>

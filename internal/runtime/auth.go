@@ -344,7 +344,7 @@ func (s *Server) hasPermission(userRole, requiredRole string, perms []parser.Per
 }
 
 func renderForbidden(pages []parser.Page, session *Session) string {
-	nav := renderNav(pages, "", session, "")
+	nav := renderNav(pages, "", session, "", "")
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -619,7 +619,7 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	resetURL := fmt.Sprintf("%s://%s/reset-password?token=%s", scheme, r.Host, token)
+	resetURL := fmt.Sprintf("%s://%s%s?token=%s", scheme, r.Host, app.Auth.ResetPath, token)
 
 	// Try to send email, fall back to console
 	sent := false
