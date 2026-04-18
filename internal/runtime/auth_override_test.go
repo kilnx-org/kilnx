@@ -93,38 +93,6 @@ page /home requires auth
 	}
 }
 
-// TestAuthOverride_DefaultRenderWhenNoUserPage asserts the default dark
-// built-in UI still renders for projects that do NOT declare a page.
-func TestAuthOverride_DefaultRenderWhenNoUserPage(t *testing.T) {
-	src := `
-config
-  secret: "test-secret-32-bytes-min-len-padding"
-
-model user
-  name: text required
-  email: email unique
-  password: password required
-
-auth
-  table: user
-  identity: email
-  password: password
-  login: /login
-  after login: /home
-
-page /home requires auth
-  html
-    home
-`
-	baseURL, cleanup := startTestServer(t, src)
-	defer cleanup()
-
-	_, body := httpGet(t, baseURL+"/register")
-	if !strings.Contains(body, "kilnx-auth-card") {
-		t.Fatalf("GET /register should fall back to built-in UI when no page declared; body:\n%s", body)
-	}
-}
-
 // TestAuthOverride_LoginPathHonorsOverride uses a non-default LoginPath
 // (/entrar) to prove the dispatcher reads app.Auth.LoginPath dynamically
 // rather than a hardcoded /login string.

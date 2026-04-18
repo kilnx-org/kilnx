@@ -224,6 +224,72 @@ func TestExtractSelectColumns(t *testing.T) {
 	}
 }
 
+func TestAnalyze_AuthPagesRequired(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "user", Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+				{Name: "email", Type: parser.FieldEmail},
+				{Name: "password", Type: parser.FieldPassword},
+			}},
+		},
+		Auth: &parser.AuthConfig{Table: "user", Identity: "email", Password: "password", LoginPath: "/login"},
+	}
+	diags := Analyze(app)
+	required := map[string]bool{"/login": false, "/register": false, "/forgot-password": false, "/reset-password": false}
+	for _, d := range diags {
+		for path := range required {
+			if d.Level == "error" && strings.Contains(d.Message, "'"+path+"'") {
+				required[path] = true
+			}
+		}
+	}
+	for path, found := range required {
+		if !found {
+			t.Errorf("expected missing-page error for %s, got diagnostics: %+v", path, diags)
+		}
+	}
+}
+
+func TestAnalyze_AuthPagesRespectCustomLoginPath(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "user", Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+				{Name: "email", Type: parser.FieldEmail},
+				{Name: "password", Type: parser.FieldPassword},
+			}},
+		},
+		Auth: &parser.AuthConfig{Table: "user", Identity: "email", Password: "password", LoginPath: "/entrar"},
+		Pages: []parser.Page{
+			{Path: "/entrar"},
+			{Path: "/register"},
+			{Path: "/forgot-password"},
+			{Path: "/reset-password"},
+		},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "required page") {
+			t.Errorf("unexpected auth-page error when all 4 paths declared: %s", d.Message)
+		}
+	}
+}
+
+func TestAnalyze_NoAuthBlock_NoPagesRequired(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "user", Fields: []parser.Field{{Name: "name", Type: parser.FieldText}}},
+		},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "required page") {
+			t.Errorf("apps without auth block must not be forced to declare auth pages: %s", d.Message)
+		}
+	}
+}
+
 func TestAnalyze_TenantRefUnknownModel(t *testing.T) {
 	app := &parser.App{
 		Models: []parser.Model{
@@ -297,6 +363,12 @@ func TestAnalyze_ValidApp(t *testing.T) {
 					{Type: parser.NodeQuery, Name: "users", SQL: "SELECT id, name, email, role FROM user ORDER BY id DESC"},
 				},
 			},
+			// Auth pages required because checkAuthPages enforces user
+			// ownership of the GET side of every auth route.
+			{Path: "/login"},
+			{Path: "/register"},
+			{Path: "/forgot-password"},
+			{Path: "/reset-password"},
 		},
 		Actions: []parser.Page{
 			{

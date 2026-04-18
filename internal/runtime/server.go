@@ -171,54 +171,33 @@ func (s *Server) Start() error {
 			}
 		}
 
-		// Auth routes (auto-generated when auth block is present).
-		// A GET request falls through to the normal page routing when the
-		// user declared a `page` at the same path, allowing the app to
-		// override the default UI. POST/PUT/DELETE always hit the built-in
-		// handler because it performs bcrypt hashing, session signing, and
-		// other security-sensitive logic that must not be re-implemented
-		// in user code.
+		// Auth routes. When an `auth` block is declared, the runtime owns
+		// the POST side of these endpoints (bcrypt hashing, session
+		// signing, CSRF validation, password reset tokens). GET requests
+		// always fall through to user-declared pages; the analyzer
+		// enforces that the app declares a page at each auth path, so
+		// reaching GET here with no page means the user bypassed
+		// `kilnx check`.
 		if app.Auth != nil {
 			p := r.URL.Path
-			if p == app.Auth.LoginPath {
-				if r.Method == http.MethodGet && hasUserPage(app, p) {
-					// fall through to page routing
-				} else {
+			if r.Method != http.MethodGet {
+				if p == app.Auth.LoginPath {
 					s.handleLogin(w, r)
 					return
 				}
-			}
-			if p == "/logout" {
-				// GET may show a confirmation page; if the app declared
-				// one, render it. POST (actual logout) always runs the
-				// built-in handler so the session is invalidated safely.
-				if r.Method == http.MethodGet && hasUserPage(app, p) {
-					// fall through
-				} else {
+				if p == "/logout" {
 					s.handleLogout(w, r)
 					return
 				}
-			}
-			if p == "/register" {
-				if r.Method == http.MethodGet && hasUserPage(app, p) {
-					// fall through
-				} else {
+				if p == "/register" {
 					s.handleRegister(w, r)
 					return
 				}
-			}
-			if p == "/forgot-password" {
-				if r.Method == http.MethodGet && hasUserPage(app, p) {
-					// fall through
-				} else {
+				if p == "/forgot-password" {
 					s.handleForgotPassword(w, r)
 					return
 				}
-			}
-			if p == "/reset-password" {
-				if r.Method == http.MethodGet && hasUserPage(app, p) {
-					// fall through
-				} else {
+				if p == "/reset-password" {
 					s.handleResetPassword(w, r)
 					return
 				}
