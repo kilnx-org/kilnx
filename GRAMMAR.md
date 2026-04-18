@@ -86,10 +86,32 @@ rewrites `SELECT` queries against a tenant-scoped table to include
 `WHERE <table>.<tenant>_id = :current_user.<tenant>_id`. When the query
 already has a `WHERE`, the tenant predicate is joined with `AND`.
 
-Mutations (`INSERT`, `UPDATE`, `DELETE`) are not rewritten automatically:
-you must still include the tenant column explicitly so intent stays visible,
-e.g. `INSERT INTO quote (org_id, number) VALUES (:current_user.org_id, :n)`.
-A compile-time warning on unchecked mutations is planned.
+The rewriter **fails closed**: if the SQL shape is too complex for the
+built-in rewriter to verify (CTEs, JOINs, subqueries, UNION, comments,
+schema-qualified tables, multi-statement queries), the query is refused
+at runtime rather than silently passing through unscoped. Refactor the
+query into a simpler single-table SELECT or bind the tenant predicate
+yourself with `WHERE ... AND <col> = :current_user.<tenant>_id` and the
+rewriter will see it.
+
+Mutations (`INSERT`, `UPDATE`, `DELETE`) on a tenant-scoped table must
+bind the tenant column textually; otherwise the runtime rejects them.
+Example that passes:
+
+```kilnx
+action /quotes/create method POST requires auth
+  query: INSERT INTO quote (org_id, number)
+         VALUES (:current_user.org_id, :n)
+```
+
+The parser synthesizes the `<tenant>_id` column automatically, and
+`kilnx check` flags references to undefined tenant models and models
+that set themselves as their own tenant.
+
+This is defense in depth, not a substitute for application-level
+authorization. The rewriter closes the "forgot the tenant predicate"
+failure mode; other access-control concerns remain the developer's
+responsibility.
 
 ### permissions
 

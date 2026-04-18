@@ -325,17 +325,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 	// Make current_user available as a query result and as SQL params
 	if ctx.currentUser != nil {
 		ctx.queries["current_user"] = []database.Row{ctx.currentUser.Data}
-		pathParams["current_user.id"] = ctx.currentUser.UserID
-		pathParams["current_user.identity"] = ctx.currentUser.Identity
-		pathParams["current_user.role"] = ctx.currentUser.Role
-		pathParams["current_user_id"] = ctx.currentUser.UserID
-		pathParams["current_user_identity"] = ctx.currentUser.Identity
-		pathParams["current_user_role"] = ctx.currentUser.Role
-		// Expose every column of the user row as a bind param so tenant
-		// scoping and user-specific filters can reference them.
-		for k, v := range ctx.currentUser.Data {
-			pathParams["current_user."+k] = v
-		}
+		s.populateCurrentUserParams(pathParams, ctx.currentUser)
 	}
 
 	// Expose URL query parameters to templates and SQL
@@ -360,7 +350,11 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		if node.Type != parser.NodeQuery || s.db == nil {
 			continue
 		}
-		sql := RewriteTenantSQL(node.SQL, s.tenants)
+		sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
+		if tErr != nil {
+			s.logger.LogError("tenant guard rejected page query", tErr)
+			continue
+		}
 
 		queryName := node.Name
 		if queryName == "" {
@@ -481,14 +475,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 					for k, v := range pathParams {
 						layoutParams[k] = v
 					}
-					if ctx.currentUser != nil {
-						layoutParams["current_user.id"] = ctx.currentUser.UserID
-						layoutParams["current_user.identity"] = ctx.currentUser.Identity
-						layoutParams["current_user.role"] = ctx.currentUser.Role
-						layoutParams["current_user_id"] = ctx.currentUser.UserID
-						layoutParams["current_user_identity"] = ctx.currentUser.Identity
-						layoutParams["current_user_role"] = ctx.currentUser.Role
-					}
+					s.populateCurrentUserParams(layoutParams, ctx.currentUser)
 					for _, q := range layout.Queries {
 						if q.SQL == "" {
 							continue
@@ -497,15 +484,22 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 						if name == "" {
 							name = "_last"
 						}
+						sql, tErr := RewriteTenantSQL(q.SQL, s.tenants, layoutParams)
+						if tErr != nil {
+							s.logger.LogError("tenant guard rejected layout query", tErr)
+							continue
+						}
 						var rows []database.Row
 						var err error
 						if len(layoutParams) > 0 {
-							rows, err = s.db.QueryRowsWithParams(q.SQL, layoutParams)
+							rows, err = s.db.QueryRowsWithParams(sql, layoutParams)
 						} else {
-							rows, err = s.db.QueryRows(q.SQL)
+							rows, err = s.db.QueryRows(sql)
 						}
 						if err == nil {
 							layoutCtx.queries[name] = rows
+						} else {
+							s.logger.LogError("layout query failed", err)
 						}
 					}
 				}
@@ -692,7 +686,11 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 		switch node.Type {
 		case parser.NodeQuery:
 			if s.db != nil {
-				sql := RewriteTenantSQL(node.SQL, s.tenants)
+				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
+				if tErr != nil {
+					s.logger.LogError("tenant guard rejected fragment query", tErr)
+					continue
+				}
 				queryName := node.Name
 				if queryName == "" {
 					queryName = "_last"
@@ -752,7 +750,12 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 		switch node.Type {
 		case parser.NodeQuery:
 			if s.db != nil {
-				sql := RewriteTenantSQL(node.SQL, s.tenants)
+				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, params)
+				if tErr != nil {
+					s.logger.LogError("tenant guard rejected fragment query", tErr)
+					body.WriteString("<p style=\"color:red\">Query rejected</p>")
+					continue
+				}
 				rows, err := s.db.QueryRowsWithParams(sql, params)
 				if err != nil {
 					s.logger.LogError("fragment query failed", err)
@@ -798,16 +801,8 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 		formData[k] = v
 	}
 
-	// Add current_user fields (both dot and underscore formats)
-	session := s.getSession(r)
-	if session != nil {
-		formData["current_user.id"] = session.UserID
-		formData["current_user.identity"] = session.Identity
-		formData["current_user.role"] = session.Role
-		formData["current_user_id"] = session.UserID
-		formData["current_user_identity"] = session.Identity
-		formData["current_user_role"] = session.Role
-	}
+	// Add current_user fields (including tenant id and other safe columns)
+	s.populateCurrentUserParams(formData, s.getSession(r))
 
 	// Start implicit transaction for atomicity
 	var tx *database.TxHandle
@@ -865,11 +860,18 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 
 		case parser.NodeQuery:
 			if tx != nil {
-				sql := RewriteTenantSQL(node.SQL, s.tenants)
+				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, formData)
+				if tErr != nil {
+					s.logger.LogError("tenant guard rejected action query", tErr)
+					lastQueryOk = false
+					lastQueryNotFound = false
+					continue
+				}
 				trimmed := strings.TrimSpace(strings.ToUpper(sql))
 				if strings.HasPrefix(trimmed, "SELECT") {
 					rows, err := tx.QueryRowsWithParams(sql, formData)
 					if err != nil {
+						s.logger.LogError("action query failed", err)
 						lastQueryOk = false
 						lastQueryNotFound = false
 						continue
@@ -998,7 +1000,12 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				// Re-run the named query to get full rows for the PDF
 				for _, prevNode := range action.Body {
 					if prevNode.Type == parser.NodeQuery && prevNode.Name == dataName {
-						rows, err := tx.QueryRowsWithParams(prevNode.SQL, formData)
+						prevSQL, tErr := RewriteTenantSQL(prevNode.SQL, s.tenants, formData)
+						if tErr != nil {
+							s.logger.LogError("tenant guard rejected PDF data query", tErr)
+							continue
+						}
+						rows, err := tx.QueryRowsWithParams(prevSQL, formData)
 						if err == nil && len(rows) > 0 {
 							var headers []string
 							for key := range rows[0] {
@@ -1120,7 +1127,13 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			}
 
 			if node.QuerySQL != "" && tx != nil {
-				rows, err := tx.QueryRowsWithParams(node.QuerySQL, formData)
+				respondSQL, tErr := RewriteTenantSQL(node.QuerySQL, s.tenants, formData)
+				if tErr != nil {
+					s.logger.LogError("tenant guard rejected respond query", tErr)
+					http.Error(w, "Forbidden", http.StatusForbidden)
+					return
+				}
+				rows, err := tx.QueryRowsWithParams(respondSQL, formData)
 				if err != nil {
 					s.logger.LogError("respond query failed", err)
 					http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -1251,11 +1264,16 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 			}(recipient, subject, emailBody, templateName, paramsCopy)
 		case parser.NodeQuery:
 			if s.db != nil {
-				sql := RewriteTenantSQL(node.SQL, s.tenants)
+				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, formData)
+				if tErr != nil {
+					s.logger.LogError("tenant guard rejected on-branch query", tErr)
+					continue
+				}
 				trimmed := strings.TrimSpace(strings.ToUpper(sql))
 				if strings.HasPrefix(trimmed, "SELECT") {
 					rows, err := s.db.QueryRowsWithParams(sql, formData)
 					if err != nil {
+						s.logger.LogError("on-branch query failed", err)
 						continue
 					}
 					name := node.Name
@@ -1269,7 +1287,7 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 					}
 				} else {
 					if err := s.db.ExecWithParams(sql, formData); err != nil {
-						fmt.Printf("  on-branch query error: %v\n", err)
+						s.logger.LogError("on-branch query error", err)
 					}
 				}
 			}

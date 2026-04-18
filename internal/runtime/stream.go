@@ -46,17 +46,8 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request, stream par
 	// Get path params for the query
 	params := matchPathParams(stream.Path, r.URL.Path)
 
-	// Add current_user params if authenticated
-	session := s.getSession(r)
-	if session != nil {
-		params["current_user.id"] = session.UserID
-		params["current_user.identity"] = session.Identity
-		params["current_user.role"] = session.Role
-		// Also support underscore form for backwards compatibility
-		params["current_user_id"] = session.UserID
-		params["current_user_identity"] = session.Identity
-		params["current_user_role"] = session.Role
-	}
+	// Add current_user params if authenticated (includes tenant id etc.)
+	s.populateCurrentUserParams(params, s.getSession(r))
 
 	ticker := time.NewTicker(time.Duration(stream.IntervalSecs) * time.Second)
 	defer ticker.Stop()
@@ -79,7 +70,14 @@ func (s *Server) sendSSEEvent(w http.ResponseWriter, flusher http.Flusher, strea
 		return
 	}
 
-	rows, err := s.db.QueryRowsWithParams(stream.SQL, params)
+	sql, tErr := RewriteTenantSQL(stream.SQL, s.tenants, params)
+	if tErr != nil {
+		s.logger.LogError("tenant guard rejected SSE query", tErr)
+		fmt.Fprintf(w, "event: error\ndata: query rejected\n\n")
+		flusher.Flush()
+		return
+	}
+	rows, err := s.db.QueryRowsWithParams(sql, params)
 	if err != nil {
 		fmt.Printf("  SSE query error: %v\n", err)
 		fmt.Fprintf(w, "event: error\ndata: query failed\n\n")

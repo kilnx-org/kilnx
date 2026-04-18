@@ -224,6 +224,43 @@ func TestExtractSelectColumns(t *testing.T) {
 	}
 }
 
+func TestAnalyze_TenantRefUnknownModel(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "quote", Tenant: "ogr", // typo, no such model
+				Fields: []parser.Field{{Name: "ogr", Type: parser.FieldReference, Reference: "ogr", Required: true}}},
+		},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "tenant 'ogr'") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected error for unknown tenant model, got: %+v", diags)
+	}
+}
+
+func TestAnalyze_TenantRefSelf(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "quote", Tenant: "quote"},
+		},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "own tenant") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected self-tenant error, got: %+v", diags)
+	}
+}
+
 func TestAnalyze_ValidApp(t *testing.T) {
 	app := &parser.App{
 		Models: []parser.Model{

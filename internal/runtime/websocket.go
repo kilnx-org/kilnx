@@ -135,6 +135,8 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 
 	// Get room name from path params
 	pathParams := matchPathParams(sock.Path, r.URL.Path)
+	// Bind current_user.* (including tenant id) onto the connection's params.
+	s.populateCurrentUserParams(pathParams, s.getSession(r))
 	roomName := r.URL.Path
 	if room, ok := pathParams["room"]; ok {
 		roomName = room
@@ -175,7 +177,12 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 		if s.db != nil {
 			for _, node := range sock.OnConnect {
 				if node.Type == parser.NodeQuery {
-					rows, err := s.db.QueryRowsWithParams(node.SQL, pathParams)
+					sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
+					if tErr != nil {
+						s.logger.LogError("tenant guard rejected websocket on-connect query", tErr)
+						continue
+					}
+					rows, err := s.db.QueryRowsWithParams(sql, pathParams)
 					if err == nil && len(rows) > 0 {
 						// Send each row as a message to the newly connected client
 						for _, row := range rows {

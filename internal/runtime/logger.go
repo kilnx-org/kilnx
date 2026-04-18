@@ -51,9 +51,10 @@ func (l *Logger) LogSlowQuery(sql string, duration time.Duration) {
 	}
 }
 
-// LogError logs an error, optionally with a goroutine stack trace
+// LogError logs an error, optionally with a goroutine stack trace.
+// Nil-tolerant: tests and early-boot paths may hold a nil Logger.
 func (l *Logger) LogError(msg string, err error) {
-	if !l.config.LogErrors {
+	if l == nil || !l.config.LogErrors {
 		return
 	}
 	fmt.Printf("[%s] ERROR: %s: %v\n",
