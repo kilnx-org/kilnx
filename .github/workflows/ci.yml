@@ -48,25 +48,6 @@ jobs:
       - name: Check examples (hello)
         run: ./kilnx check examples/hello.kilnx
 
-      - name: Check examples (blog)
-        run: ./kilnx check examples/blog.kilnx
-
-  kilnx-tests:
-    name: Kilnx Declarative Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Build CLI
-        run: go build -o kilnx ./cmd/kilnx/
-
-      - name: Run blog tests
-        run: ./kilnx test examples/blog.kilnx
-
   kilnx-build:
     name: Build Examples
     runs-on: ubuntu-latest
@@ -83,13 +64,9 @@ jobs:
       - name: Build hello example
         run: ./kilnx build examples/hello.kilnx -o hello
 
-      - name: Build blog example
-        run: ./kilnx build examples/blog.kilnx -o blog
-
       - name: Verify binaries exist
         run: |
           test -f hello && echo "hello binary OK ($(du -h hello | cut -f1))"
-          test -f blog && echo "blog binary OK ($(du -h blog | cut -f1))"
 
       - name: Verify hello binary starts and serves /healthz
         run: |

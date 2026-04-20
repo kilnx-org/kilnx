@@ -72,10 +72,12 @@ func resolveImports(absPath, projectRoot string, seen map[string]bool, depth int
 	baseDir := filepath.Dir(absPath)
 	var result strings.Builder
 	for _, line := range strings.Split(string(raw), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "import ") {
-			importPath := strings.TrimPrefix(trimmed, "import ")
-			importPath = strings.Trim(importPath, "\"' ")
+		// import statement must be at column 0, like other top-level keywords
+		// (config, model, page, action). Any indented "import ..." is content,
+		// not an import directive.
+		if strings.HasPrefix(line, "import ") {
+			importPath := strings.TrimPrefix(line, "import ")
+			importPath = strings.Trim(importPath, "\"' \t\r")
 			if importPath == "" {
 				continue
 			}

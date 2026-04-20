@@ -370,14 +370,23 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 				continue
 			}
 
-			sql := node.SQL
+			// Schedules and jobs run without a logged-in user. If the SQL
+			// touches a tenant-scoped table the rewriter will refuse it;
+			// that is intentional. Developers wanting to operate across
+			// tenants in batch jobs must use the (forthcoming) unscoped
+			// escape hatch guarded by role checks.
+			sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, params)
+			if tErr != nil {
+				s.logger.LogSecurity("tenant guard rejected scheduled query", tErr)
+				return fmt.Errorf("tenant guard: %w", tErr)
+			}
 
 			// Check if it's a SELECT or a mutation
 			trimmed := strings.TrimSpace(strings.ToUpper(sql))
 			if strings.HasPrefix(trimmed, "SELECT") {
 				rows, err := s.db.QueryRowsWithParams(sql, params)
 				if err != nil {
-					fmt.Printf("  schedule/job query error: %v\n", err)
+					s.logger.LogError("schedule/job query error", err)
 					return fmt.Errorf("query error: %w", err)
 				}
 				name := node.Name
@@ -388,7 +397,7 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 			} else {
 				err := s.db.ExecWithParams(sql, params)
 				if err != nil {
-					fmt.Printf("  schedule/job exec error: %v\n", err)
+					s.logger.LogError("schedule/job exec error", err)
 					return fmt.Errorf("exec error: %w", err)
 				}
 			}
@@ -415,11 +424,16 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 			recipient := resolveEmailRecipient(node.EmailTo, params)
 			// Resolve recipient from SQL query if specified
 			if toQuery, ok := node.Props["to_query"]; ok && toQuery != "" && s.db != nil {
-				rows, err := s.db.QueryRowsWithParams(toQuery, params)
-				if err == nil && len(rows) > 0 {
-					for _, v := range rows[0] {
-						recipient = v
-						break
+				scopedQuery, tErr := RewriteTenantSQL(toQuery, s.tenants, params)
+				if tErr != nil {
+					s.logger.LogSecurity("tenant guard rejected recipient query", tErr)
+				} else {
+					rows, err := s.db.QueryRowsWithParams(scopedQuery, params)
+					if err == nil && len(rows) > 0 {
+						for _, v := range rows[0] {
+							recipient = v
+							break
+						}
 					}
 				}
 			}

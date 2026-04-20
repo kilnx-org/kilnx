@@ -193,6 +193,73 @@ func TestModelReferenceField(t *testing.T) {
 	}
 }
 
+func TestModelTenantDirective(t *testing.T) {
+	src := `model quote
+  tenant: org
+  number: text required
+  total: float default 0`
+
+	app := parse(t, src)
+	if len(app.Models) != 1 {
+		t.Fatalf("expected 1 model, got %d", len(app.Models))
+	}
+	m := app.Models[0]
+	if m.Name != "quote" {
+		t.Errorf("expected model name 'quote', got %q", m.Name)
+	}
+	if m.Tenant != "org" {
+		t.Errorf("expected Tenant 'org', got %q", m.Tenant)
+	}
+	// Expect auto-synthesized tenant FK field first, then declared fields.
+	if len(m.Fields) != 3 {
+		t.Fatalf("expected 3 fields (auto + 2 declared), got %d", len(m.Fields))
+	}
+	auto := m.Fields[0]
+	if auto.Name != "org" || auto.Type != FieldReference || auto.Reference != "org" || !auto.Required {
+		t.Errorf("expected auto-synthesized org reference (required), got %+v", auto)
+	}
+	if m.Fields[1].Name != "number" || m.Fields[2].Name != "total" {
+		t.Errorf("declared fields out of order: %+v %+v", m.Fields[1], m.Fields[2])
+	}
+}
+
+func TestModelTenantFieldStillWorksWithBuiltinType(t *testing.T) {
+	// A field literally named "tenant" with a built-in type is NOT a
+	// directive. It stays a regular field (escape hatch so users can have
+	// a column called tenant if they want).
+	src := `model agreement
+  tenant: text required`
+
+	app := parse(t, src)
+	m := app.Models[0]
+	if m.Tenant != "" {
+		t.Errorf("expected no tenant directive, got %q", m.Tenant)
+	}
+	if len(m.Fields) != 1 || m.Fields[0].Name != "tenant" || m.Fields[0].Type != FieldText {
+		t.Fatalf("expected regular 'tenant: text' field, got %+v", m.Fields)
+	}
+}
+
+func TestModelTenantDirectiveRejectsDuplicate(t *testing.T) {
+	src := `model quote
+  tenant: org
+  tenant: account`
+	_, err := parseAllowErrors(t, src)
+	if err == nil || !strings.Contains(err.Error(), "already has a tenant directive") {
+		t.Fatalf("expected duplicate tenant error, got %v", err)
+	}
+}
+
+func TestModelTenantDirectiveMustComeFirst(t *testing.T) {
+	src := `model quote
+  number: text required
+  tenant: org`
+	_, err := parseAllowErrors(t, src)
+	if err == nil || !strings.Contains(err.Error(), "must appear before field declarations") {
+		t.Fatalf("expected ordering error, got %v", err)
+	}
+}
+
 func TestAuthBlock(t *testing.T) {
 	src := `auth
   table: account

@@ -105,7 +105,7 @@ var builtinFilters = map[string]func(string, []string) string{
 		if len(args) > 0 {
 			format = goDateFormat(args[0])
 		}
-		for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"} {
+		for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05 -0700 MST", "2006-01-02 15:04:05 +0000 UTC", "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"} {
 			if t, err := time.Parse(layout, v); err == nil {
 				return t.Format(format)
 			}
@@ -113,7 +113,7 @@ var builtinFilters = map[string]func(string, []string) string{
 		return v
 	},
 	"timeago": func(v string, _ []string) string {
-		for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"} {
+		for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05 -0700 MST", "2006-01-02 15:04:05 +0000 UTC", "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"} {
 			if t, err := time.Parse(layout, v); err == nil {
 				return timeAgo(t)
 			}

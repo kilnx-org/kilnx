@@ -35,6 +35,18 @@ release:
   prerelease: auto
   name_template: "v{{ .Version }}"
 
+brews:
+  - repository:
+      owner: kilnx-org
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://kilnx.org"
+    description: "Declarative backend language for the htmx era"
+    license: "MIT"
+    test: |
+      system "#{bin}/kilnx", "version"
+
 changelog:
   use: github
   filters:

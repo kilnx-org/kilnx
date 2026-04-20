@@ -119,15 +119,13 @@ func cmdRun(filename string) error {
 
 	// Resolve config
 	port := 8080
-	dbPath := dbPathFor(filename)
+	dbURL := dbPathFor(filename)
 	if app.Config != nil {
 		if app.Config.Port > 0 {
 			port = app.Config.Port
 		}
 		if app.Config.Database != "" {
-			dbPath = app.Config.Database
-			// Handle sqlite:// prefix
-			dbPath = strings.TrimPrefix(dbPath, "sqlite://")
+			dbURL = app.Config.Database
 		}
 	}
 
@@ -141,7 +139,7 @@ func cmdRun(filename string) error {
 		}
 	}
 
-	db, err := database.Open(dbPath)
+	db, err := database.Open(dbURL)
 	if err != nil {
 		return err
 	}
@@ -159,7 +157,7 @@ func cmdRun(filename string) error {
 			return err
 		}
 		if len(stmts) > 0 {
-			fmt.Printf("Auto-migrated %d change(s) to %s\n", len(stmts), dbPath)
+			fmt.Printf("Auto-migrated %d change(s) to %s\n", len(stmts), dbURL)
 		}
 	}
 
@@ -188,11 +186,14 @@ func cmdMigrate(filename string, flags []string) error {
 		return nil
 	}
 
-	dbPath := dbPathFor(filename)
-	fmt.Printf("Database: %s\n", dbPath)
+	dbURL := dbPathFor(filename)
+	if app.Config != nil && app.Config.Database != "" {
+		dbURL = app.Config.Database
+	}
+	fmt.Printf("Database: %s\n", dbURL)
 	fmt.Printf("Models:   %d\n\n", len(app.Models))
 
-	db, err := database.Open(dbPath)
+	db, err := database.Open(dbURL)
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,43 @@
+# Kilnx
+
+> Kilnx is a declarative backend language that compiles `.kilnx` source files to a single standalone binary. Models, routes, queries, auth, jobs, WebSockets, SSE, and tests live in one file. SQLite and PostgreSQL are first-class. Zero JavaScript, zero runtime dependencies for the user, built for the htmx era. 27 keywords, 2 runtime dependencies (SQLite + bcrypt), ~15MB binary.
+
+Authoritative references live in this repository. When reasoning about Kilnx code, read the grammar before guessing syntax. Security (CSRF, SQL binding, HTML escaping, session HMAC, bcrypt) is built in and must not be re-implemented by user code.
+
+## Core references
+
+- [Grammar](https://github.com/kilnx-org/kilnx/blob/main/GRAMMAR.md): complete syntax specification, every construct and modifier
+- [Features](https://github.com/kilnx-org/kilnx/blob/main/FEATURES.md): working feature catalogue with runnable examples
+- [Principles](https://github.com/kilnx-org/kilnx/blob/main/PRINCIPLES.md): 11 constitutional design rules that override any ad-hoc decision
+- [Changelog](https://github.com/kilnx-org/kilnx/blob/main/CHANGELOG.md): version history and breaking-change notes
+- [README](https://github.com/kilnx-org/kilnx/blob/main/README.md): short overview and install instructions
+
+## Language constructs
+
+Top-level blocks: `config`, `model`, `auth`, `permissions`, `layout`, `page`, `action`, `fragment`, `stream`, `socket`, `api`, `webhook`, `job`, `schedule`, `test`.
+
+Field types: `text`, `email`, `int`, `float`, `bool`, `timestamp`, `richtext`, `option`, `password`, `image`, `phone`.
+
+Constraints: `required`, `unique`, `default`, `auto`, `min`, `max`.
+
+## CLI
+
+- `kilnx run <file.kilnx>`: dev server with hot reload
+- `kilnx build <file.kilnx> -o <binary>`: compile to standalone binary
+- `kilnx check <file.kilnx>`: static analysis (types, security, SQL)
+- `kilnx test <file.kilnx>`: run declarative `test` blocks
+- `kilnx migrate <file.kilnx> [--dry-run|--status]`: schema migration
+- `kilnx lsp`: Language Server Protocol endpoint
+
+## Example apps
+
+Curated catalog lives in a dedicated repo: [kilnx-org/examples](https://github.com/kilnx-org/examples).
+
+- [hello](https://github.com/kilnx-org/examples/tree/main/hello): two-line minimal app
+- [chat](https://github.com/kilnx-org/examples/tree/main/chat): Slack-style team chat with channels, threads, DMs, reactions, typing indicators, uploads (multi-file, ~280 LOC)
+
+## Optional
+
+- [Issue tracker](https://github.com/kilnx-org/kilnx/issues): active roadmap (RFCs, enhancements, bugs)
+- [Contributing guide](https://github.com/kilnx-org/kilnx/blob/main/CONTRIBUTING.md)
+- [Docs site](https://docs.kilnx.org)

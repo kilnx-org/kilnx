@@ -30,6 +30,7 @@ type Server struct {
 	rateLimiter  *RateLimiter
 	logger       *Logger
 	i18n         *I18n
+	tenants      TenantMap // models with a `tenant: <model>` directive
 	mu           sync.RWMutex
 	port         int
 	scheduleStop chan struct{}
@@ -40,7 +41,7 @@ func NewServer(app *parser.App, db *database.DB, port int) *Server {
 	if app.Config != nil {
 		secret = app.Config.Secret
 	}
-	s := &Server{app: app, db: db, sessions: NewSessionStore(secret), port: port}
+	s := &Server{app: app, db: db, sessions: NewSessionStore(secret), port: port, tenants: BuildTenantMap(app)}
 	// Attach DB to session store for persistence
 	if db != nil {
 		s.sessions.SetDB(db)
@@ -170,25 +171,30 @@ func (s *Server) Start() error {
 			}
 		}
 
-		// Auth routes (auto-generated when auth block is present)
-		if app.Auth != nil {
-			if r.URL.Path == app.Auth.LoginPath {
+		// Auth routes. When an `auth` block is declared, the runtime owns
+		// the POST side of these endpoints (bcrypt hashing, session
+		// signing, CSRF validation, password reset tokens). GET requests
+		// always fall through to user-declared pages; the analyzer
+		// enforces that the app declares a page at each auth path, so
+		// reaching GET here with no page means the user bypassed
+		// `kilnx check`. All four auth paths honor the values configured
+		// in the `auth` block (e.g. `login: /entrar`, `register: /cadastrar`).
+		if app.Auth != nil && r.Method == http.MethodPost {
+			p := r.URL.Path
+			switch p {
+			case app.Auth.LoginPath:
 				s.handleLogin(w, r)
 				return
-			}
-			if r.URL.Path == "/logout" {
+			case app.Auth.LogoutPath:
 				s.handleLogout(w, r)
 				return
-			}
-			if r.URL.Path == "/register" {
+			case app.Auth.RegisterPath:
 				s.handleRegister(w, r)
 				return
-			}
-			if r.URL.Path == "/forgot-password" {
+			case app.Auth.ForgotPath:
 				s.handleForgotPassword(w, r)
 				return
-			}
-			if r.URL.Path == "/reset-password" {
+			case app.Auth.ResetPath:
 				s.handleResetPassword(w, r)
 				return
 			}
@@ -324,12 +330,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 	// Make current_user available as a query result and as SQL params
 	if ctx.currentUser != nil {
 		ctx.queries["current_user"] = []database.Row{ctx.currentUser.Data}
-		pathParams["current_user.id"] = ctx.currentUser.UserID
-		pathParams["current_user.identity"] = ctx.currentUser.Identity
-		pathParams["current_user.role"] = ctx.currentUser.Role
-		pathParams["current_user_id"] = ctx.currentUser.UserID
-		pathParams["current_user_identity"] = ctx.currentUser.Identity
-		pathParams["current_user_role"] = ctx.currentUser.Role
+		s.populateCurrentUserParams(pathParams, ctx.currentUser)
 	}
 
 	// Expose URL query parameters to templates and SQL
@@ -354,7 +355,11 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		if node.Type != parser.NodeQuery || s.db == nil {
 			continue
 		}
-		sql := node.SQL
+		sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
+		if tErr != nil {
+			s.logger.LogSecurity("tenant guard rejected page query", tErr)
+			continue
+		}
 
 		queryName := node.Name
 		if queryName == "" {
@@ -407,6 +412,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 			rows, err = s.db.QueryRows(sql)
 		}
 		if err != nil {
+			s.logger.LogError("page query failed", err)
 			continue
 		}
 		ctx.queries[queryName] = rows
@@ -459,7 +465,11 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 	if app.Config != nil {
 		appName = app.Config.Name
 	}
-	nav := renderNav(allPages, p.Path, ctx.currentUser, appName)
+	logoutPath := ""
+	if app.Auth != nil {
+		logoutPath = app.Auth.LogoutPath
+	}
+	nav := renderNav(allPages, p.Path, ctx.currentUser, appName, logoutPath)
 	content := bodyContent
 	if p.Layout != "" {
 		for _, layout := range app.Layouts {
@@ -475,14 +485,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 					for k, v := range pathParams {
 						layoutParams[k] = v
 					}
-					if ctx.currentUser != nil {
-						layoutParams["current_user.id"] = ctx.currentUser.UserID
-						layoutParams["current_user.identity"] = ctx.currentUser.Identity
-						layoutParams["current_user.role"] = ctx.currentUser.Role
-						layoutParams["current_user_id"] = ctx.currentUser.UserID
-						layoutParams["current_user_identity"] = ctx.currentUser.Identity
-						layoutParams["current_user_role"] = ctx.currentUser.Role
-					}
+					s.populateCurrentUserParams(layoutParams, ctx.currentUser)
 					for _, q := range layout.Queries {
 						if q.SQL == "" {
 							continue
@@ -491,15 +494,22 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 						if name == "" {
 							name = "_last"
 						}
+						sql, tErr := RewriteTenantSQL(q.SQL, s.tenants, layoutParams)
+						if tErr != nil {
+							s.logger.LogSecurity("tenant guard rejected layout query", tErr)
+							continue
+						}
 						var rows []database.Row
 						var err error
 						if len(layoutParams) > 0 {
-							rows, err = s.db.QueryRowsWithParams(q.SQL, layoutParams)
+							rows, err = s.db.QueryRowsWithParams(sql, layoutParams)
 						} else {
-							rows, err = s.db.QueryRows(q.SQL)
+							rows, err = s.db.QueryRows(sql)
 						}
 						if err == nil {
 							layoutCtx.queries[name] = rows
+						} else {
+							s.logger.LogError("layout query failed", err)
 						}
 					}
 				}
@@ -570,7 +580,10 @@ func interpolate(text string, ctx *renderContext) string {
 	})
 }
 
-func renderNav(pages []parser.Page, currentPath string, session *Session, appName string) string {
+func renderNav(pages []parser.Page, currentPath string, session *Session, appName string, logoutPath string) string {
+	if logoutPath == "" {
+		logoutPath = "/logout"
+	}
 	var nav strings.Builder
 	nav.WriteString("  <header class=\"kilnx-topbar\">\n")
 	nav.WriteString("    <div class=\"kilnx-topbar-left\">\n")
@@ -610,7 +623,7 @@ func renderNav(pages []parser.Page, currentPath string, session *Session, appNam
 		nav.WriteString(fmt.Sprintf("      <span class=\"kilnx-user\">%s</span>\n",
 			html.EscapeString(session.Identity)))
 		csrf := generateCSRFToken()
-		nav.WriteString(fmt.Sprintf("      <form method=\"POST\" action=\"/logout\" style=\"display:inline;margin:0\"><input type=\"hidden\" name=\"_csrf\" value=\"%s\"><button type=\"submit\" class=\"kilnx-logout\">Logout</button></form>\n", csrf))
+		nav.WriteString(fmt.Sprintf("      <form method=\"POST\" action=\"%s\" style=\"display:inline;margin:0\"><input type=\"hidden\" name=\"_csrf\" value=\"%s\"><button type=\"submit\" class=\"kilnx-logout\">Logout</button></form>\n", html.EscapeString(logoutPath), csrf))
 		nav.WriteString("    </div>\n")
 	}
 	nav.WriteString("  </header>\n")
@@ -618,7 +631,7 @@ func renderNav(pages []parser.Page, currentPath string, session *Session, appNam
 }
 
 func render404(path string, pages []parser.Page) string {
-	nav := renderNav(pages, "", nil, "")
+	nav := renderNav(pages, "", nil, "", "")
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -686,7 +699,11 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 		switch node.Type {
 		case parser.NodeQuery:
 			if s.db != nil {
-				sql := node.SQL
+				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
+				if tErr != nil {
+					s.logger.LogSecurity("tenant guard rejected fragment query", tErr)
+					continue
+				}
 				queryName := node.Name
 				if queryName == "" {
 					queryName = "_last"
@@ -746,7 +763,13 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 		switch node.Type {
 		case parser.NodeQuery:
 			if s.db != nil {
-				rows, err := s.db.QueryRowsWithParams(node.SQL, params)
+				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, params)
+				if tErr != nil {
+					s.logger.LogSecurity("tenant guard rejected fragment query", tErr)
+					body.WriteString("<p style=\"color:red\">Query rejected</p>")
+					continue
+				}
+				rows, err := s.db.QueryRowsWithParams(sql, params)
 				if err != nil {
 					s.logger.LogError("fragment query failed", err)
 					body.WriteString("<p style=\"color:red\">Query error</p>")
@@ -791,16 +814,8 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 		formData[k] = v
 	}
 
-	// Add current_user fields (both dot and underscore formats)
-	session := s.getSession(r)
-	if session != nil {
-		formData["current_user.id"] = session.UserID
-		formData["current_user.identity"] = session.Identity
-		formData["current_user.role"] = session.Role
-		formData["current_user_id"] = session.UserID
-		formData["current_user_identity"] = session.Identity
-		formData["current_user_role"] = session.Role
-	}
+	// Add current_user fields (including tenant id and other safe columns)
+	s.populateCurrentUserParams(formData, s.getSession(r))
 
 	// Start implicit transaction for atomicity
 	var tx *database.TxHandle
@@ -858,10 +873,18 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 
 		case parser.NodeQuery:
 			if tx != nil {
-				trimmed := strings.TrimSpace(strings.ToUpper(node.SQL))
+				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, formData)
+				if tErr != nil {
+					s.logger.LogSecurity("tenant guard rejected action query", tErr)
+					lastQueryOk = false
+					lastQueryNotFound = false
+					continue
+				}
+				trimmed := strings.TrimSpace(strings.ToUpper(sql))
 				if strings.HasPrefix(trimmed, "SELECT") {
-					rows, err := tx.QueryRowsWithParams(node.SQL, formData)
+					rows, err := tx.QueryRowsWithParams(sql, formData)
 					if err != nil {
+						s.logger.LogError("action query failed", err)
 						lastQueryOk = false
 						lastQueryNotFound = false
 						continue
@@ -878,7 +901,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 						}
 					}
 				} else {
-					err := tx.ExecWithParams(node.SQL, formData)
+					err := tx.ExecWithParams(sql, formData)
 					if err != nil {
 						lastQueryOk = false
 						lastQueryNotFound = false
@@ -935,7 +958,12 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			recipient := resolveEmailRecipient(node.EmailTo, formData)
 			// Resolve recipient from SQL query if specified
 			if toQuery, ok := node.Props["to_query"]; ok && toQuery != "" && s.db != nil {
-				rows, err := s.db.QueryRowsWithParams(toQuery, formData)
+				scopedToQuery, tErr := RewriteTenantSQL(toQuery, s.tenants, formData)
+				if tErr != nil {
+					s.logger.LogSecurity("tenant guard rejected email recipient query", tErr)
+					continue
+				}
+				rows, err := s.db.QueryRowsWithParams(scopedToQuery, formData)
 				if err == nil && len(rows) > 0 {
 					for _, v := range rows[0] {
 						recipient = v
@@ -990,7 +1018,12 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				// Re-run the named query to get full rows for the PDF
 				for _, prevNode := range action.Body {
 					if prevNode.Type == parser.NodeQuery && prevNode.Name == dataName {
-						rows, err := tx.QueryRowsWithParams(prevNode.SQL, formData)
+						prevSQL, tErr := RewriteTenantSQL(prevNode.SQL, s.tenants, formData)
+						if tErr != nil {
+							s.logger.LogSecurity("tenant guard rejected PDF data query", tErr)
+							continue
+						}
+						rows, err := tx.QueryRowsWithParams(prevSQL, formData)
 						if err == nil && len(rows) > 0 {
 							var headers []string
 							for key := range rows[0] {
@@ -1052,8 +1085,39 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				tx.Commit()
 			}
 			if r.Header.Get("HX-Request") == "true" {
-				w.Header().Set("HX-Redirect", path)
-				w.WriteHeader(http.StatusOK)
+				// For htmx: find a fragment under the redirect path
+				// e.g., redirect to /channel/6 finds fragment /channel/:id/messages
+				rendered := false
+				for _, frag := range app.Fragments {
+					// Check if fragment path starts with same prefix as redirect
+					fragParts := strings.Split(frag.Path, "/")
+					pathParts := strings.Split(path, "/")
+					if len(fragParts) > len(pathParts) {
+						match := true
+						for i, pp := range pathParts {
+							fp := fragParts[i]
+							if fp != pp && !strings.HasPrefix(fp, ":") {
+								match = false
+								break
+							}
+						}
+						if match {
+							// Build the actual fragment URL using redirect path values
+							actualPath := path + "/" + strings.Join(fragParts[len(pathParts):], "/")
+							fakeReq := r.Clone(r.Context())
+							fakeReq.URL.Path = actualPath
+							content := s.renderFragment(frag, fakeReq)
+							w.Header().Set("Content-Type", "text/html; charset=utf-8")
+							w.Write([]byte(content))
+							rendered = true
+							break
+						}
+					}
+				}
+				if !rendered {
+					w.Header().Set("HX-Redirect", path)
+					w.WriteHeader(http.StatusOK)
+				}
 			} else {
 				http.Redirect(w, r, path, http.StatusSeeOther)
 			}
@@ -1081,7 +1145,13 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			}
 
 			if node.QuerySQL != "" && tx != nil {
-				rows, err := tx.QueryRowsWithParams(node.QuerySQL, formData)
+				respondSQL, tErr := RewriteTenantSQL(node.QuerySQL, s.tenants, formData)
+				if tErr != nil {
+					s.logger.LogSecurity("tenant guard rejected respond query", tErr)
+					http.Error(w, "Forbidden", http.StatusForbidden)
+					return
+				}
+				rows, err := tx.QueryRowsWithParams(respondSQL, formData)
 				if err != nil {
 					s.logger.LogError("respond query failed", err)
 					http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -1187,7 +1257,12 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 		case parser.NodeSendEmail:
 			recipient := resolveEmailRecipient(node.EmailTo, formData)
 			if toQuery, ok := node.Props["to_query"]; ok && toQuery != "" && s.db != nil {
-				rows, err := s.db.QueryRowsWithParams(toQuery, formData)
+				scopedToQuery, tErr := RewriteTenantSQL(toQuery, s.tenants, formData)
+				if tErr != nil {
+					s.logger.LogSecurity("tenant guard rejected email recipient query", tErr)
+					continue
+				}
+				rows, err := s.db.QueryRowsWithParams(scopedToQuery, formData)
 				if err == nil && len(rows) > 0 {
 					for _, v := range rows[0] {
 						recipient = v
@@ -1212,10 +1287,16 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 			}(recipient, subject, emailBody, templateName, paramsCopy)
 		case parser.NodeQuery:
 			if s.db != nil {
-				trimmed := strings.TrimSpace(strings.ToUpper(node.SQL))
+				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, formData)
+				if tErr != nil {
+					s.logger.LogSecurity("tenant guard rejected on-branch query", tErr)
+					continue
+				}
+				trimmed := strings.TrimSpace(strings.ToUpper(sql))
 				if strings.HasPrefix(trimmed, "SELECT") {
-					rows, err := s.db.QueryRowsWithParams(node.SQL, formData)
+					rows, err := s.db.QueryRowsWithParams(sql, formData)
 					if err != nil {
+						s.logger.LogError("on-branch query failed", err)
 						continue
 					}
 					name := node.Name
@@ -1228,8 +1309,8 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 						}
 					}
 				} else {
-					if err := s.db.ExecWithParams(node.SQL, formData); err != nil {
-						fmt.Printf("  on-branch query error: %v\n", err)
+					if err := s.db.ExecWithParams(sql, formData); err != nil {
+						s.logger.LogError("on-branch query error", err)
 					}
 				}
 			}
@@ -1272,6 +1353,23 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 			}
 		}
 	}
+}
+
+// hasUserPage reports whether the app declares a `page` at exactly the
+// given path. Uses exact string equality (not matchPath) because the
+// auth dispatcher only needs to cover fixed paths like /login and
+// /register; parameterised matching would let a page like /login-extra
+// accidentally shadow the built-in /login.
+func hasUserPage(app *parser.App, path string) bool {
+	if app == nil {
+		return false
+	}
+	for _, p := range app.Pages {
+		if p.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 // matchPath checks if a route pattern matches a URL path.
