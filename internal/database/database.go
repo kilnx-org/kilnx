@@ -255,6 +255,12 @@ func (db *DB) planExistingTable(model parser.Model) ([]string, error) {
 		stmts = append(stmts, stmt)
 	}
 
+	if model.CustomFieldsFile != "" {
+		if _, ok := existing["custom"]; !ok {
+			stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"custom\" TEXT", model.Name))
+		}
+	}
+
 	return stmts, nil
 }
 
@@ -292,6 +298,10 @@ func (db *DB) generateCreateTable(model parser.Model) string {
 	for _, field := range model.Fields {
 		col := db.fieldToColumnDef(field)
 		cols = append(cols, col)
+	}
+
+	if model.CustomFieldsFile != "" {
+		cols = append(cols, `"custom" TEXT`)
 	}
 
 	return fmt.Sprintf("CREATE TABLE \"%s\" (\n  %s\n)", model.Name, strings.Join(cols, ",\n  "))

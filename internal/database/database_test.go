@@ -848,3 +848,43 @@ func TestMigrationStatus_Pending(t *testing.T) {
 		t.Errorf("expected ALTER TABLE, got %q", pending[0])
 	}
 }
+
+func TestCustomFieldsColumn(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	models := []parser.Model{
+		{
+			Name:             "deal",
+			CustomFieldsFile: "deal_fields.kilnx",
+			Fields: []parser.Field{
+				{Name: "title", Type: parser.FieldText},
+			},
+		},
+	}
+
+	stmts, err := db.PlanMigration(models)
+	if err != nil {
+		t.Fatalf("PlanMigration: %v", err)
+	}
+	if len(stmts) != 1 {
+		t.Fatalf("expected 1 CREATE TABLE statement, got %d", len(stmts))
+	}
+	if !strings.Contains(stmts[0], `"custom" TEXT`) {
+		t.Errorf("expected 'custom' TEXT column in CREATE TABLE, got:\n%s", stmts[0])
+	}
+
+	if _, err := db.Migrate(models); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// Removing CustomFieldsFile should not drop the column (ALTER TABLE ADD COLUMN only)
+	models[0].CustomFieldsFile = "deal_fields.kilnx"
+	pending, err := db.PlanMigration(models)
+	if err != nil {
+		t.Fatalf("PlanMigration second: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Errorf("expected 0 pending changes (custom column already exists), got %d: %v", len(pending), pending)
+	}
+}

@@ -1728,3 +1728,65 @@ func TestQueryModelMap(t *testing.T) {
 		t.Errorf("expected posts -> post, got %s", m["posts"])
 	}
 }
+
+func TestBuildSchemaCustomFields(t *testing.T) {
+	models := []parser.Model{
+		{
+			Name:             "deal",
+			CustomFieldsFile: "deal_fields.kilnx",
+			Fields: []parser.Field{
+				{Name: "title", Type: parser.FieldText},
+			},
+		},
+		{
+			Name:   "contact",
+			Fields: []parser.Field{{Name: "name", Type: parser.FieldText}},
+		},
+	}
+	schema := BuildSchema(models)
+
+	deal := schema.Tables["deal"]
+	if deal == nil {
+		t.Fatal("deal table not found")
+	}
+	if _, ok := deal.Columns["custom"]; !ok {
+		t.Error("deal table should have 'custom' column")
+	}
+
+	contact := schema.Tables["contact"]
+	if _, ok := contact.Columns["custom"]; ok {
+		t.Error("contact table should NOT have 'custom' column")
+	}
+}
+
+func TestCheckCustomFieldRefs(t *testing.T) {
+	manifest := &parser.CustomFieldManifest{
+		ModelName: "deal",
+		Fields: []parser.CustomFieldDef{
+			{Name: "revenue", Kind: parser.CustomFieldKindNumber, Label: "Receita"},
+		},
+	}
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "deal", CustomFieldsFile: "deal_fields.kilnx"},
+		},
+		Pages: []parser.Page{{
+			Path: "/deals/:id",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "d", SQL: "SELECT * FROM deal WHERE id = :id"},
+				{Type: parser.NodeHTML, HTMLContent: "<span>{d.custom.revenue}</span><span>{d.custom.unknown}</span>"},
+			},
+		}},
+		CustomManifests: map[string]*parser.CustomFieldManifest{
+			"deal": manifest,
+		},
+	}
+	schema := BuildSchema(app.Models)
+	diags := checkCustomFieldRefs(app, schema)
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic (unknown field), got %d", len(diags))
+	}
+	if !strings.Contains(diags[0].Message, "unknown") {
+		t.Errorf("expected 'unknown' in diagnostic, got %q", diags[0].Message)
+	}
+}

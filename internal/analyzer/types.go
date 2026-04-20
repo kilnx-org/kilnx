@@ -663,3 +663,76 @@ func extractSelectAliases(tokens []sqlToken) map[string]bool {
 func checkTableColumnRefs(app *parser.App, schema *Schema) []Diagnostic {
 	return nil
 }
+
+// customFieldRefRe matches {queryName.custom.fieldName} in HTML content.
+var customFieldRefRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\.custom\.([a-zA-Z_][a-zA-Z0-9_]*)\}`)
+
+// checkCustomFieldRefs validates {q.custom.fieldName} template references
+// against the corresponding model's custom field manifest.
+func checkCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
+	if len(app.CustomManifests) == 0 {
+		return nil
+	}
+
+	qMap := queryModelMap(app.Pages, app.Fragments, app.APIs)
+
+	var diags []Diagnostic
+
+	scanHTML := func(html, context string) {
+		matches := customFieldRefRe.FindAllStringSubmatch(html, -1)
+		for _, m := range matches {
+			queryName := m[1]
+			fieldName := m[2]
+
+			modelName, ok := qMap[queryName]
+			if !ok {
+				continue // unknown query already reported by checkTemplateInterpolations
+			}
+
+			manifest, ok := app.CustomManifests[modelName]
+			if !ok {
+				diags = append(diags, Diagnostic{
+					Level:   "error",
+					Message: fmt.Sprintf("template reference '{%s.custom.%s}': model '%s' has no custom fields manifest", queryName, fieldName, modelName),
+					Context: context,
+				})
+				continue
+			}
+
+			found := false
+			for _, f := range manifest.Fields {
+				if f.Name == fieldName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				diags = append(diags, Diagnostic{
+					Level:   "error",
+					Message: fmt.Sprintf("template reference '{%s.custom.%s}': field '%s' not defined in manifest for model '%s'", queryName, fieldName, fieldName, modelName),
+					Context: context,
+				})
+			}
+		}
+	}
+
+	scanNodes := func(nodes []parser.Node, context string) {
+		for _, n := range nodes {
+			if n.Type == parser.NodeHTML {
+				scanHTML(n.HTMLContent, context)
+			}
+		}
+	}
+
+	for _, p := range app.Pages {
+		scanNodes(p.Body, fmt.Sprintf("page %s", p.Path))
+	}
+	for _, f := range app.Fragments {
+		scanNodes(f.Body, fmt.Sprintf("fragment %s", f.Path))
+	}
+	for _, a := range app.APIs {
+		scanNodes(a.Body, fmt.Sprintf("api %s", a.Path))
+	}
+
+	return diags
+}

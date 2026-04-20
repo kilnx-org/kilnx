@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/kilnx-org/kilnx/internal/database"
+	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
 func newTestContext() *renderContext {
@@ -543,5 +544,118 @@ func TestRenderHTML_IfAndQuotedString(t *testing.T) {
 	result := renderHTML(`{{if item.name == "foo and bar"}}<p>Match</p>{{end}}`, ctx)
 	if !strings.Contains(result, "Match") {
 		t.Errorf("'and' inside quotes should not split condition, got %s", result)
+	}
+}
+
+func TestExpandCustomFields_DirectAccess(t *testing.T) {
+	rows := []database.Row{
+		{"title": "Deal A", "custom": `{"revenue":"500","region":"S"}`},
+	}
+	rows = expandCustomFields(rows)
+	if rows[0]["custom.revenue"] != "500" {
+		t.Errorf("expected custom.revenue='500', got %q", rows[0]["custom.revenue"])
+	}
+	if rows[0]["custom.region"] != "S" {
+		t.Errorf("expected custom.region='S', got %q", rows[0]["custom.region"])
+	}
+}
+
+func TestExpandCustomFields_NoCustomColumn(t *testing.T) {
+	rows := []database.Row{{"title": "Deal B"}}
+	rows = expandCustomFields(rows)
+	if _, ok := rows[0]["custom.anything"]; ok {
+		t.Error("should not expand if no custom column")
+	}
+}
+
+func TestExpandCustomFields_TemplateResolution(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["d"] = expandCustomFields([]database.Row{
+		{"title": "Deal A", "custom": `{"revenue":"500"}`},
+	})
+	result := renderHTML("<span>{d.custom.revenue}</span>", ctx)
+	if !strings.Contains(result, "500") {
+		t.Errorf("expected 500 in output, got %s", result)
+	}
+}
+
+func TestSerializeCustomBrackets_Basic(t *testing.T) {
+	data := map[string]string{
+		"title":          "Deal A",
+		"custom[revenue]": "500",
+		"custom[region]": "S",
+	}
+	serializeCustomBrackets(data)
+	if _, ok := data["custom[revenue]"]; ok {
+		t.Error("bracket key should be removed")
+	}
+	customJSON := data["custom"]
+	if !strings.Contains(customJSON, `"revenue"`) || !strings.Contains(customJSON, `"500"`) {
+		t.Errorf("expected revenue in custom JSON, got %q", customJSON)
+	}
+	if !strings.Contains(customJSON, `"region"`) || !strings.Contains(customJSON, `"S"`) {
+		t.Errorf("expected region in custom JSON, got %q", customJSON)
+	}
+	if data["title"] != "Deal A" {
+		t.Error("non-custom keys must not be removed")
+	}
+}
+
+func TestSerializeCustomBrackets_MergeExisting(t *testing.T) {
+	data := map[string]string{
+		"custom":          `{"notes":"abc"}`,
+		"custom[revenue]": "999",
+	}
+	serializeCustomBrackets(data)
+	customJSON := data["custom"]
+	if !strings.Contains(customJSON, `"notes"`) {
+		t.Errorf("existing custom key must be preserved, got %q", customJSON)
+	}
+	if !strings.Contains(customJSON, `"revenue"`) {
+		t.Errorf("new key must be merged, got %q", customJSON)
+	}
+}
+
+func TestSerializeCustomBrackets_NoBrackets(t *testing.T) {
+	data := map[string]string{"title": "X", "value": "1"}
+	serializeCustomBrackets(data)
+	if _, ok := data["custom"]; ok {
+		t.Error("custom key must not be created when no bracket keys exist")
+	}
+}
+
+func TestBuildCustomIterRows_WithManifest(t *testing.T) {
+	manifest := &parser.CustomFieldManifest{
+		ModelName: "deal",
+		Fields: []parser.CustomFieldDef{
+			{Name: "revenue", Kind: parser.CustomFieldKindNumber, Label: "Receita"},
+			{Name: "region", Kind: parser.CustomFieldKindOption, Label: "Região"},
+		},
+	}
+	row := database.Row{"custom": `{"revenue":"500","region":"S"}`}
+	result := buildCustomIterRows(row, manifest)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 synthetic rows, got %d", len(result))
+	}
+	if result[0]["name"] != "revenue" || result[0]["value"] != "500" || result[0]["label"] != "Receita" {
+		t.Errorf("first row wrong: %v", result[0])
+	}
+	if result[1]["name"] != "region" || result[1]["value"] != "S" || result[1]["label"] != "Região" {
+		t.Errorf("second row wrong: %v", result[1])
+	}
+}
+
+func TestBuildCustomIterRows_EmptyCustomColumn(t *testing.T) {
+	manifest := &parser.CustomFieldManifest{
+		ModelName: "deal",
+		Fields:    []parser.CustomFieldDef{{Name: "revenue", Kind: parser.CustomFieldKindNumber, Label: "Revenue"}},
+	}
+	row := database.Row{"title": "No custom data"}
+	result := buildCustomIterRows(row, manifest)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 row (empty value), got %d", len(result))
+	}
+	if result[0]["value"] != "" {
+		t.Errorf("expected empty value, got %q", result[0]["value"])
 	}
 }

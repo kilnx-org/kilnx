@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
@@ -311,18 +312,21 @@ type PaginateInfo struct {
 
 // renderContext holds query results available during template rendering
 type renderContext struct {
-	queries     map[string][]database.Row
-	paginate    map[string]PaginateInfo
-	currentUser *Session
-	queryParams map[string]string // URL query parameters (?key=value)
+	queries          map[string][]database.Row
+	paginate         map[string]PaginateInfo
+	currentUser      *Session
+	queryParams      map[string]string // URL query parameters (?key=value)
+	querySourceModels map[string]string // query name -> primary model name (set by analyzer)
 }
 
 func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Request) string {
+	app := s.getApp()
 	ctx := &renderContext{
-		queries:     make(map[string][]database.Row),
-		paginate:    make(map[string]PaginateInfo),
-		currentUser: s.getSession(r),
-		queryParams: make(map[string]string),
+		queries:           make(map[string][]database.Row),
+		paginate:          make(map[string]PaginateInfo),
+		currentUser:       s.getSession(r),
+		queryParams:       make(map[string]string),
+		querySourceModels: make(map[string]string),
 	}
 
 	pathParams := matchPathParams(p.Path, r.URL.Path)
@@ -415,7 +419,14 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 			s.logger.LogError("page query failed", err)
 			continue
 		}
+		rows = expandCustomFields(rows)
 		ctx.queries[queryName] = rows
+		if node.SourceModel != "" {
+			ctx.querySourceModels[queryName] = node.SourceModel
+			if manifest, ok := app.CustomManifests[node.SourceModel]; ok && len(rows) > 0 {
+				ctx.queries[queryName+".custom"] = buildCustomIterRows(rows[0], manifest)
+			}
+		}
 	}
 
 	// Execute fetch nodes
@@ -461,7 +472,6 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 	bodyContent := body.String()
 
 	appName := ""
-	app := s.getApp()
 	if app.Config != nil {
 		appName = app.Config.Name
 	}
@@ -663,11 +673,13 @@ func render404(path string, pages []parser.Page) string {
 
 // renderFragment renders a fragment (partial HTML, no page wrapper)
 func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
+	app := s.getApp()
 	ctx := &renderContext{
-		queries:     make(map[string][]database.Row),
-		paginate:    make(map[string]PaginateInfo),
-		currentUser: s.getSession(r),
-		queryParams: make(map[string]string),
+		queries:           make(map[string][]database.Row),
+		paginate:          make(map[string]PaginateInfo),
+		currentUser:       s.getSession(r),
+		queryParams:       make(map[string]string),
+		querySourceModels: make(map[string]string),
 	}
 
 	// Make current_user available in fragments
@@ -732,7 +744,14 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 					body.WriteString("<p style=\"color:red\">Query error</p>")
 					continue
 				}
+				rows = expandCustomFields(rows)
 				ctx.queries[queryName] = rows
+				if node.SourceModel != "" {
+					ctx.querySourceModels[queryName] = node.SourceModel
+					if manifest, ok := app.CustomManifests[node.SourceModel]; ok && len(rows) > 0 {
+						ctx.queries[queryName+".custom"] = buildCustomIterRows(rows[0], manifest)
+					}
+				}
 			}
 
 		case parser.NodeText:
@@ -752,9 +771,11 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 
 // renderFragmentWithParams renders a fragment using provided params (for WebSocket broadcast)
 func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]string) string {
+	app := s.getApp()
 	ctx := &renderContext{
-		queries:  make(map[string][]database.Row),
-		paginate: make(map[string]PaginateInfo),
+		queries:           make(map[string][]database.Row),
+		paginate:          make(map[string]PaginateInfo),
+		querySourceModels: make(map[string]string),
 	}
 
 	var body strings.Builder
@@ -779,7 +800,14 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 				if name == "" {
 					name = "_last"
 				}
+				rows = expandCustomFields(rows)
 				ctx.queries[name] = rows
+				if node.SourceModel != "" {
+					ctx.querySourceModels[name] = node.SourceModel
+					if manifest, ok := app.CustomManifests[node.SourceModel]; ok && len(rows) > 0 {
+						ctx.queries[name+".custom"] = buildCustomIterRows(rows[0], manifest)
+					}
+				}
 			}
 
 		case parser.NodeText:
@@ -1158,8 +1186,10 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 					return
 				}
 				tx.Commit()
+				rows = expandCustomFields(rows)
 				ctx := &renderContext{
-					queries: map[string][]database.Row{"_result": rows},
+					queries:           map[string][]database.Row{"_result": rows},
+					querySourceModels: make(map[string]string),
 				}
 				if node.RespondTarget != "" {
 					w.Header().Set("HX-Retarget", node.RespondTarget)
@@ -1407,4 +1437,54 @@ func matchPathParams(pattern, urlPath string) map[string]string {
 	}
 
 	return params
+}
+
+// expandCustomFields parses the "custom" JSON column in each row and adds
+// flattened "custom.<field>" keys so templates can access {q.custom.revenue}.
+func expandCustomFields(rows []database.Row) []database.Row {
+	for i, row := range rows {
+		jsonStr, ok := row["custom"]
+		if !ok || jsonStr == "" {
+			continue
+		}
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &m); err != nil {
+			continue
+		}
+		for k, v := range m {
+			row["custom."+k] = fmt.Sprintf("%v", v)
+		}
+		rows[i] = row
+	}
+	return rows
+}
+
+// buildCustomIterRows creates synthetic rows for {{each q.custom}} iteration.
+// Each row has name, value, label, and kind fields. Designed for detail pages
+// where the query returns a single row; on list pages use {q.custom.field} dot-access.
+func buildCustomIterRows(row database.Row, manifest *parser.CustomFieldManifest) []database.Row {
+	jsonStr := row["custom"]
+	values := make(map[string]string)
+	if jsonStr != "" {
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &m); err == nil {
+			for k, v := range m {
+				values[k] = fmt.Sprintf("%v", v)
+			}
+		}
+	}
+	var result []database.Row
+	for _, f := range manifest.Fields {
+		label := f.Label
+		if label == "" {
+			label = f.Name
+		}
+		result = append(result, database.Row{
+			"name":  f.Name,
+			"value": values[f.Name],
+			"label": label,
+			"kind":  string(f.Kind),
+		})
+	}
+	return result
 }
