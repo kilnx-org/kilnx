@@ -581,9 +581,9 @@ func TestExpandCustomFields_TemplateResolution(t *testing.T) {
 
 func TestSerializeCustomBrackets_Basic(t *testing.T) {
 	data := map[string]string{
-		"title":          "Deal A",
+		"title":           "Deal A",
 		"custom[revenue]": "500",
-		"custom[region]": "S",
+		"custom[region]":  "S",
 	}
 	serializeCustomBrackets(data)
 	if _, ok := data["custom[revenue]"]; ok {

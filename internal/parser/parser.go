@@ -27,8 +27,8 @@ type App struct {
 	Layouts         []Layout
 	Tests           []Test
 	LogConfig       *LogConfig
-	Translations    map[string]map[string]string   // lang -> key -> value
-	NamedQueries    map[string]string              // name -> SQL
+	Translations    map[string]map[string]string    // lang -> key -> value
+	NamedQueries    map[string]string               // name -> SQL
 	CustomManifests map[string]*CustomFieldManifest // model name -> custom field definitions
 }
 
@@ -145,8 +145,8 @@ type Model struct {
 	// field named after the tenant model (e.g. `tenant: org` adds an
 	// `org_id` column) and the runtime injects a WHERE filter on SELECT
 	// queries against this table.
-	Tenant          string
-	Fields          []Field
+	Tenant           string
+	Fields           []Field
 	CustomFieldsFile string // path to *_fields.kilnx manifest; empty if unused
 }
 

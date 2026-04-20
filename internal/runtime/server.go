@@ -312,10 +312,10 @@ type PaginateInfo struct {
 
 // renderContext holds query results available during template rendering
 type renderContext struct {
-	queries          map[string][]database.Row
-	paginate         map[string]PaginateInfo
-	currentUser      *Session
-	queryParams      map[string]string // URL query parameters (?key=value)
+	queries           map[string][]database.Row
+	paginate          map[string]PaginateInfo
+	currentUser       *Session
+	queryParams       map[string]string // URL query parameters (?key=value)
 	querySourceModels map[string]string // query name -> primary model name (set by analyzer)
 }
 
