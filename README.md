@@ -72,10 +72,14 @@ This gives you: registration, login with bcrypt, sessions, CSRF, paginated searc
 ## Quick Start
 
 ```bash
+# macOS / Linux
+brew install kilnx-org/tap/kilnx
+
+# or via shell script
 curl -fsSL https://raw.githubusercontent.com/kilnx-org/kilnx/main/install.sh | sh
 ```
 
-Or with Go:
+Or build from source:
 
 ```bash
 git clone https://github.com/kilnx-org/kilnx.git
@@ -100,6 +104,14 @@ kilnx build app.kilnx -o myapp
 scp myapp server:~/
 ssh server './myapp'
 ```
+
+## Editor Support
+
+[VS Code extension](https://marketplace.visualstudio.com/items?itemName=atoolz.kilnx-vscode-toolkit) with syntax highlighting, diagnostics, completions, hover docs, and go-to-definition via the built-in LSP server.
+
+## Try It Online
+
+[kilnx.org/playground](https://kilnx.org/playground.html)
 
 ## What It Covers
 
