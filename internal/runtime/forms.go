@@ -3,11 +3,13 @@ package runtime
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +17,8 @@ import (
 
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
+
+var customBracketRe = regexp.MustCompile(`^custom\[(\w+)\]$`)
 
 // CSRF token store with expiry (#6 fix: bounded store with TTL cleanup)
 type csrfEntry struct {
@@ -138,6 +142,70 @@ func validateFormData(modelName string, app *parser.App, formData map[string]str
 				}
 			} else if max > 0 && len(val) > max {
 				errors = append(errors, fmt.Sprintf("%s must be at most %d characters", label, max))
+			}
+		}
+	}
+
+	if model.CustomFieldsFile != "" {
+		if manifest, ok := app.CustomManifests[modelName]; ok {
+			customVals := make(map[string]string)
+			if raw := formData["custom"]; raw != "" {
+				var m map[string]interface{}
+				if err := json.Unmarshal([]byte(raw), &m); err != nil {
+					errors = append(errors, "Invalid custom field data")
+				} else {
+					for k, v := range m {
+						customVals[k] = fmt.Sprintf("%v", v)
+					}
+				}
+			}
+			allowedKeys := make(map[string]bool, len(manifest.Fields))
+			for _, f := range manifest.Fields {
+				allowedKeys[f.Name] = true
+			}
+			for k := range customVals {
+				if !allowedKeys[k] {
+					errors = append(errors, fmt.Sprintf("Unknown custom field: %s", k))
+				}
+			}
+			for _, f := range manifest.Fields {
+				val := customVals[f.Name]
+				label := f.Label
+				if label == "" {
+					label = f.Name
+				}
+				if f.Required && strings.TrimSpace(val) == "" {
+					errors = append(errors, label+" is required")
+				}
+				if f.Kind == parser.CustomFieldKindNumber && val != "" {
+					if _, err := strconv.ParseFloat(val, 64); err != nil {
+						errors = append(errors, fmt.Sprintf("%s must be a number", label))
+					}
+				}
+				if f.Kind == parser.CustomFieldKindDate && val != "" {
+					valid := false
+					for _, layout := range []string{"2006-01-02", "01/02/2006", "02-01-2006", "2006/01/02"} {
+						if _, err := time.Parse(layout, val); err == nil {
+							valid = true
+							break
+						}
+					}
+					if !valid {
+						errors = append(errors, fmt.Sprintf("%s must be a valid date", label))
+					}
+				}
+				if f.Kind == parser.CustomFieldKindOption && len(f.Options) > 0 && val != "" {
+					valid := false
+					for _, opt := range f.Options {
+						if val == opt {
+							valid = true
+							break
+						}
+					}
+					if !valid {
+						errors = append(errors, fmt.Sprintf("%s must be one of: %s", label, strings.Join(f.Options, ", ")))
+					}
+				}
 			}
 		}
 	}
@@ -277,5 +345,40 @@ func extractFormData(r *http.Request, config *parser.AppConfig) map[string]strin
 		}
 	}
 
+	serializeCustomBrackets(data)
 	return data
+}
+
+// serializeCustomBrackets collects custom[field]=value entries from form data,
+// JSON-encodes them, and stores the result as data["custom"].
+func serializeCustomBrackets(data map[string]string) {
+	customMap := make(map[string]string)
+	for k, v := range data {
+		if m := customBracketRe.FindStringSubmatch(k); m != nil {
+			customMap[m[1]] = v
+		}
+	}
+	if len(customMap) == 0 {
+		return
+	}
+	for k := range customMap {
+		delete(data, "custom["+k+"]")
+	}
+	if existing, ok := data["custom"]; ok && existing != "" {
+		var prev map[string]interface{}
+		if json.Unmarshal([]byte(existing), &prev) == nil {
+			for k, v := range customMap {
+				prev[k] = v
+			}
+			merged := make(map[string]string, len(prev))
+			for k, v := range prev {
+				merged[k] = fmt.Sprintf("%v", v)
+			}
+			customMap = merged
+		}
+	}
+	b, err := json.Marshal(customMap)
+	if err == nil {
+		data["custom"] = string(b)
+	}
 }

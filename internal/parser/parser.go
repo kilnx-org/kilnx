@@ -10,25 +10,26 @@ import (
 )
 
 type App struct {
-	Models       []Model
-	Pages        []Page
-	Actions      []Page       // actions share the same structure as pages but handle POST/PUT/DELETE
-	Fragments    []Page       // fragments return partial HTML (no page wrapper)
-	APIs         []Page       // api endpoints return JSON instead of HTML
-	Streams      []Stream     // SSE stream endpoints
-	Schedules    []Schedule   // timed tasks
-	Jobs         []Job        // async background jobs
-	Webhooks     []Webhook    // external event receivers
-	Sockets      []Socket     // bidirectional websockets
-	RateLimits   []RateLimit  // rate limiting rules
-	Config       *AppConfig   // nil if no config block defined
-	Auth         *AuthConfig  // nil if no auth block defined
-	Permissions  []Permission // role-based access rules
-	Layouts      []Layout
-	Tests        []Test
-	LogConfig    *LogConfig
-	Translations map[string]map[string]string // lang -> key -> value
-	NamedQueries map[string]string            // name -> SQL
+	Models          []Model
+	Pages           []Page
+	Actions         []Page       // actions share the same structure as pages but handle POST/PUT/DELETE
+	Fragments       []Page       // fragments return partial HTML (no page wrapper)
+	APIs            []Page       // api endpoints return JSON instead of HTML
+	Streams         []Stream     // SSE stream endpoints
+	Schedules       []Schedule   // timed tasks
+	Jobs            []Job        // async background jobs
+	Webhooks        []Webhook    // external event receivers
+	Sockets         []Socket     // bidirectional websockets
+	RateLimits      []RateLimit  // rate limiting rules
+	Config          *AppConfig   // nil if no config block defined
+	Auth            *AuthConfig  // nil if no auth block defined
+	Permissions     []Permission // role-based access rules
+	Layouts         []Layout
+	Tests           []Test
+	LogConfig       *LogConfig
+	Translations    map[string]map[string]string    // lang -> key -> value
+	NamedQueries    map[string]string               // name -> SQL
+	CustomManifests map[string]*CustomFieldManifest // model name -> custom field definitions
 }
 
 type Test struct {
@@ -144,8 +145,34 @@ type Model struct {
 	// field named after the tenant model (e.g. `tenant: org` adds an
 	// `org_id` column) and the runtime injects a WHERE filter on SELECT
 	// queries against this table.
-	Tenant string
-	Fields []Field
+	Tenant           string
+	Fields           []Field
+	CustomFieldsFile string // path to *_fields.kilnx manifest; empty if unused
+}
+
+// CustomFieldKind is the type of a runtime-extensible custom field.
+type CustomFieldKind string
+
+const (
+	CustomFieldKindText   CustomFieldKind = "text"
+	CustomFieldKindNumber CustomFieldKind = "number"
+	CustomFieldKindDate   CustomFieldKind = "date"
+	CustomFieldKindOption CustomFieldKind = "option"
+)
+
+// CustomFieldDef describes a single custom field from a manifest file.
+type CustomFieldDef struct {
+	Name     string
+	Kind     CustomFieldKind
+	Label    string
+	Required bool
+	Options  []string
+}
+
+// CustomFieldManifest holds all custom field definitions for a model.
+type CustomFieldManifest struct {
+	ModelName string
+	Fields    []CustomFieldDef
 }
 
 type FieldType string
@@ -210,6 +237,7 @@ type Node struct {
 	Value         string
 	Name          string            // for query: result var name
 	SQL           string            // for query: the raw SQL
+	SourceModel   string            // primary model this query targets (set by analyzer)
 	Props         map[string]string // for on: condition; for send email: body
 	Paginate      int               // for query: items per page (0 = no pagination)
 	ModelName     string            // for validate: which model to validate against
@@ -543,6 +571,20 @@ func (p *parserState) parseModel(app *App) (Model, error) {
 			continue
 		}
 
+		// custom fields from "<file>" is a model-level meta directive.
+		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) &&
+			tok.Value == "custom" && p.peekIsCustomFieldsDirective() {
+			path, err := p.parseCustomFieldsDirective()
+			if err != nil {
+				return model, err
+			}
+			if model.CustomFieldsFile != "" {
+				return model, fmt.Errorf("line %d: model '%s' already has a custom fields directive", tok.Line, model.Name)
+			}
+			model.CustomFieldsFile = path
+			continue
+		}
+
 		// tenant: <model> is a model-level meta directive, not a field.
 		// Must appear before any field declaration.
 		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) &&
@@ -616,6 +658,36 @@ func (p *parserState) parseTenantDirective() (string, error) {
 		p.advance()
 	}
 	return name, nil
+}
+
+// peekIsCustomFieldsDirective returns true when the next tokens form
+// `custom fields from "<path>"` rather than a regular field declaration.
+func (p *parserState) peekIsCustomFieldsDirective() bool {
+	if p.pos+3 >= len(p.tokens) {
+		return false
+	}
+	t1 := p.tokens[p.pos+1]
+	t2 := p.tokens[p.pos+2]
+	t3 := p.tokens[p.pos+3]
+	return (t1.Type == lexer.TokenIdentifier && t1.Value == "fields") &&
+		(t2.Type == lexer.TokenIdentifier && t2.Value == "from") &&
+		t3.Type == lexer.TokenString
+}
+
+// parseCustomFieldsDirective parses `custom fields from "<path>"` and
+// returns the manifest file path. Caller verified with peekIsCustomFieldsDirective.
+func (p *parserState) parseCustomFieldsDirective() (string, error) {
+	p.advance() // consume "custom"
+	p.advance() // consume "fields"
+	p.advance() // consume "from"
+	pathTok := p.advance()
+	if pathTok.Type != lexer.TokenString {
+		return "", fmt.Errorf("line %d: expected file path string after 'custom fields from'", pathTok.Line)
+	}
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+		p.advance()
+	}
+	return pathTok.Value, nil
 }
 
 func (p *parserState) parseField(app *App) (Field, error) {
@@ -2979,4 +3051,115 @@ func (p *parserState) peek() lexer.Token {
 		return p.tokens[p.pos+1]
 	}
 	return lexer.Token{Type: lexer.TokenEOF}
+}
+
+// ParseManifest parses a custom fields manifest file (`*_fields.kilnx`).
+// The manifest contains top-level `field <name>` blocks with kind, label,
+// required, and option properties.
+func ParseManifest(source, modelName string) (*CustomFieldManifest, error) {
+	stripped := lexer.StripComments(source)
+	tokens := lexer.Tokenize(stripped)
+	manifest := &CustomFieldManifest{ModelName: modelName}
+
+	p := &parserState{tokens: tokens, pos: 0, lines: strings.Split(source, "\n")}
+
+	for !p.isEOF() {
+		p.skipNewlines()
+		if p.isEOF() {
+			break
+		}
+		tok := p.current()
+		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) && tok.Value == "field" {
+			fieldDef, err := p.parseManifestField()
+			if err != nil {
+				return nil, err
+			}
+			manifest.Fields = append(manifest.Fields, fieldDef)
+		} else {
+			p.advance()
+		}
+	}
+
+	return manifest, nil
+}
+
+func (p *parserState) parseManifestField() (CustomFieldDef, error) {
+	def := CustomFieldDef{}
+	p.advance() // consume "field"
+
+	if p.current().Type != lexer.TokenIdentifier && p.current().Type != lexer.TokenKeyword {
+		return def, fmt.Errorf("line %d: expected field name after 'field'", p.current().Line)
+	}
+	def.Name = p.advance().Value
+
+	p.skipNewlines()
+
+	if p.current().Type != lexer.TokenIndent {
+		return def, nil
+	}
+	p.advance() // consume indent
+
+	for !p.isEOF() {
+		tok := p.current()
+
+		if tok.Type == lexer.TokenDedent {
+			p.advance()
+			break
+		}
+		if tok.Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		if tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword {
+			propName := p.advance().Value
+			if p.current().Type == lexer.TokenColon {
+				p.advance()
+			}
+
+			switch propName {
+			case "kind":
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					def.Kind = CustomFieldKind(p.advance().Value)
+				}
+				// kind: option [A, B, C] — options may follow on the same line
+				if def.Kind == CustomFieldKindOption && p.current().Type == lexer.TokenBracketOpen {
+					p.advance() // consume '['
+					for !p.isEOF() && p.current().Type != lexer.TokenBracketClose {
+						if p.current().Type == lexer.TokenComma {
+							p.advance()
+							continue
+						}
+						if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+							def.Options = append(def.Options, p.advance().Value)
+						} else {
+							p.advance()
+						}
+					}
+					if p.current().Type == lexer.TokenBracketClose {
+						p.advance()
+					}
+				}
+			case "label":
+				if p.current().Type == lexer.TokenString {
+					def.Label = p.advance().Value
+				} else if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					def.Label = p.advance().Value
+				}
+			case "required":
+				if p.current().Type == lexer.TokenIdentifier {
+					def.Required = p.current().Value != "false"
+					p.advance()
+				} else {
+					def.Required = true // bare keyword, no value
+				}
+			}
+		}
+
+		for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+			p.advance()
+		}
+	}
+
+	return def, nil
 }

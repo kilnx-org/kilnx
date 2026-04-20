@@ -365,7 +365,36 @@ func loadApp(filename string) (*parser.App, error) {
 
 	source = lexer.StripComments(source)
 	tokens := lexer.Tokenize(source)
-	return parser.Parse(tokens, source)
+	app, err := parser.Parse(tokens, source)
+	if err != nil {
+		return nil, err
+	}
+
+	app.CustomManifests = make(map[string]*parser.CustomFieldManifest)
+	for _, model := range app.Models {
+		if model.CustomFieldsFile == "" {
+			continue
+		}
+		if !strings.HasSuffix(model.CustomFieldsFile, ".kilnx") {
+			return nil, fmt.Errorf("custom fields manifest must be a .kilnx file: %s", model.CustomFieldsFile)
+		}
+		manifestPath := filepath.Join(projectRoot, model.CustomFieldsFile)
+		rel, err := filepath.Rel(projectRoot, manifestPath)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return nil, fmt.Errorf("custom fields manifest escapes project directory: %s", model.CustomFieldsFile)
+		}
+		raw, err := os.ReadFile(manifestPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading manifest %s: %w", model.CustomFieldsFile, err)
+		}
+		manifest, err := parser.ParseManifest(string(raw), model.Name)
+		if err != nil {
+			return nil, fmt.Errorf("parsing manifest %s: %w", model.CustomFieldsFile, err)
+		}
+		app.CustomManifests[model.Name] = manifest
+	}
+
+	return app, nil
 }
 
 const maxImportDepth = 64

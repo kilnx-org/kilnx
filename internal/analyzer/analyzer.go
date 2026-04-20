@@ -67,6 +67,12 @@ func BuildSchema(models []parser.Model) *Schema {
 				mf.ColumnToField[f.Name] = f.Name
 			}
 		}
+		if m.CustomFieldsFile != "" {
+			info.Columns["custom"] = &ColumnInfo{FieldType: parser.FieldText}
+			mf.FormFields["custom"] = true
+			mf.FieldToColumn["custom"] = "custom"
+			mf.ColumnToField["custom"] = "custom"
+		}
 		s.Tables[m.Name] = info
 		s.ModelFields[m.Name] = mf
 	}
@@ -79,6 +85,8 @@ func Analyze(app *parser.App) []Diagnostic {
 	var diags []Diagnostic
 	schema := BuildSchema(app.Models)
 
+	populateSourceModels(app)
+
 	diags = append(diags, checkModelDefaults(app.Models)...)
 	diags = append(diags, checkModelMinMax(app.Models)...)
 	diags = append(diags, checkAuthRef(app, schema)...)
@@ -89,8 +97,57 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkSecurity(app, schema)...)
 	diags = append(diags, checkTemplateInterpolations(app, schema)...)
 	diags = append(diags, checkTableColumnRefs(app, schema)...)
+	diags = append(diags, checkCustomFieldRefs(app, schema)...)
 
 	return diags
+}
+
+// populateSourceModels sets Node.SourceModel on all query nodes by extracting
+// the primary table name from each query's SQL FROM clause.
+func populateSourceModels(app *parser.App) {
+	var populate func(nodes []parser.Node)
+	populate = func(nodes []parser.Node) {
+		for i := range nodes {
+			n := &nodes[i]
+			if n.Type == parser.NodeQuery && n.SQL != "" {
+				refs := extractTableRefs(tokenizeSQL(n.SQL))
+				if len(refs) > 0 {
+					n.SourceModel = refs[0].name
+				}
+			}
+			if len(n.Children) > 0 {
+				populate(n.Children)
+			}
+		}
+	}
+	for i := range app.Pages {
+		populate(app.Pages[i].Body)
+	}
+	for i := range app.Actions {
+		populate(app.Actions[i].Body)
+	}
+	for i := range app.Fragments {
+		populate(app.Fragments[i].Body)
+	}
+	for i := range app.APIs {
+		populate(app.APIs[i].Body)
+	}
+	for i := range app.Schedules {
+		populate(app.Schedules[i].Body)
+	}
+	for i := range app.Jobs {
+		populate(app.Jobs[i].Body)
+	}
+	for i := range app.Webhooks {
+		for j := range app.Webhooks[i].Events {
+			populate(app.Webhooks[i].Events[j].Body)
+		}
+	}
+	for i := range app.Sockets {
+		populate(app.Sockets[i].OnConnect)
+		populate(app.Sockets[i].OnMessage)
+		populate(app.Sockets[i].OnDisconnect)
+	}
 }
 
 // checkAuthPages ensures that an app declaring an `auth` block also

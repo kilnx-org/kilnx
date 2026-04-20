@@ -1066,3 +1066,63 @@ func TestPageWithStaticTitleStillWorks(t *testing.T) {
 		t.Errorf("expected layout 'main', got %q", app.Pages[0].Layout)
 	}
 }
+
+func TestModelCustomFieldsDirective(t *testing.T) {
+	src := "model deal\n  title: text required\n  custom fields from \"deal_fields.kilnx\"\n  value: float"
+	app := parse(t, src)
+	if len(app.Models) != 1 {
+		t.Fatalf("expected 1 model, got %d", len(app.Models))
+	}
+	m := app.Models[0]
+	if m.CustomFieldsFile != "deal_fields.kilnx" {
+		t.Errorf("expected CustomFieldsFile 'deal_fields.kilnx', got %q", m.CustomFieldsFile)
+	}
+	if len(m.Fields) != 2 {
+		t.Errorf("expected 2 fields (title, value), got %d", len(m.Fields))
+	}
+}
+
+func TestParseManifest(t *testing.T) {
+	src := `field revenue
+  kind: number
+  label: "Receita"
+  required: false
+
+field region
+  kind: option [N, S, L, O]
+  label: "Região"
+  required: true`
+	manifest, err := ParseManifest(src, "deal")
+	if err != nil {
+		t.Fatalf("ParseManifest error: %v", err)
+	}
+	if manifest.ModelName != "deal" {
+		t.Errorf("expected model name 'deal', got %q", manifest.ModelName)
+	}
+	if len(manifest.Fields) != 2 {
+		t.Fatalf("expected 2 fields, got %d", len(manifest.Fields))
+	}
+	rev := manifest.Fields[0]
+	if rev.Name != "revenue" {
+		t.Errorf("expected field name 'revenue', got %q", rev.Name)
+	}
+	if rev.Kind != CustomFieldKindNumber {
+		t.Errorf("expected kind 'number', got %q", rev.Kind)
+	}
+	if rev.Label != "Receita" {
+		t.Errorf("expected label 'Receita', got %q", rev.Label)
+	}
+	if rev.Required {
+		t.Error("expected required=false")
+	}
+	reg := manifest.Fields[1]
+	if reg.Name != "region" {
+		t.Errorf("expected field name 'region', got %q", reg.Name)
+	}
+	if len(reg.Options) != 4 {
+		t.Errorf("expected 4 options, got %d", len(reg.Options))
+	}
+	if !reg.Required {
+		t.Error("expected required=true for region")
+	}
+}
