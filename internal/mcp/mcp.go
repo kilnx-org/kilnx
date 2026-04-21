@@ -3,12 +3,14 @@ package mcp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/kilnx-org/kilnx/internal/lexer"
 )
@@ -303,8 +305,11 @@ func checkSource(source string) (string, bool) {
 		}
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command(self, "check", tmp.Name())
+	cmd := exec.CommandContext(ctx, self, "check", tmp.Name())
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.Env = env
