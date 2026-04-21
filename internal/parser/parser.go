@@ -155,23 +155,35 @@ type Model struct {
 type CustomFieldKind string
 
 const (
-	CustomFieldKindText     CustomFieldKind = "text"
-	CustomFieldKindNumber   CustomFieldKind = "number"
-	CustomFieldKindDate     CustomFieldKind = "date"
-	CustomFieldKindOption   CustomFieldKind = "option"
-	CustomFieldKindEmail    CustomFieldKind = "email"
-	CustomFieldKindPhone    CustomFieldKind = "phone"
-	CustomFieldKindBool     CustomFieldKind = "bool"
-	CustomFieldKindRichtext CustomFieldKind = "richtext"
+	CustomFieldKindText      CustomFieldKind = "text"
+	CustomFieldKindNumber    CustomFieldKind = "number"
+	CustomFieldKindDate      CustomFieldKind = "date"
+	CustomFieldKindOption    CustomFieldKind = "option"
+	CustomFieldKindEmail     CustomFieldKind = "email"
+	CustomFieldKindPhone     CustomFieldKind = "phone"
+	CustomFieldKindBool      CustomFieldKind = "bool"
+	CustomFieldKindRichtext  CustomFieldKind = "richtext"
+	CustomFieldKindReference CustomFieldKind = "reference"
+	CustomFieldKindImage     CustomFieldKind = "image"
+)
+
+// CustomFieldMode controls how a custom field is stored in the database.
+type CustomFieldMode string
+
+const (
+	CustomFieldModeJSON   CustomFieldMode = ""       // stored in custom JSON column (default)
+	CustomFieldModeColumn CustomFieldMode = "column" // promoted to a dedicated real column
 )
 
 // CustomFieldDef describes a single custom field from a manifest file.
 type CustomFieldDef struct {
-	Name     string
-	Kind     CustomFieldKind
-	Label    string
-	Required bool
-	Options  []string
+	Name      string
+	Kind      CustomFieldKind
+	Label     string
+	Required  bool
+	Options   []string
+	Mode      CustomFieldMode // "" = JSON, "column" = dedicated column
+	Reference string          // target model name for kind: reference
 }
 
 // CustomFieldManifest holds all custom field definitions for a model.
@@ -3137,6 +3149,12 @@ func (p *parserState) parseManifestField() (CustomFieldDef, error) {
 				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
 					def.Kind = CustomFieldKind(p.advance().Value)
 				}
+				// kind: reference <model> — reference target follows on same line
+				if def.Kind == CustomFieldKindReference {
+					if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+						def.Reference = p.advance().Value
+					}
+				}
 				// kind: option [A, B, C] — options may follow on the same line
 				if def.Kind == CustomFieldKindOption && p.current().Type == lexer.TokenBracketOpen {
 					p.advance() // consume '['
@@ -3167,6 +3185,10 @@ func (p *parserState) parseManifestField() (CustomFieldDef, error) {
 					p.advance()
 				} else {
 					def.Required = true // bare keyword, no value
+				}
+			case "mode":
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					def.Mode = CustomFieldMode(p.advance().Value)
 				}
 			}
 		}

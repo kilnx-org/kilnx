@@ -169,7 +169,11 @@ func validateFormData(modelName string, app *parser.App, formData map[string]str
 				}
 			}
 			for _, f := range manifest.Fields {
+				// column-mode fields are promoted to top-level keys by serializeCustomBrackets
 				val := customVals[f.Name]
+				if f.Mode == parser.CustomFieldModeColumn {
+					val = formData[f.Name]
+				}
 				label := f.Label
 				if label == "" {
 					label = f.Name
@@ -227,6 +231,11 @@ func validateFormData(modelName string, app *parser.App, formData map[string]str
 					}
 					if !valid {
 						errors = append(errors, fmt.Sprintf("%s must be one of: %s", label, strings.Join(f.Options, ", ")))
+					}
+				}
+				if f.Kind == parser.CustomFieldKindReference && val != "" {
+					if _, err := strconv.Atoi(val); err != nil {
+						errors = append(errors, fmt.Sprintf("%s must be a valid reference ID", label))
 					}
 				}
 			}
@@ -373,7 +382,8 @@ func extractFormData(r *http.Request, config *parser.AppConfig) map[string]strin
 }
 
 // serializeCustomBrackets collects custom[field]=value entries from form data,
-// JSON-encodes them, and stores the result as data["custom"].
+// JSON-encodes them as data["custom"], and also promotes each field as a top-level
+// key so column-mode SQL (e.g. INSERT ... (:revenue)) can bind directly.
 func serializeCustomBrackets(data map[string]string) {
 	customMap := make(map[string]string)
 	for k, v := range data {
@@ -403,5 +413,11 @@ func serializeCustomBrackets(data map[string]string) {
 	b, err := json.Marshal(customMap)
 	if err == nil {
 		data["custom"] = string(b)
+	}
+	// Also promote each field as a direct key so column-mode SQL binds :fieldname.
+	for k, v := range customMap {
+		if _, exists := data[k]; !exists {
+			data[k] = v
+		}
 	}
 }

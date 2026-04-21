@@ -680,7 +680,7 @@ func TestGenerateCreateTableContainsAutoincrement(t *testing.T) {
 			{Name: "title", Type: parser.FieldText, Required: true},
 		},
 	}
-	sql := db.generateCreateTable(model)
+	sql := db.generateCreateTable(model, nil)
 	if !strings.Contains(sql, "id INTEGER PRIMARY KEY AUTOINCREMENT") {
 		t.Errorf("missing id AUTOINCREMENT in: %s", sql)
 	}
@@ -932,5 +932,76 @@ func TestRewriteCustomFieldShorthand_Postgres(t *testing.T) {
 		if got != c.want {
 			t.Errorf("Postgres rewrite:\n  in:   %s\n  want: %s\n  got:  %s", c.in, c.want, got)
 		}
+	}
+}
+
+// ---------- Column-mode DDL ----------
+
+func TestColumnModeCreateTable(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	model := parser.Model{
+		Name:             "deal",
+		CustomFieldsFile: "deal_fields.kilnx",
+		Fields: []parser.Field{
+			{Name: "title", Type: parser.FieldText, Required: true},
+		},
+	}
+	manifest := &parser.CustomFieldManifest{
+		ModelName: "deal",
+		Fields: []parser.CustomFieldDef{
+			{Name: "revenue", Kind: parser.CustomFieldKindNumber, Mode: parser.CustomFieldModeColumn},
+			{Name: "region", Kind: parser.CustomFieldKindText, Mode: parser.CustomFieldModeJSON},
+		},
+	}
+	cm := map[string]*parser.CustomFieldManifest{"deal": manifest}
+	sql := db.generateCreateTable(model, cm)
+
+	if !strings.Contains(sql, `"custom" TEXT`) {
+		t.Errorf("missing custom JSON column in: %s", sql)
+	}
+	if !strings.Contains(sql, `"revenue" REAL`) {
+		t.Errorf("missing column-mode revenue column in: %s", sql)
+	}
+	if strings.Contains(sql, `"region"`) {
+		t.Errorf("JSON-mode field should not become a column, but found region in: %s", sql)
+	}
+}
+
+func TestColumnModeMigrate(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	model := parser.Model{
+		Name:             "deal",
+		CustomFieldsFile: "deal_fields.kilnx",
+		Fields:           []parser.Field{{Name: "title", Type: parser.FieldText}},
+	}
+	manifest := &parser.CustomFieldManifest{
+		ModelName: "deal",
+		Fields: []parser.CustomFieldDef{
+			{Name: "revenue", Kind: parser.CustomFieldKindNumber, Mode: parser.CustomFieldModeColumn},
+		},
+	}
+	cm := map[string]*parser.CustomFieldManifest{"deal": manifest}
+
+	stmts, err := db.Migrate([]parser.Model{model}, cm)
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if len(stmts) == 0 {
+		t.Fatal("expected DDL statements, got none")
+	}
+
+	cols, err := db.getColumns("deal")
+	if err != nil {
+		t.Fatalf("getColumns: %v", err)
+	}
+	if !cols["revenue"] {
+		t.Error("column-mode field 'revenue' not present in table after migration")
+	}
+	if !cols["custom"] {
+		t.Error("JSON 'custom' column not present in table after migration")
 	}
 }
