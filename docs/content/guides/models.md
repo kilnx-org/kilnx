@@ -68,6 +68,21 @@ Rules:
 
 Migration emits `CREATE UNIQUE INDEX IF NOT EXISTS "uq_<table>_<col>_<col>" ON "<table>" (...)`, which is idempotent on SQLite and PostgreSQL. `kilnx check` rejects unknown field names, fields repeated within a group, and duplicated groups.
 
+## Non-unique indexes
+
+For query acceleration without uniqueness, declare an `index (...)` directive. Single-column and multi-column both work:
+
+```kilnx
+model order
+  customer: customer required
+  created: timestamp auto
+  status: option [pending, paid, shipped]
+  index (customer, created)
+  index (status)
+```
+
+Migration emits `CREATE INDEX IF NOT EXISTS "ix_<table>_<cols>" ON "<table>" (...)`. The `ix_` prefix keeps non-unique indexes separate from composite UNIQUE constraints (`uq_`). The analyzer applies the same validation rules as `unique (...)`.
+
 ## References (foreign keys)
 
 Use another model's name as the field type:

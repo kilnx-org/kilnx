@@ -1136,3 +1136,87 @@ func TestSchemaHashIncludesUniqueConstraints(t *testing.T) {
 		t.Error("schemaHash must differ when composite UNIQUE groups differ")
 	}
 }
+
+// ---------- Non-unique indexes ----------
+
+func TestMigrateNonUniqueIndex(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	models := []parser.Model{
+		{Name: "customer", Fields: []parser.Field{{Name: "name", Type: parser.FieldText}}},
+		{Name: "order", Fields: []parser.Field{
+			{Name: "customer", Type: parser.FieldReference, Reference: "customer", Required: true},
+			{Name: "created", Type: parser.FieldTimestamp},
+		}, Indexes: [][]string{{"customer", "created"}}},
+	}
+	stmts, err := db.Migrate(models)
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	found := false
+	for _, s := range stmts {
+		if strings.Contains(s, `CREATE INDEX IF NOT EXISTS "ix_order_customer_id_created"`) &&
+			strings.Contains(s, `("customer_id", "created")`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected CREATE INDEX for ix_order_customer_id_created; got %v", stmts)
+	}
+	rows, err := db.QueryRows(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='order'`)
+	if err != nil {
+		t.Fatalf("sqlite_master query: %v", err)
+	}
+	var names []string
+	for _, r := range rows {
+		names = append(names, r["name"])
+	}
+	hasIx := false
+	for _, n := range names {
+		if n == "ix_order_customer_id_created" {
+			hasIx = true
+		}
+	}
+	if !hasIx {
+		t.Errorf("index not present in sqlite_master: %v", names)
+	}
+}
+
+func TestMigrateIndexIdempotent(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	models := []parser.Model{{
+		Name:    "tag",
+		Fields:  []parser.Field{{Name: "scope", Type: parser.FieldText}, {Name: "name", Type: parser.FieldText}},
+		Indexes: [][]string{{"scope", "name"}},
+	}}
+	if _, err := db.Migrate(models); err != nil {
+		t.Fatalf("first Migrate: %v", err)
+	}
+	stmts, err := db.Migrate(models)
+	if err != nil {
+		t.Fatalf("second Migrate: %v", err)
+	}
+	for _, s := range stmts {
+		if strings.Contains(s, "CREATE INDEX") && !strings.Contains(s, "IF NOT EXISTS") {
+			t.Errorf("expected IF NOT EXISTS guard, got %q", s)
+		}
+	}
+}
+
+func TestSchemaHashIncludesIndexes(t *testing.T) {
+	a := []parser.Model{{
+		Name:    "m",
+		Fields:  []parser.Field{{Name: "x", Type: parser.FieldText}},
+		Indexes: [][]string{{"x"}},
+	}}
+	b := []parser.Model{{
+		Name:   "m",
+		Fields: []parser.Field{{Name: "x", Type: parser.FieldText}},
+	}}
+	if schemaHash(a) == schemaHash(b) {
+		t.Error("schemaHash must differ when index groups differ")
+	}
+}

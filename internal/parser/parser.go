@@ -175,6 +175,9 @@ type Model struct {
 	// names as written; references resolve to their `<name>_id` column
 	// at DDL generation time.
 	UniqueConstraints [][]string
+	// Indexes lists non-unique indexes declared with `index (a, b, ...)`
+	// directives. Same field-name resolution as UniqueConstraints.
+	Indexes [][]string
 }
 
 // CustomFieldKind is the type of a runtime-extensible custom field.
@@ -661,6 +664,17 @@ func (p *parserState) parseModel(app *App) (Model, error) {
 			continue
 		}
 
+		// index (a, b, ...) is a non-unique index directive.
+		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) &&
+			tok.Value == "index" && p.peekIsIndexDirective() {
+			group, err := p.parseIndexDirective()
+			if err != nil {
+				return model, err
+			}
+			model.Indexes = append(model.Indexes, group)
+			continue
+		}
+
 		// unique (a, b, ...) is a composite UNIQUE constraint directive.
 		// Distinguished from the field-level `unique` constraint by the
 		// presence of '(' immediately after.
@@ -714,6 +728,55 @@ func (p *parserState) parseModel(app *App) (Model, error) {
 	}
 
 	return model, nil
+}
+
+// peekIsIndexDirective reports whether the tokens at the current position
+// match `index (` (a non-unique index directive).
+func (p *parserState) peekIsIndexDirective() bool {
+	if p.pos+1 >= len(p.tokens) {
+		return false
+	}
+	return p.tokens[p.pos+1].Type == lexer.TokenParenOpen
+}
+
+// parseIndexDirective consumes `index ( ident (, ident)* )` and returns
+// the list of field names. Single-column indexes are allowed (they
+// accelerate non-equality predicates and sorts in ways that a UNIQUE
+// index would not).
+func (p *parserState) parseIndexDirective() ([]string, error) {
+	line := p.current().Line
+	p.advance() // consume 'index'
+	if p.current().Type != lexer.TokenParenOpen {
+		return nil, fmt.Errorf("line %d: expected '(' after 'index'", line)
+	}
+	p.advance() // consume '('
+
+	var names []string
+	for !p.isEOF() && p.current().Type != lexer.TokenParenClose {
+		tok := p.current()
+		if tok.Type == lexer.TokenComma {
+			p.advance()
+			continue
+		}
+		if tok.Type != lexer.TokenIdentifier && tok.Type != lexer.TokenKeyword {
+			return nil, fmt.Errorf("line %d: expected field name in index(), got %q", tok.Line, tok.Value)
+		}
+		names = append(names, tok.Value)
+		p.advance()
+	}
+	if p.isEOF() || p.current().Type != lexer.TokenParenClose {
+		return nil, fmt.Errorf("line %d: unclosed index(...) directive", line)
+	}
+	p.advance() // consume ')'
+
+	if len(names) == 0 {
+		return nil, fmt.Errorf("line %d: index() requires at least one field", line)
+	}
+
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+		p.advance()
+	}
+	return names, nil
 }
 
 // peekIsUniqueDirective reports whether the tokens at the current position

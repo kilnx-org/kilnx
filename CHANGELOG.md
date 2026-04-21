@@ -7,6 +7,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ## [Unreleased]
 
 ### Added
+- Non-unique model-level `index (field_a, field_b, ...)` directive; emits idempotent `CREATE INDEX IF NOT EXISTS ix_<table>_<cols>` for query acceleration, validated by the analyzer the same way as composite UNIQUE
+- LSP and MCP surfaces advertise the composite `unique (...)` and `index (...)` directives; model hover lists declared groups
 - Composite UNIQUE via model-level `unique (field_a, field_b, ...)` directive; emits idempotent `CREATE UNIQUE INDEX IF NOT EXISTS` and is validated by the analyzer (unknown fields, duplicated fields within a group, or duplicate groups)
 - `tenant` modifier on `model` for multi-tenant scoping with fail-closed guards across every query path (refs [#48](https://github.com/kilnx-org/kilnx/issues/48), [#52](https://github.com/kilnx-org/kilnx/pull/52))
 - PostgreSQL support via `Dialect` abstraction; switch engines with `database: postgres://...` ([#46](https://github.com/kilnx-org/kilnx/pull/46))

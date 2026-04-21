@@ -219,6 +219,26 @@ idempotent on both SQLite and PostgreSQL. Multiple `unique (...)` lines
 are allowed for independent groups. The analyzer rejects unknown field
 names, fields repeated within a group, and duplicate groups.
 
+#### non-unique indexes
+
+For query acceleration without a uniqueness requirement, declare an
+`index (...)` directive:
+
+```kilnx
+model order
+  customer: customer required
+  created: timestamp auto
+  status: option [pending, paid, shipped]
+  index (customer, created)
+  index (status)
+```
+
+Single-column and multi-column indexes are both supported. Migration
+emits `CREATE INDEX IF NOT EXISTS "ix_<table>_<cols>" ON "<table>"
+(...)`. The `ix_` prefix distinguishes non-unique indexes from the
+`uq_` prefix used by composite UNIQUE constraints. The same analyzer
+rules apply as for `unique (...)`.
+
 ### permissions
 
 Access rules by role.

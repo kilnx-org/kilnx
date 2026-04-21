@@ -26,6 +26,8 @@ Field types: `text`, `email`, `int`, `float`, `bool`, `timestamp`, `richtext`, `
 
 Composite uniqueness: declare `unique (field_a, field_b, ...)` at the model level for two or more fields. References resolve to their `_id` column automatically.
 
+Non-unique indexes: declare `index (field_a, field_b, ...)` at the model level for query acceleration. Single-column and multi-column are supported. Emits `CREATE INDEX IF NOT EXISTS ix_<table>_<cols>`.
+
 ## Auth
 
 Six lines. Registration, login, logout, bcrypt hashing, session cookies, and `current_user` available everywhere.

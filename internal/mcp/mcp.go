@@ -376,6 +376,7 @@ func buildKeywordRef() string {
 	}
 
 	sb.WriteString("\n## Constraints\n\nrequired, unique, default, auto, min, max\n")
+	sb.WriteString("\n## Model-level directives\n\n`unique (field_a, field_b, ...)` — composite UNIQUE (2+ fields).\n`index (field_a, field_b, ...)` — non-unique index.\nReference fields resolve to their `<name>_id` column.\n")
 	return sb.String()
 }
 
@@ -469,7 +470,8 @@ var keywordDocs = map[string]string{
 	"uuid":        "UUID v4. Use `auto` to generate on INSERT. Maps to TEXT/UUID.",
 	"bigint":      "64-bit integer. Maps to INTEGER/BIGINT.",
 	"required":    "Field constraint: value must be non-null.",
-	"unique":      "Field constraint: value must be unique across all rows.",
+	"unique":      "Field constraint: value must be unique across all rows. For multi-column uniqueness, use a model-level `unique (field_a, field_b, ...)` directive instead.",
+	"index":       "Model-level directive inside a model block: `index (field_a, field_b, ...)` creates a non-unique database index prefixed `ix_<table>_<cols>`. Reference fields resolve to their `<name>_id` column.",
 	"default":     "Field constraint: provides a default value if none specified. Example: `status: text default \"active\"`.",
 	"auto":        "Field constraint: auto-generated value. On timestamp fields: current time on INSERT. On uuid fields: UUID v4 on INSERT.",
 	"auto_update": "Field constraint: auto-set field to current timestamp on every UPDATE. Creates a DB trigger. Use on timestamp fields for updated_at pattern.",
@@ -488,6 +490,8 @@ Top-level blocks: config, model, auth, permissions, layout, page, action, fragme
 Field types: text, email, int, float, bool, timestamp, date, richtext, option, password, image, phone, reference, url, decimal, file, tags, json, uuid, bigint
 
 Constraints: required, unique, default, auto, auto_update, min, max
+
+Model-level directives (separate lines inside a model block): unique (a, b, ...) for composite UNIQUE (2+ fields), index (a, b, ...) for non-unique indexes. Reference fields resolve to <name>_id.
 
 Body keywords: query, validate, redirect, html, send, enqueue, broadcast, on, requires, fetch, respond
 
@@ -531,6 +535,10 @@ const grammarSummary = `# Kilnx Grammar Summary
 
   Field types: text, email, int, float, bool, timestamp, richtext, option, password, image, phone
   Constraints: required, unique, default <val>, auto, min <n>, max <n>
+
+  Model-level directives:
+    unique (a, b, ...)   — composite UNIQUE (requires 2+ fields)
+    index (a, b, ...)    — non-unique index (query acceleration)
 
 ## auth block
 

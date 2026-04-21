@@ -109,6 +109,21 @@ Rules:
 
 Migration emits `CREATE UNIQUE INDEX IF NOT EXISTS "uq_&lt;table&gt;_&lt;col&gt;_&lt;col&gt;" ON "&lt;table&gt;" (...)`, safe to rerun on both SQLite and PostgreSQL.
 
+## Non-unique indexes
+
+For query acceleration without a uniqueness requirement, declare an `index (...)` directive inside the model. Single-column and multi-column are both valid:
+
+```kilnx
+model order
+  customer: customer required
+  created: timestamp auto
+  status: option [pending, paid, shipped]
+  index (customer, created)
+  index (status)
+```
+
+Migration emits `CREATE INDEX IF NOT EXISTS "ix_&lt;table&gt;_&lt;col&gt;_&lt;col&gt;" ON "&lt;table&gt;" (...)`. The `ix_` prefix keeps non-unique indexes distinguishable from composite UNIQUE indexes (`uq_`) in database tooling and migration history. `kilnx check` rejects unknown field names, fields repeated within a group, and duplicated groups.
+
 ## Combining constraints
 
 Constraints appear space-separated after the field type:
@@ -137,5 +152,6 @@ Order is not significant.
 | `min <n>` | Text (length) or numeric (value) | Lower bound |
 | `max <n>` | Text (length) or numeric (value) | Upper bound |
 | `unique (a, b, ...)` | Model-level, 2+ fields | Composite UNIQUE index |
+| `index (a, b, ...)` | Model-level, 1+ fields | Non-unique index |
 
-Total: 7 field constraints plus 1 model-level directive.
+Total: 7 field constraints plus 2 model-level directives.

@@ -677,6 +677,8 @@ Field types: `text`, `email`, `int`, `float`, `bool`, `timestamp`, `richtext`, `
 
 Composite uniqueness: add a `unique (field_a, field_b, ...)` line at the model level for two or more fields. References resolve to their `_id` column. The migration emits an idempotent `CREATE UNIQUE INDEX IF NOT EXISTS`.
 
+Non-unique indexes: add an `index (field_a, field_b, ...)` line at the model level for query acceleration. Single-column and multi-column indexes are both supported. The migration emits an idempotent `CREATE INDEX IF NOT EXISTS ix_<table>_<cols>`.
+
 ## Auth
 
 Six lines. Registration, login, logout, bcrypt hashing, session cookies, and `current_user` available everywhere.
