@@ -667,11 +667,21 @@ func checkTableColumnRefs(app *parser.App, schema *Schema) []Diagnostic {
 // customFieldRefRe matches {queryName.custom.fieldName} in HTML content.
 var customFieldRefRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\.custom\.([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 
-// isDynamicManifest reports whether a model uses a dynamic manifest path.
+// isDynamicManifest reports whether a model uses a dynamic manifest path or dynamic DB fields.
 func isDynamicManifest(app *parser.App, modelName string) bool {
 	for _, m := range app.Models {
 		if m.Name == modelName {
-			return strings.Contains(m.CustomFieldsFile, "{")
+			return m.DynamicFields || strings.Contains(m.CustomFieldsFile, "{")
+		}
+	}
+	return false
+}
+
+// isDBDynamic reports whether a model opts into DB-backed runtime field definitions.
+func isDBDynamic(app *parser.App, modelName string) bool {
+	for _, m := range app.Models {
+		if m.Name == modelName {
+			return m.DynamicFields
 		}
 	}
 	return false
@@ -680,7 +690,14 @@ func isDynamicManifest(app *parser.App, modelName string) bool {
 // checkCustomFieldRefs validates {q.custom.fieldName} template references
 // against the corresponding model's custom field manifest.
 func checkCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
-	if len(app.CustomManifests) == 0 {
+	hasDynamic := false
+	for _, m := range app.Models {
+		if m.DynamicFields {
+			hasDynamic = true
+			break
+		}
+	}
+	if len(app.CustomManifests) == 0 && !hasDynamic {
 		return nil
 	}
 
@@ -699,8 +716,14 @@ func checkCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
 				continue // unknown query already reported by checkTemplateInterpolations
 			}
 
-			// Skip validation for models with dynamic manifest paths
 			if isDynamicManifest(app, modelName) {
+				if isDBDynamic(app, modelName) {
+					diags = append(diags, Diagnostic{
+						Level:   "warning",
+						Message: fmt.Sprintf("template reference '{%s.custom.%s}': field '%s' unverifiable at compile time — use kilnx check --db to validate", queryName, fieldName, fieldName),
+						Context: context,
+					})
+				}
 				continue
 			}
 			manifest, ok := app.CustomManifests[modelName]
@@ -763,7 +786,14 @@ var customShorthandAnalyzerRe = regexp.MustCompile(`\bcustom\.([a-zA-Z_][a-zA-Z0
 // checkSQLCustomFieldRefs validates json_extract(custom, '$.field') and
 // custom->>'field' patterns in SQL query nodes against the custom field manifest.
 func checkSQLCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
-	if len(app.CustomManifests) == 0 {
+	hasDynamic := false
+	for _, m := range app.Models {
+		if m.DynamicFields {
+			hasDynamic = true
+			break
+		}
+	}
+	if len(app.CustomManifests) == 0 && !hasDynamic {
 		return nil
 	}
 
@@ -774,8 +804,25 @@ func checkSQLCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
 			if n.Type != parser.NodeQuery || n.SQL == "" || n.SourceModel == "" {
 				continue
 			}
-			// Skip validation for models with dynamic manifest paths
 			if isDynamicManifest(app, n.SourceModel) {
+				if isDBDynamic(app, n.SourceModel) {
+					checkDynamic := func(fieldName string) {
+						diags = append(diags, Diagnostic{
+							Level:   "warning",
+							Message: fmt.Sprintf("SQL references custom field '%s' (model '%s'): unverifiable at compile time — use kilnx check --db to validate", fieldName, n.SourceModel),
+							Context: context,
+						})
+					}
+					for _, m := range jsonExtractSQLiteRe.FindAllStringSubmatch(n.SQL, -1) {
+						checkDynamic(m[1])
+					}
+					for _, m := range jsonExtractPGRe.FindAllStringSubmatch(n.SQL, -1) {
+						checkDynamic(m[1])
+					}
+					for _, m := range customShorthandAnalyzerRe.FindAllStringSubmatch(n.SQL, -1) {
+						checkDynamic(m[1])
+					}
+				}
 				continue
 			}
 			manifest, ok := app.CustomManifests[n.SourceModel]

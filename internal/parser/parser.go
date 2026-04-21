@@ -149,6 +149,7 @@ type Model struct {
 	Fields               []Field
 	CustomFieldsFile     string // path to *_fields.kilnx manifest (may contain {placeholder})
 	CustomFieldsFallback string // fallback manifest path used when dynamic file not found
+	DynamicFields        bool   // opts model into DB-backed runtime field definitions
 }
 
 // CustomFieldKind is the type of a runtime-extensible custom field.
@@ -603,6 +604,21 @@ func (p *parserState) parseModel(app *App) (Model, error) {
 			continue
 		}
 
+		// dynamic fields — opts model into DB-backed runtime field definitions.
+		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) &&
+			tok.Value == "dynamic" && p.peekIsDynamicFieldsDirective() {
+			if model.DynamicFields {
+				return model, fmt.Errorf("line %d: model '%s' already has a dynamic fields directive", tok.Line, model.Name)
+			}
+			p.advance() // consume "dynamic"
+			p.advance() // consume "fields"
+			for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+				p.advance()
+			}
+			model.DynamicFields = true
+			continue
+		}
+
 		// tenant: <model> is a model-level meta directive, not a field.
 		// Must appear before any field declaration.
 		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) &&
@@ -676,6 +692,16 @@ func (p *parserState) parseTenantDirective() (string, error) {
 		p.advance()
 	}
 	return name, nil
+}
+
+// peekIsDynamicFieldsDirective returns true when the next token is `fields`,
+// distinguishing `dynamic fields` from a regular field named `dynamic`.
+func (p *parserState) peekIsDynamicFieldsDirective() bool {
+	if p.pos+1 >= len(p.tokens) {
+		return false
+	}
+	t1 := p.tokens[p.pos+1]
+	return t1.Type == lexer.TokenIdentifier && t1.Value == "fields"
 }
 
 // peekIsCustomFieldsDirective returns true when the next tokens form
