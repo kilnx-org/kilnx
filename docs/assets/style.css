@@ -49,7 +49,7 @@ nav {
   background: rgba(9,9,11,0.8);
 }
 .nav-inner {
-  max-width: var(--max-width); margin: 0 auto; padding: 0 1.5rem;
+  margin: 0 auto; padding: 0 2rem;
   height: var(--nav-height); display: flex; align-items: center; justify-content: space-between;
 }
 .nav-left, .nav-right { display: flex; align-items: center; gap: 1.5rem; }
