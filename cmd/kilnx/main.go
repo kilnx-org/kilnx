@@ -12,6 +12,7 @@ import (
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/lexer"
 	"github.com/kilnx-org/kilnx/internal/lsp"
+	"github.com/kilnx-org/kilnx/internal/mcp"
 	"github.com/kilnx-org/kilnx/internal/optimizer"
 	"github.com/kilnx-org/kilnx/internal/parser"
 	"github.com/kilnx-org/kilnx/internal/runtime"
@@ -75,6 +76,8 @@ func main() {
 		}
 	case "lsp":
 		lsp.Serve()
+	case "mcp":
+		mcp.Serve()
 	case "version":
 		fmt.Println("kilnx v0.1.0")
 	default:
@@ -515,5 +518,6 @@ func printUsage() {
 	fmt.Println("          --status        Show migration history and pending changes")
 	fmt.Println("  test <file.kilnx>       Run declarative tests")
 	fmt.Println("  lsp                     Start Language Server Protocol server")
+	fmt.Println("  mcp                     Start Model Context Protocol server")
 	fmt.Println("  version                 Print version")
 }

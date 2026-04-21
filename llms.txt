@@ -28,6 +28,7 @@ Constraints: `required`, `unique`, `default`, `auto`, `min`, `max`.
 - `kilnx test <file.kilnx>`: run declarative `test` blocks
 - `kilnx migrate <file.kilnx> [--dry-run|--status]`: schema migration
 - `kilnx lsp`: Language Server Protocol endpoint
+- `kilnx mcp`: Model Context Protocol server (grammar, keywords, examples, `check` tool)
 
 ## Example apps
 

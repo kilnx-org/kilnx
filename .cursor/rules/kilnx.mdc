@@ -1,24 +1,269 @@
 ---
-description: Kilnx language conventions and hard rules for generated .kilnx code
+description: Kilnx language — complete reference for generating and editing .kilnx files
 alwaysApply: true
 ---
 
-Authoritative references (read before writing):
+# Kilnx Language Reference
 
-- [AGENTS.md](mdc:AGENTS.md) — hard rules for agents in this repo
-- [PRINCIPLES.md](mdc:PRINCIPLES.md) — 11 constitutional rules
-- [GRAMMAR.md](mdc:GRAMMAR.md) — complete syntax specification
-- [FEATURES.md](mdc:FEATURES.md) — working feature catalogue
-- [llms.txt](mdc:llms.txt) / [llms-full.txt](mdc:llms-full.txt) — LLM-oriented index and concatenation
+Kilnx is a declarative backend language that compiles `.kilnx` files to a standalone Go binary. Zero JavaScript, zero runtime deps. SQLite and PostgreSQL built in. Designed for htmx.
 
-Hard rules when generating `.kilnx` code:
+Full references:
+- [GRAMMAR.md](mdc:GRAMMAR.md) — complete syntax spec
+- [FEATURES.md](mdc:FEATURES.md) — runnable examples
+- [PRINCIPLES.md](mdc:PRINCIPLES.md) — 11 design rules
+- [llms-full.txt](mdc:llms-full.txt) — single-file concat for LLM context
 
-- Keywords are finite. Top-level blocks: `config`, `model`, `auth`, `permissions`, `layout`, `page`, `action`, `fragment`, `stream`, `socket`, `api`, `webhook`, `job`, `schedule`, `test`.
-- Field types are finite: `text`, `email`, `int`, `float`, `bool`, `timestamp`, `richtext`, `option`, `password`, `image`, `phone`.
-- Constraints: `required`, `unique`, `default`, `auto`, `min`, `max`.
-- SQL is inline via `query name: SELECT ...`. No ORMs. No string concatenation into SQL.
-- Security (CSRF, bcrypt, session HMAC, HTML escaping, SQL binding) is built in. Do not reimplement it in user code.
-- No JavaScript in generated apps. htmx only for interactivity.
-- No external runtime dependencies in user code. One `.kilnx` file, optionally split via `import` statements.
+---
 
-If the grammar is silent on a construct you want, it does not exist. Propose an RFC issue rather than inventing syntax.
+## Hard rules
+
+- Keywords are **finite**. Do not invent syntax. If the grammar is silent on a construct, it does not exist — propose an RFC instead.
+- **No JavaScript** in generated apps. htmx only for interactivity.
+- **No external runtime deps** in user code. One `.kilnx` file, optionally split via `import`.
+- **Security is built-in**: CSRF protection, bcrypt hashing, session HMAC, HTML escaping, SQL binding. Never reimplement these.
+- SQL uses **named parameters** (`:name`). Never concatenate user input into SQL strings.
+- **`richtext` is unescaped** — only use with trusted content.
+
+---
+
+## Top-level blocks
+
+| Block | Purpose |
+|-------|---------|
+| `config` | Database, port, secrets, app name |
+| `model` | Data model → database table (auto-migrated) |
+| `auth` | Authentication config (login/register/logout) |
+| `permissions` | Role-based access control |
+| `layout` | Page wrapper template |
+| `page` | GET route returning full HTML |
+| `action` | POST/PUT/DELETE mutation route |
+| `fragment` | Partial HTML for htmx swaps |
+| `api` | JSON endpoint |
+| `stream` | Server-Sent Events |
+| `socket` | Bidirectional WebSocket |
+| `webhook` | External event receiver |
+| `job` | Async background job |
+| `schedule` | Timed/cron background task |
+| `test` | Declarative test case |
+
+---
+
+## Field types
+
+| Type | Notes |
+|------|-------|
+| `text` | String. Maps to TEXT. |
+| `email` | String with format validation. |
+| `int` | Integer. |
+| `float` | Floating point. |
+| `bool` | Boolean. Stored as 0/1 in SQLite. |
+| `timestamp` | Date/time. Use `auto` for auto-now-on-insert. |
+| `password` | Auto-hashed with bcrypt on INSERT. Never stored plaintext. |
+| `richtext` | Unescaped HTML. Use only with trusted content. |
+| `option` | Enum: `status: option [draft, published, archived]` |
+| `image` | File path for uploaded images. |
+| `phone` | Phone number with format validation. |
+
+## Constraints
+
+`required` `unique` `default <val>` `auto` `min <n>` `max <n>`
+
+---
+
+## Syntax examples
+
+### Minimal config
+
+```kilnx
+config
+  database: env DATABASE_URL default "sqlite://app.db"
+  port: env PORT default 8080
+  secret: env SECRET_KEY required
+```
+
+### Model
+
+```kilnx
+model user
+  name: text required min 2 max 100
+  email: email unique required
+  password: password required
+  role: option [admin, user] default "user"
+  created: timestamp auto
+```
+
+### Auth
+
+```kilnx
+auth
+  table: user
+  identity: email
+  password: password
+  login: /login
+  after login: /dashboard
+```
+
+### Permissions
+
+```kilnx
+permissions
+  admin can read write user post
+  user can read post
+  user can read write post where author_id = current_user
+```
+
+### Layout
+
+```kilnx
+layout main
+  html
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>{page.title}</title>
+        {kilnx.js}
+      </head>
+      <body>{page.content}</body>
+    </html>
+```
+
+### Page with query
+
+```kilnx
+page /dashboard requires auth
+  layout main
+  title Dashboard
+  query stats: SELECT count(*) as total FROM user
+  html
+    <h1>Total users: {stats.total}</h1>
+```
+
+### Action (mutation)
+
+```kilnx
+action /posts POST requires auth
+  validate post
+  query: INSERT INTO post (title, body, author_id) VALUES (:title, :body, :current_user)
+  on success: redirect /posts
+  on error: redirect /posts/new?error=1
+```
+
+### Fragment (htmx target)
+
+```kilnx
+fragment /contacts/search
+  query contacts: SELECT * FROM contact WHERE name LIKE :q ORDER BY name
+  html
+    {{each contacts}}<div>{name} — {email}</div>{{end}}
+```
+
+### JSON API
+
+```kilnx
+api /api/posts requires auth
+  query posts: SELECT id, title, created FROM post WHERE author_id = :current_user
+  respond posts
+```
+
+### Server-Sent Events
+
+```kilnx
+stream /events/inbox every 3s
+  query msgs: SELECT id, body FROM message WHERE recipient_id = :current_user ORDER BY created DESC LIMIT 20
+```
+
+### Background job
+
+```kilnx
+job send-welcome
+  retry 3
+  query u: SELECT email, name FROM user WHERE id = :user_id
+  send email to {u.email}
+```
+
+### Schedule
+
+```kilnx
+schedule cleanup every 24h
+  query: DELETE FROM session WHERE expires < datetime('now')
+```
+
+### Test
+
+```kilnx
+test "homepage returns 200"
+  GET /
+  expect status 200
+
+test "create post requires auth"
+  POST /posts
+  expect status 302
+  expect redirect /login
+```
+
+---
+
+## Template syntax (inside `html` blocks)
+
+| Syntax | Effect |
+|--------|--------|
+| `{field}` | Interpolate — HTML-escaped |
+| `{query.field}` | Query result field |
+| `{field \| filter}` | Apply filter |
+| `{{each query}}`...`{{end}}` | Loop over query rows |
+| `{{if field}}`...`{{end}}` | Conditional (truthy check) |
+| `{{if !field}}`...`{{end}}` | Negated conditional |
+| `{kilnx.js}` | Inject htmx script tag (use once in layout) |
+| `{page.title}` | Current page title (use in layout) |
+| `{page.content}` | Current page body (use in layout) |
+
+### Available filters
+
+`upper` `lower` `date` `timeago` `truncate:<n>` `currency` `escape`
+
+---
+
+## SQL rules
+
+- Tables map 1:1 to model names (lowercase)
+- Named parameters: `:name` (never string concatenation)
+- `:current_user` → authenticated user's ID
+- Multi-query: name each one — `query posts: SELECT ...`, `query count: SELECT count(*) ...`
+- SQL is validated at compile time by `kilnx check`
+
+---
+
+## Multi-file apps
+
+```kilnx
+import "auth.kilnx"
+import "blog.kilnx"
+```
+
+Import directives must be at column 0 (no indentation).
+
+---
+
+## CLI commands
+
+```
+kilnx run <file.kilnx>                  Dev server with hot reload
+kilnx build <file.kilnx> [-o output]    Compile to standalone binary (~15MB)
+kilnx check <file.kilnx>               Static analysis
+kilnx test <file.kilnx>                Run test blocks
+kilnx migrate <file.kilnx>             Apply DB migrations
+kilnx lsp                              LSP server (stdin/stdout)
+kilnx mcp                              MCP server for AI tools (stdin/stdout)
+```
+
+---
+
+## Common mistakes to avoid
+
+- Do not use `{{each}}` without a named query — the query name is the variable
+- Do not use `/` prefix on `after login:` paths — just the path: `after login: /dashboard`
+- `password` fields hash automatically — do not call bcrypt yourself
+- `timestamp auto` sets the value on INSERT — not on every UPDATE
+- `option` type requires brackets: `status: option [a, b, c]`
+- Fragment paths must not use `layout` — fragments are partial HTML only
+- `requires auth` goes on the `page`/`action` line, not indented under it
