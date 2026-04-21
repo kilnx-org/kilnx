@@ -50,9 +50,10 @@ nav {
 }
 .nav-inner {
   margin: 0 auto; padding: 0 2rem;
-  height: var(--nav-height); display: flex; align-items: center; justify-content: space-between;
+  height: var(--nav-height); display: flex; align-items: center; gap: 2rem;
 }
 .nav-left, .nav-right { display: flex; align-items: center; gap: 1.5rem; }
+.nav-links { flex: 1; justify-content: center; }
 .nav-logo { display: flex; align-items: center; gap: 0.75rem; }
 .nav-logo img:first-child { width: 28px; height: 28px; filter: invert(1); }
 .nav-logo img:last-child { width: 80px; height: 18px; filter: invert(1); }
