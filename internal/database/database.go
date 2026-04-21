@@ -337,8 +337,16 @@ func (db *DB) generateCreateTable(model parser.Model, cm map[string]*parser.Cust
 		// column-mode custom fields become real columns
 		if manifest, ok := cm[model.Name]; ok {
 			isPostgres := db.dialect.DriverName() == "pgx"
+			// build set of names already used by model fields + reserved names
+			usedNames := map[string]bool{"id": true, "custom": true}
+			for _, field := range model.Fields {
+				usedNames[fieldToColumnName(field)] = true
+			}
 			for _, f := range manifest.Fields {
 				if f.Mode != parser.CustomFieldModeColumn || !isValidIdentifier(f.Name) {
+					continue
+				}
+				if usedNames[f.Name] {
 					continue
 				}
 				cols = append(cols, fmt.Sprintf(`"%s" %s`, f.Name, customKindToSQL(f.Kind, isPostgres)))
@@ -357,6 +365,11 @@ func customKindToSQL(kind parser.CustomFieldKind, isPostgres bool) string {
 	case parser.CustomFieldKindBool:
 		if isPostgres {
 			return "BOOLEAN"
+		}
+		return "INTEGER"
+	case parser.CustomFieldKindReference:
+		if isPostgres {
+			return "BIGINT"
 		}
 		return "INTEGER"
 	default:

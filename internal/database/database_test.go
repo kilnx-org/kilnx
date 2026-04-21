@@ -953,6 +953,7 @@ func TestColumnModeCreateTable(t *testing.T) {
 		Fields: []parser.CustomFieldDef{
 			{Name: "revenue", Kind: parser.CustomFieldKindNumber, Mode: parser.CustomFieldModeColumn},
 			{Name: "region", Kind: parser.CustomFieldKindText, Mode: parser.CustomFieldModeJSON},
+			{Name: "client", Kind: parser.CustomFieldKindReference, Mode: parser.CustomFieldModeColumn},
 		},
 	}
 	cm := map[string]*parser.CustomFieldManifest{"deal": manifest}
@@ -964,8 +965,48 @@ func TestColumnModeCreateTable(t *testing.T) {
 	if !strings.Contains(sql, `"revenue" REAL`) {
 		t.Errorf("missing column-mode revenue column in: %s", sql)
 	}
+	if !strings.Contains(sql, `"client" INTEGER`) {
+		t.Errorf("reference kind should produce INTEGER column, got: %s", sql)
+	}
 	if strings.Contains(sql, `"region"`) {
 		t.Errorf("JSON-mode field should not become a column, but found region in: %s", sql)
+	}
+}
+
+func TestColumnModeCreateTableCollisionGuard(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	model := parser.Model{
+		Name:             "deal",
+		CustomFieldsFile: "deal_fields.kilnx",
+		Fields: []parser.Field{
+			{Name: "title", Type: parser.FieldText},
+		},
+	}
+	manifest := &parser.CustomFieldManifest{
+		ModelName: "deal",
+		Fields: []parser.CustomFieldDef{
+			// "title" and "id" collide with model fields — must be silently skipped
+			{Name: "title", Kind: parser.CustomFieldKindText, Mode: parser.CustomFieldModeColumn},
+			{Name: "id", Kind: parser.CustomFieldKindNumber, Mode: parser.CustomFieldModeColumn},
+			{Name: "revenue", Kind: parser.CustomFieldKindNumber, Mode: parser.CustomFieldModeColumn},
+		},
+	}
+	cm := map[string]*parser.CustomFieldManifest{"deal": manifest}
+	sql := db.generateCreateTable(model, cm)
+
+	// count occurrences of "title" — should appear exactly once
+	titleCount := strings.Count(sql, `"title"`)
+	if titleCount != 1 {
+		t.Errorf("expected 'title' to appear once, got %d times in: %s", titleCount, sql)
+	}
+	// PK is unquoted; ensure no extra quoted "id" column was added
+	if strings.Contains(sql, `"id"`) {
+		t.Errorf("collision guard failed: duplicate 'id' column found in: %s", sql)
+	}
+	if !strings.Contains(sql, `"revenue" REAL`) {
+		t.Errorf("non-colliding column-mode field 'revenue' should be present in: %s", sql)
 	}
 }
 
