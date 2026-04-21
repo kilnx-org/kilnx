@@ -37,7 +37,39 @@ auth
   after login: /dashboard
 ```
 
-Protect any route with `requires auth` or `requires admin`.
+Protect any route with `requires auth` or `requires admin`. Extend with
+comma-separated clauses and expression predicates:
+
+```kilnx
+// any logged-in user
+page /dashboard requires auth
+
+// named role
+page /admin requires admin
+
+// platform operator only (bypasses all role checks)
+page /ops requires superuser
+
+// expression predicate: field in list
+page /app requires auth, :current_user.plan in ['cad','full']
+
+// combined: role AND expression
+page /billing requires admin, :current_user.active == 'true'
+```
+
+Configure the superuser identity in the `auth` block:
+
+```kilnx
+auth
+  table: user
+  identity: email
+  password: password
+  login: /login
+  superuser: env SUPERUSER_EMAIL  // resolved at startup; empty = disabled
+```
+
+Expression fields are resolved from the session user row. Supported operators:
+`in [...]`, `==`, `!=`, `>`, `<`, `>=`, `<=`, `and`, `or`.
 
 ## Permissions
 

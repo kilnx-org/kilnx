@@ -244,7 +244,7 @@ func (s *Server) getSession(r *http.Request) *Session {
 	return s.sessions.Get(id)
 }
 
-// requireAuth checks if the page requires auth and/or a specific role.
+// requireAuth checks if the page requires auth and/or satisfies all requires clauses.
 // Returns true if the request should proceed, false if redirected or forbidden.
 func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request, page parser.Page) bool {
 	if !page.Auth {
@@ -262,17 +262,22 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request, page parser
 		return false
 	}
 
+	if len(page.RequiresClauses) > 0 {
+		if !s.evalRequiresClauses(page.RequiresClauses, session) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(renderForbidden(app.Pages, session)))
+			return false
+		}
+		return true
+	}
+
+	// legacy single-role path
 	role := page.RequiresRole
 	if role == "" || role == "auth" {
 		return true
 	}
-
-	userRole := session.Role
-	if userRole == role {
-		return true
-	}
-
-	if s.hasPermission(userRole, role, app.Permissions) {
+	if session.Role == role || s.hasPermission(session.Role, role, app.Permissions) {
 		return true
 	}
 
@@ -282,7 +287,7 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request, page parser
 	return false
 }
 
-// requireAPIAuth checks auth for API endpoints, returning JSON 401 instead of HTML redirect.
+// requireAPIAuth checks auth for API endpoints, returning JSON 401/403 instead of HTML redirect.
 func (s *Server) requireAPIAuth(w http.ResponseWriter, r *http.Request, page parser.Page) bool {
 	if !page.Auth {
 		return true
@@ -300,11 +305,21 @@ func (s *Server) requireAPIAuth(w http.ResponseWriter, r *http.Request, page par
 		return false
 	}
 
+	if len(page.RequiresClauses) > 0 {
+		if !s.evalRequiresClauses(page.RequiresClauses, session) {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":"forbidden"}`))
+			return false
+		}
+		return true
+	}
+
+	// legacy single-role path
 	role := page.RequiresRole
 	if role == "" || role == "auth" {
 		return true
 	}
-
 	if session.Role == role || s.hasPermission(session.Role, role, app.Permissions) {
 		return true
 	}
@@ -341,6 +356,172 @@ func (s *Server) hasPermission(userRole, requiredRole string, perms []parser.Per
 	}
 
 	return userRole == requiredRole
+}
+
+// evalRequiresClauses returns true when the session satisfies ALL clauses (AND semantics).
+// A superuser (matched by identity) bypasses all checks.
+func (s *Server) evalRequiresClauses(clauses []parser.RequiresClause, session *Session) bool {
+	if s.superuserIdentity != "" && session != nil && session.Identity == s.superuserIdentity {
+		return true
+	}
+	app := s.getApp()
+	for _, clause := range clauses {
+		switch clause.Kind {
+		case parser.RequiresClauseAuth:
+			// satisfied by session existing (already checked before calling this)
+		case parser.RequiresClauseRole:
+			if session.Role != clause.Value && !s.hasPermission(session.Role, clause.Value, app.Permissions) {
+				return false
+			}
+		case parser.RequiresClauseExpr:
+			if !evalAuthExpr(clause.Value, session) {
+				return false
+			}
+		case parser.RequiresClauseSuperuser:
+			if s.superuserIdentity == "" || session.Identity != s.superuserIdentity {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// evalAuthExpr evaluates a boolean expression against session data.
+// Supports: "field == value", "field != value", "field in ['a','b']",
+// numeric comparisons, and "and"/"or" conjunctions.
+func evalAuthExpr(expr string, session *Session) bool {
+	expr = strings.TrimSpace(expr)
+	// split on " or " first (lowest precedence)
+	orParts := splitLogical(expr, " or ")
+	if len(orParts) > 1 {
+		for _, part := range orParts {
+			if evalAuthExpr(strings.TrimSpace(part), session) {
+				return true
+			}
+		}
+		return false
+	}
+	// split on " and "
+	andParts := splitLogical(expr, " and ")
+	if len(andParts) > 1 {
+		for _, part := range andParts {
+			if !evalAuthExpr(strings.TrimSpace(part), session) {
+				return false
+			}
+		}
+		return true
+	}
+	// single condition
+	return evalSingleAuthCondition(expr, session)
+}
+
+// evalSingleAuthCondition evaluates one predicate: field op value or field in [...].
+func evalSingleAuthCondition(expr string, session *Session) bool {
+	expr = strings.TrimSpace(expr)
+	// "field in ['a','b','c']"
+	if inIdx := strings.Index(strings.ToLower(expr), " in ["); inIdx >= 0 {
+		field := strings.TrimSpace(expr[:inIdx])
+		listPart := strings.TrimSpace(expr[inIdx+len(" in ["):])
+		listPart = strings.TrimSuffix(listPart, "]")
+		items := parseInList(listPart)
+		val := resolveSessionField(field, session)
+		for _, item := range items {
+			if val == item {
+				return true
+			}
+		}
+		return false
+	}
+	// comparison operators
+	lhs, op, rhs := splitCondition(expr)
+	if op == "" {
+		return false
+	}
+	left := resolveSessionField(strings.TrimSpace(lhs), session)
+	right := strings.Trim(strings.TrimSpace(rhs), "\"'")
+	switch op {
+	case "==":
+		return left == right
+	case "!=":
+		return left != right
+	case ">":
+		return compareNumeric(left, right) > 0
+	case "<":
+		return compareNumeric(left, right) < 0
+	case ">=":
+		return compareNumeric(left, right) >= 0
+	case "<=":
+		return compareNumeric(left, right) <= 0
+	}
+	return false
+}
+
+// resolveSessionField returns the value of a session field referenced as
+// "current_user.fieldName" or plain "fieldName".
+func resolveSessionField(field string, session *Session) string {
+	if session == nil {
+		return ""
+	}
+	name := field
+	if strings.HasPrefix(strings.ToLower(field), "current_user.") {
+		name = field[len("current_user."):]
+	}
+	switch name {
+	case "role":
+		return session.Role
+	case "id":
+		return session.UserID
+	case "identity", "email":
+		return session.Identity
+	}
+	return session.Data[name]
+}
+
+// parseInList parses items from a comma-separated list, stripping quotes.
+func parseInList(s string) []string {
+	var items []string
+	depth := 0
+	inSingle := false
+	inDouble := false
+	start := 0
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if inDouble {
+			if ch == '"' {
+				inDouble = false
+			}
+			continue
+		}
+		if inSingle {
+			if ch == '\'' {
+				inSingle = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inDouble = true
+		case '\'':
+			inSingle = true
+		case '[':
+			depth++
+		case ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				item := strings.TrimSpace(s[start:i])
+				item = strings.Trim(item, "\"'")
+				if item != "" {
+					items = append(items, item)
+				}
+				start = i + 1
+			}
+		}
+	}
+	if tail := strings.Trim(strings.TrimSpace(s[start:]), "\"'"); tail != "" {
+		items = append(items, tail)
+	}
+	return items
 }
 
 func renderForbidden(pages []parser.Page, session *Session) string {

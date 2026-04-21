@@ -220,7 +220,31 @@ auth
   password: password_hash
   login: /login
   after login: /dashboard
+  superuser: env SUPERUSER_EMAIL
 ```
+
+`superuser` designates a platform operator identity (resolved via `env VAR` or
+a literal string). A superuser bypasses all role checks — they can access any
+route regardless of `requires` clauses.
+
+#### requires clauses
+
+`requires` accepts a comma-separated list of predicates. All must pass (AND semantics).
+
+```kilnx
+page /admin requires auth                       // any logged-in user
+page /admin requires admin                      // named role
+page /admin requires superuser                  // platform operator only
+page /app requires auth, :current_user.plan in ['cad','full']   // expression
+page /app requires admin, :current_user.active == 'true'        // combined
+```
+
+Expression predicates are prefixed with `:` and support:
+- `current_user.fieldName in ['a','b','c']` — membership check
+- `current_user.fieldName == 'value'` / `!=` / `>` / `<` / `>=` / `<=`
+- `and` / `or` conjunctions
+
+Fields are resolved from the session user row (`current_user.X` or bare `X`).
 
 ### layout
 

@@ -85,6 +85,18 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if len(sock.RequiresClauses) > 0 {
+			if !s.evalRequiresClauses(sock.RequiresClauses, session) {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		} else if sock.RequiresRole != "" && sock.RequiresRole != "auth" {
+			app := s.getApp()
+			if !s.hasPermission(session.Role, sock.RequiresRole, app.Permissions) {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		}
 	}
 
 	// WebSocket handshake

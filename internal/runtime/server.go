@@ -24,18 +24,19 @@ var staticFS embed.FS
 var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}`)
 
 type Server struct {
-	app           *parser.App
-	db            *database.DB
-	sessions      *SessionStore
-	jobQueue      *JobQueue
-	rateLimiter   *RateLimiter
-	logger        *Logger
-	i18n          *I18n
-	tenants       TenantMap // models with a `tenant: <model>` directive
-	manifestCache sync.Map  // resolved path -> *parser.CustomFieldManifest (dynamic manifests)
-	mu            sync.RWMutex
-	port          int
-	scheduleStop  chan struct{}
+	app               *parser.App
+	db                *database.DB
+	sessions          *SessionStore
+	jobQueue          *JobQueue
+	rateLimiter       *RateLimiter
+	logger            *Logger
+	i18n              *I18n
+	tenants           TenantMap // models with a `tenant: <model>` directive
+	manifestCache     sync.Map  // resolved path -> *parser.CustomFieldManifest (dynamic manifests)
+	superuserIdentity string    // identity of the platform operator; bypasses all role checks
+	mu                sync.RWMutex
+	port              int
+	scheduleStop      chan struct{}
 }
 
 func NewServer(app *parser.App, db *database.DB, port int) *Server {
@@ -43,7 +44,11 @@ func NewServer(app *parser.App, db *database.DB, port int) *Server {
 	if app.Config != nil {
 		secret = app.Config.Secret
 	}
-	s := &Server{app: app, db: db, sessions: NewSessionStore(secret), port: port, tenants: BuildTenantMap(app)}
+	superuser := ""
+	if app.Auth != nil {
+		superuser = app.Auth.Superuser
+	}
+	s := &Server{app: app, db: db, sessions: NewSessionStore(secret), port: port, tenants: BuildTenantMap(app), superuserIdentity: superuser}
 	// Attach DB to session store for persistence
 	if db != nil {
 		s.sessions.SetDB(db)
@@ -73,6 +78,9 @@ func (s *Server) Reload(app *parser.App) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.app = app
+	if app.Auth != nil {
+		s.superuserIdentity = app.Auth.Superuser
+	}
 }
 
 func (s *Server) StartJobQueue() {
@@ -1011,6 +1019,8 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				sess := s.getSession(r)
 				if sess == nil {
 					shouldExecute = true
+				} else if len(action.RequiresClauses) > 0 {
+					shouldExecute = !s.evalRequiresClauses(action.RequiresClauses, sess)
 				} else if action.RequiresRole != "" && action.RequiresRole != "auth" {
 					shouldExecute = sess.Role != action.RequiresRole &&
 						!s.hasPermission(sess.Role, action.RequiresRole, app.Permissions)
