@@ -1,0 +1,69 @@
+area/lexer:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/lexer/**
+
+area/parser:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/parser/**
+
+area/analyzer:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/analyzer/**
+
+area/runtime:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/runtime/**
+
+area/database:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/database/**
+
+area/lsp:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/lsp/**
+
+area/build:
+  - changed-files:
+      - any-glob-to-any-file:
+          - internal/build/**
+
+area/cli:
+  - changed-files:
+      - any-glob-to-any-file:
+          - cmd/kilnx/**
+
+area/docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**
+          - GRAMMAR.md
+          - FEATURES.md
+          - PRINCIPLES.md
+          - CONTRIBUTING.md
+          - README.md
+          - AGENTS.md
+
+area/examples:
+  - changed-files:
+      - any-glob-to-any-file:
+          - smoke/**
+
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/workflows/**
+          - .github/labeler.yml
+          - Dockerfile
+          - .dockerignore
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - go.mod
+          - go.sum
