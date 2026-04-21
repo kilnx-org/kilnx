@@ -18,7 +18,7 @@ Top-level blocks: `config`, `model`, `auth`, `permissions`, `layout`, `page`, `a
 
 Field types: `text`, `email`, `int`, `float`, `bool`, `timestamp`, `richtext`, `option`, `password`, `image`, `phone`.
 
-Constraints: `required`, `unique`, `default`, `auto`, `min`, `max`. Composite UNIQUE on a model: `unique (field_a, field_b, ...)` as a separate line (two or more fields; references resolve to their `_id` column).
+Constraints: `required`, `unique`, `default`, `auto`, `min`, `max`. Model-level directives: `unique (field_a, field_b, ...)` for composite UNIQUE (2+ fields), `index (field_a, field_b, ...)` for non-unique indexes (1+ fields). References resolve to `_id` columns.
 
 ## CLI
 

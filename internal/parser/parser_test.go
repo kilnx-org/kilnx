@@ -1245,3 +1245,71 @@ func TestParseFieldLevelUniqueStillWorks(t *testing.T) {
 		t.Error("composite constraints should be empty for field-level unique")
 	}
 }
+
+func TestParseIndexDirective_Simple(t *testing.T) {
+	src := `model order
+  customer: user required
+  created: timestamp auto
+  index (customer, created)
+`
+	app := parse(t, src)
+	m := app.Models[0]
+	if len(m.Indexes) != 1 {
+		t.Fatalf("expected 1 index group, got %d", len(m.Indexes))
+	}
+	g := m.Indexes[0]
+	if len(g) != 2 || g[0] != "customer" || g[1] != "created" {
+		t.Errorf("unexpected index group: %#v", g)
+	}
+}
+
+func TestParseIndexDirective_SingleFieldAllowed(t *testing.T) {
+	src := `model order
+  status: text
+  index (status)
+`
+	app := parse(t, src)
+	if len(app.Models[0].Indexes) != 1 || len(app.Models[0].Indexes[0]) != 1 {
+		t.Errorf("single-field index should be accepted: %+v", app.Models[0].Indexes)
+	}
+}
+
+func TestParseIndexDirective_MultipleGroups(t *testing.T) {
+	src := `model order
+  a: text
+  b: text
+  c: text
+  index (a, b)
+  index (c)
+`
+	app := parse(t, src)
+	if len(app.Models[0].Indexes) != 2 {
+		t.Fatalf("expected 2 index groups, got %d", len(app.Models[0].Indexes))
+	}
+}
+
+func TestParseIndexDirective_EmptyRejected(t *testing.T) {
+	src := `model m
+  a: text
+  index ()
+`
+	_, err := parseAllowErrors(t, src)
+	if err == nil {
+		t.Fatal("expected error for empty index()")
+	}
+}
+
+func TestParseIndexAndUniqueCoexist(t *testing.T) {
+	src := `model m
+  a: text
+  b: text
+  c: text
+  unique (a, b)
+  index (b, c)
+`
+	app := parse(t, src)
+	m := app.Models[0]
+	if len(m.UniqueConstraints) != 1 || len(m.Indexes) != 1 {
+		t.Errorf("expected 1 unique and 1 index, got %d/%d", len(m.UniqueConstraints), len(m.Indexes))
+	}
+}

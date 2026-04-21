@@ -360,10 +360,21 @@ func getHover(content string, pos position) *hoverResult {
 				}
 				fields = append(fields, fmt.Sprintf("- **%s**: %s%s", f.Name, f.Type, constraint))
 			}
+			var extras []string
+			for _, g := range m.UniqueConstraints {
+				extras = append(extras, fmt.Sprintf("- unique (%s)", strings.Join(g, ", ")))
+			}
+			for _, g := range m.Indexes {
+				extras = append(extras, fmt.Sprintf("- index (%s)", strings.Join(g, ", ")))
+			}
+			body := strings.Join(fields, "\n")
+			if len(extras) > 0 {
+				body += "\n\n**Indexes**\n" + strings.Join(extras, "\n")
+			}
 			return &hoverResult{
 				Contents: markupContent{
 					Kind:  "markdown",
-					Value: fmt.Sprintf("**model %s**\n\n%s", m.Name, strings.Join(fields, "\n")),
+					Value: fmt.Sprintf("**model %s**\n\n%s", m.Name, body),
 				},
 			}
 		}
@@ -928,6 +939,8 @@ var fieldTypes = []keywordInfo{
 	{"auto", "Field constraint: auto-generated"},
 	{"min", "Field constraint: minimum value"},
 	{"max", "Field constraint: maximum value"},
+	{"unique (...)", "Composite UNIQUE: unique (field_a, field_b, ...)"},
+	{"index (...)", "Non-unique index: index (field_a, field_b, ...)"},
 }
 
 var keywordDocs = map[string]string{
@@ -962,7 +975,8 @@ var keywordDocs = map[string]string{
 	"float":        "Floating point type. Maps to SQLite REAL.",
 	"password":     "Password type. Automatically hashed with bcrypt on INSERT.",
 	"required":     "Field constraint: value must be non-null.",
-	"unique":       "Field constraint: value must be unique across all rows.",
+	"unique":       "Field constraint: value must be unique across all rows. For multi-column uniqueness, declare a model-level `unique (field_a, field_b, ...)` directive instead.",
+	"index":        "Model-level directive: `index (field_a, field_b, ...)` creates a non-unique index (`CREATE INDEX IF NOT EXISTS ix_<table>_<cols>`). Use for query acceleration.",
 	"optional":     "Field constraint: value can be null.",
 	"default":      "Field constraint: provides a default value if none specified.",
 	"retry":        "Job retry count. Syntax: `retry N`. Failed jobs retry with exponential backoff.",

@@ -150,9 +150,59 @@ func (db *DB) PlanMigration(models []parser.Model, manifests ...map[string]*pars
 		}
 
 		stmts = append(stmts, uniqueIndexDDLs(model)...)
+		stmts = append(stmts, indexDDLs(model)...)
 	}
 
 	return stmts, nil
+}
+
+// indexDDLs emits `CREATE INDEX IF NOT EXISTS` statements for each
+// non-unique `index (...)` group declared on the model. Index names
+// are prefixed with `ix_` to stay distinguishable from composite
+// UNIQUE indexes (`uq_`). Groups referencing unknown fields are
+// skipped; the analyzer surfaces the error.
+func indexDDLs(model parser.Model) []string {
+	if len(model.Indexes) == 0 {
+		return nil
+	}
+	byName := make(map[string]parser.Field, len(model.Fields))
+	for _, f := range model.Fields {
+		byName[f.Name] = f
+	}
+	var stmts []string
+	for _, group := range model.Indexes {
+		cols := make([]string, 0, len(group))
+		ok := true
+		for _, name := range group {
+			f, found := byName[name]
+			if !found {
+				ok = false
+				break
+			}
+			col := fieldToColumnName(f)
+			if !isValidIdentifier(col) {
+				ok = false
+				break
+			}
+			cols = append(cols, col)
+		}
+		if !ok || len(cols) == 0 {
+			continue
+		}
+		indexName := "ix_" + model.Name + "_" + strings.Join(cols, "_")
+		if !isValidIdentifier(indexName) {
+			continue
+		}
+		quoted := make([]string, len(cols))
+		for i, c := range cols {
+			quoted[i] = fmt.Sprintf("\"%s\"", c)
+		}
+		stmts = append(stmts, fmt.Sprintf(
+			"CREATE INDEX IF NOT EXISTS \"%s\" ON \"%s\" (%s)",
+			indexName, model.Name, strings.Join(quoted, ", "),
+		))
+	}
+	return stmts
 }
 
 // uniqueIndexDDLs emits `CREATE UNIQUE INDEX IF NOT EXISTS` statements for
@@ -292,6 +342,9 @@ func schemaHash(models []parser.Model) string {
 		}
 		for _, group := range m.UniqueConstraints {
 			fmt.Fprintf(&b, "  unique:%s\n", strings.Join(group, ","))
+		}
+		for _, group := range m.Indexes {
+			fmt.Fprintf(&b, "  index:%s\n", strings.Join(group, ","))
 		}
 	}
 	h := sha256.Sum256([]byte(b.String()))

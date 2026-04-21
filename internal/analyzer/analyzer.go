@@ -125,6 +125,7 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkModelRefs(app, schema)...)
 	diags = append(diags, checkTenantRefs(app, schema)...)
 	diags = append(diags, checkUniqueConstraints(app)...)
+	diags = append(diags, checkIndexes(app)...)
 	diags = append(diags, checkAllSQL(app, schema)...)
 	diags = append(diags, checkSecurity(app, schema)...)
 	diags = append(diags, checkTemplateInterpolations(app, schema)...)
@@ -329,6 +330,54 @@ func checkUniqueConstraints(app *parser.App) []Diagnostic {
 				diags = append(diags, Diagnostic{
 					Level:   "error",
 					Message: fmt.Sprintf("duplicate unique constraint on model '%s': (%s)", m.Name, strings.Join(group, ", ")),
+					Context: "model " + m.Name,
+				})
+			}
+			seenGroups[key] = true
+		}
+	}
+	return diags
+}
+
+// checkIndexes validates each `index (a, b, ...)` directive the same way
+// as checkUniqueConstraints: declared field names exist on the model, no
+// repeats within a group, no duplicated groups.
+func checkIndexes(app *parser.App) []Diagnostic {
+	var diags []Diagnostic
+	for _, m := range app.Models {
+		if len(m.Indexes) == 0 {
+			continue
+		}
+		fieldSet := make(map[string]bool, len(m.Fields))
+		for _, f := range m.Fields {
+			fieldSet[f.Name] = true
+		}
+		seenGroups := make(map[string]bool)
+		for _, group := range m.Indexes {
+			seenInGroup := make(map[string]bool, len(group))
+			for _, name := range group {
+				if !fieldSet[name] {
+					diags = append(diags, Diagnostic{
+						Level:   "error",
+						Message: fmt.Sprintf("index references unknown field '%s' on model '%s'", name, m.Name),
+						Context: "model " + m.Name,
+					})
+					continue
+				}
+				if seenInGroup[name] {
+					diags = append(diags, Diagnostic{
+						Level:   "error",
+						Message: fmt.Sprintf("index on model '%s' repeats field '%s'", m.Name, name),
+						Context: "model " + m.Name,
+					})
+				}
+				seenInGroup[name] = true
+			}
+			key := strings.Join(group, "\x00")
+			if seenGroups[key] {
+				diags = append(diags, Diagnostic{
+					Level:   "error",
+					Message: fmt.Sprintf("duplicate index on model '%s': (%s)", m.Name, strings.Join(group, ", ")),
 					Context: "model " + m.Name,
 				})
 			}

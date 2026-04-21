@@ -1954,3 +1954,48 @@ func TestAnalyze_UniqueConstraintValid(t *testing.T) {
 		}
 	}
 }
+
+func TestAnalyze_IndexUnknownField(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "m",
+			Fields: []parser.Field{
+				{Name: "a", Type: parser.FieldText},
+			},
+			Indexes: [][]string{{"a", "b"}},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "index references unknown field 'b'") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected unknown-field error for index, got: %+v", diags)
+	}
+}
+
+func TestAnalyze_IndexDuplicateGroup(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "m",
+			Fields: []parser.Field{
+				{Name: "a", Type: parser.FieldText},
+				{Name: "b", Type: parser.FieldText},
+			},
+			Indexes: [][]string{{"a", "b"}, {"a", "b"}},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "duplicate index") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected duplicate-index error, got: %+v", diags)
+	}
+}

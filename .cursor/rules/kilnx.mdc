@@ -68,7 +68,7 @@ Full references:
 
 `required` `unique` `default <val>` `auto` `min <n>` `max <n>`
 
-Composite UNIQUE: `unique (field_a, field_b, ...)` as a model-level line (two or more fields; references resolve to `_id` columns).
+Model-level directives: `unique (field_a, field_b, ...)` for composite UNIQUE (2+ fields); `index (field_a, field_b, ...)` for non-unique indexes (1+ fields). References resolve to `_id` columns.
 
 ---
 
