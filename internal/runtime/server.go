@@ -368,7 +368,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 			continue
 		}
 		if node.SourceModel != "" {
-			if _, hasCustom := app.CustomManifests[node.SourceModel]; hasCustom {
+			if s.modelHasCustomFields(app, node.SourceModel) {
 				sql = database.RewriteCustomFieldShorthand(sql, s.db.Dialect().DriverName() == "pgx")
 			}
 		}
@@ -993,6 +993,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 					}
 					lastQueryOk = true
 					lastQueryNotFound = false
+					s.invalidateDynamicManifestCache(sql)
 				}
 			}
 
@@ -1544,48 +1545,58 @@ var tenantPlaceholderRe = regexp.MustCompile(`\{[^}]+\}`)
 // resolveManifest returns the custom field manifest for a model, resolving dynamic
 // paths at request time. Results are cached per resolved path.
 func (s *Server) resolveManifest(model *parser.Model, app *parser.App, session *Session, pathParams map[string]string, r *http.Request) *parser.CustomFieldManifest {
-	if model.CustomFieldsFile == "" {
+	if model.CustomFieldsFile == "" && !model.DynamicFields {
 		return nil
 	}
-	if !strings.Contains(model.CustomFieldsFile, "{") {
-		// Static path: already loaded into app.CustomManifests at startup
-		if m, ok := app.CustomManifests[model.Name]; ok {
-			return m
-		}
-		return nil
-	}
-	// Dynamic path: resolve placeholder and load on demand
-	resolved := resolveTenantPlaceholder(model.CustomFieldsFile, session, pathParams, r)
-	if resolved == "" || strings.Contains(resolved, "{") {
-		// Placeholder couldn't be resolved; fall back to static manifest
-		if m, ok := app.CustomManifests[model.Name]; ok {
-			return m
-		}
-		return nil
-	}
-	// Sanitize: must end in .kilnx, no path traversal
-	if !strings.HasSuffix(resolved, ".kilnx") || strings.Contains(resolved, "..") {
-		return nil
-	}
-	if cached, ok := s.manifestCache.Load(resolved); ok {
-		return cached.(*parser.CustomFieldManifest)
-	}
-	raw, err := os.ReadFile(resolved)
-	if err != nil {
-		// File not found — try fallback
-		if model.CustomFieldsFallback != "" && !strings.Contains(model.CustomFieldsFallback, "{") {
-			if m, ok := app.CustomManifests[model.Name]; ok {
-				return m // fallback was loaded at startup
+
+	// Resolve the static file portion (may be nil for dynamic-only models).
+	var base *parser.CustomFieldManifest
+	if model.CustomFieldsFile != "" {
+		if !strings.Contains(model.CustomFieldsFile, "{") {
+			// Static path: already loaded into app.CustomManifests at startup
+			base, _ = app.CustomManifests[model.Name]
+		} else {
+			// Dynamic path: resolve placeholder and load on demand
+			resolved := resolveTenantPlaceholder(model.CustomFieldsFile, session, pathParams, r)
+			if resolved == "" || strings.Contains(resolved, "{") {
+				// Placeholder couldn't be resolved; fall back to static manifest
+				base, _ = app.CustomManifests[model.Name]
+			} else if strings.HasSuffix(resolved, ".kilnx") && !strings.Contains(resolved, "..") {
+				if cached, ok := s.manifestCache.Load(resolved); ok {
+					base = cached.(*parser.CustomFieldManifest)
+				} else {
+					raw, err := os.ReadFile(resolved)
+					if err != nil {
+						if model.CustomFieldsFallback != "" && !strings.Contains(model.CustomFieldsFallback, "{") {
+							base, _ = app.CustomManifests[model.Name]
+						}
+					} else {
+						m, err := parser.ParseManifest(string(raw), model.Name)
+						if err == nil {
+							s.manifestCache.Store(resolved, m)
+							base = m
+						}
+					}
+				}
 			}
 		}
-		return nil
 	}
-	m, err := parser.ParseManifest(string(raw), model.Name)
-	if err != nil {
-		return nil
+
+	if !model.DynamicFields || s.db == nil {
+		return base
 	}
-	s.manifestCache.Store(resolved, m)
-	return m
+
+	// Merge DB-backed field definitions.
+	cacheKey := "__dynamic__:" + model.Name
+	if cached, ok := s.manifestCache.Load(cacheKey); ok {
+		return cached.(*parser.CustomFieldManifest)
+	}
+	if base == nil {
+		base = &parser.CustomFieldManifest{ModelName: model.Name}
+	}
+	merged := s.mergeDBFieldDefs(model.Name, base)
+	s.manifestCache.Store(cacheKey, merged)
+	return merged
 }
 
 // buildCustomIterRows creates synthetic rows for {{each q.custom}} iteration.
