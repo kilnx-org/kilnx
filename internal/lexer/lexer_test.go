@@ -9,10 +9,10 @@ func TestTokenKeyword(t *testing.T) {
 	allKeywords := []string{
 		"page", "action", "fragment", "stream", "socket", "api",
 		"webhook", "schedule", "job", "model", "config", "auth",
-		"permissions", "layout", "query", "queries", "validate",
+		"permissions", "layout", "query", "validate",
 		"redirect", "on", "limit", "log", "test", "translations",
 		"enqueue", "broadcast", "send", "requires", "method",
-		"title", "with",
+		"title",
 	}
 
 	for _, kw := range allKeywords {

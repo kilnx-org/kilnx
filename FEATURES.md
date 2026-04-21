@@ -195,7 +195,8 @@ job send-welcome
 
 action /users/create method POST
   query: INSERT INTO user (name, email) VALUES (:name, :email)
-  enqueue send-welcome with user_id: :id
+  enqueue send-welcome
+    user_id: :id
   redirect /users
 ```
 
@@ -267,7 +268,7 @@ Generate PDFs from templates with query data.
 ```kilnx
 job generate-report
   query data: SELECT * FROM order WHERE created > :start_date
-  generate pdf from template report with data
+  generate pdf from template report data
   send email to :requested_by
     attach: generated pdf
     subject: "Your report is ready"
@@ -280,9 +281,9 @@ Test your app in the same language. No Selenium, no Cypress.
 ```kilnx
 test "user can register"
   visit /register
-  fill name with "Alice"
-  fill identity with "alice@test.com"
-  fill password with "secret123"
+  fill name "Alice"
+  fill identity "alice@test.com"
+  fill password "secret123"
   submit
   expect page /login contains "Log in"
 
@@ -408,7 +409,7 @@ fragment /admin/fields/row
 action /admin/fields/create method POST requires auth
   query: INSERT INTO _deal_field_defs (name, kind, label, required)
          VALUES (:name, :kind, :label, :required)
-  respond fragment /admin/fields/row with params: id = last_insert_id
+  respond fragment /admin/fields/row
 
 action /admin/fields/:id/delete method POST requires auth
   query: DELETE FROM _deal_field_defs WHERE id = :id

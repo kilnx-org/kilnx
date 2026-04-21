@@ -46,7 +46,7 @@ jobs:
         run: go build -o kilnx ./cmd/kilnx/
 
       - name: Check examples (hello)
-        run: ./kilnx check examples/hello.kilnx
+        run: ./kilnx check smoke/hello.kilnx
 
   kilnx-build:
     name: Build Examples
@@ -62,7 +62,7 @@ jobs:
         run: go build -o kilnx ./cmd/kilnx/
 
       - name: Build hello example
-        run: ./kilnx build examples/hello.kilnx -o hello
+        run: ./kilnx build smoke/hello.kilnx -o hello
 
       - name: Verify binaries exist
         run: |
@@ -125,7 +125,7 @@ jobs:
       - name: Build Docker image
         run: |
           docker build \
-            --build-arg KILNX_FILE=examples/hello.kilnx \
+            --build-arg KILNX_FILE=smoke/hello.kilnx \
             -t kilnx-test .
 
       - name: Test Docker image

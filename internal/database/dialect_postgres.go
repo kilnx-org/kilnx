@@ -47,19 +47,27 @@ func (PostgresDialect) AutoIncrementPK() string {
 func (d PostgresDialect) FieldToSQLType(f parser.Field) string {
 	switch f.Type {
 	case parser.FieldText, parser.FieldEmail, parser.FieldRichtext,
-		parser.FieldPassword, parser.FieldPhone, parser.FieldImage:
+		parser.FieldPassword, parser.FieldPhone, parser.FieldImage,
+		parser.FieldURL, parser.FieldFile,
+		parser.FieldTags, parser.FieldOption:
 		return "TEXT"
 	case parser.FieldBool:
 		return "BOOLEAN"
 	case parser.FieldTimestamp:
 		return "TIMESTAMP"
+	case parser.FieldDate:
+		return "DATE"
 	case parser.FieldInt:
 		return "INTEGER"
 	case parser.FieldFloat:
 		return "DOUBLE PRECISION"
-	case parser.FieldOption:
-		return "TEXT"
-	case parser.FieldReference:
+	case parser.FieldDecimal:
+		return "NUMERIC"
+	case parser.FieldJSON:
+		return "JSONB"
+	case parser.FieldUUID:
+		return "UUID"
+	case parser.FieldReference, parser.FieldBigInt:
 		return "BIGINT"
 	default:
 		return "TEXT"
@@ -69,6 +77,12 @@ func (d PostgresDialect) FieldToSQLType(f parser.Field) string {
 func (d PostgresDialect) FieldToDefault(f parser.Field) string {
 	if f.Auto && f.Type == parser.FieldTimestamp {
 		return " DEFAULT NOW()"
+	}
+	if f.Auto && f.Type == parser.FieldDate {
+		return " DEFAULT CURRENT_DATE"
+	}
+	if f.Auto && f.Type == parser.FieldUUID {
+		return " DEFAULT gen_random_uuid()"
 	}
 	if f.Auto && f.Type == parser.FieldBool {
 		return " DEFAULT FALSE"
@@ -95,6 +109,21 @@ func (d PostgresDialect) FieldToDefault(f parser.Field) string {
 
 func (PostgresDialect) BoolTrue() string  { return "TRUE" }
 func (PostgresDialect) BoolFalse() string { return "FALSE" }
+
+func (PostgresDialect) AutoUpdateTriggerDDL(table, field string) []string {
+	fnName := fmt.Sprintf("_kilnx_upd_%s_%s_fn", table, field)
+	trigName := fmt.Sprintf("_kilnx_upd_%s_%s", table, field)
+	return []string{
+		fmt.Sprintf(
+			`CREATE OR REPLACE FUNCTION "%s"() RETURNS TRIGGER AS $$ BEGIN NEW."%s" = NOW(); RETURN NEW; END; $$ LANGUAGE plpgsql`,
+			fnName, field,
+		),
+		fmt.Sprintf(
+			`CREATE OR REPLACE TRIGGER "%s" BEFORE UPDATE ON "%s" FOR EACH ROW EXECUTE FUNCTION "%s"()`,
+			trigName, table, fnName,
+		),
+	}
+}
 
 func (PostgresDialect) InternalTableDDL() []string {
 	return []string{

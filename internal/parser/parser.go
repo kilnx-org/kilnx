@@ -228,19 +228,28 @@ const (
 	FieldImage     FieldType = "image"
 	FieldPhone     FieldType = "phone"
 	FieldReference FieldType = "reference"
+	FieldDate      FieldType = "date"
+	FieldURL       FieldType = "url"
+	FieldDecimal   FieldType = "decimal"
+	FieldFile      FieldType = "file"
+	FieldTags      FieldType = "tags"
+	FieldJSON      FieldType = "json"
+	FieldUUID      FieldType = "uuid"
+	FieldBigInt    FieldType = "bigint"
 )
 
 type Field struct {
-	Name      string
-	Type      FieldType
-	Required  bool
-	Unique    bool
-	Default   string
-	Auto      bool
-	Min       string
-	Max       string
-	Options   []string // for option type: [admin, editor, viewer]
-	Reference string   // for reference type: model name
+	Name       string
+	Type       FieldType
+	Required   bool
+	Unique     bool
+	Default    string
+	Auto       bool
+	AutoUpdate bool
+	Min        string
+	Max        string
+	Options    []string // for option type: [admin, editor, viewer]
+	Reference  string   // for reference type: model name
 }
 
 type Page struct {
@@ -261,13 +270,13 @@ const (
 	NodeQuery                // query users: select name, email from user
 	NodeRedirect             // redirect /users
 	NodeValidate             // validate { name: required, email: required }
-	NodeRespond              // respond fragment ".selector" with query: SQL
+	NodeRespond              // respond fragment ".selector" query: SQL
 	NodeHTML                 // html { raw html content }
 	NodeSendEmail            // send email to :email { subject: "...", body: "..." }
-	NodeEnqueue              // enqueue job-name with param: value
+	NodeEnqueue              // enqueue job-name\n  param: value
 	NodeOn                   // on success/error/not found branching
 	NodeBroadcast            // broadcast to :room
-	NodeGeneratePDF          // generate pdf from template X with data Y
+	NodeGeneratePDF          // generate pdf from template X data Y
 	NodeFetch                // fetch data: GET https://api.example.com/endpoint
 )
 
@@ -280,7 +289,7 @@ type Node struct {
 	Props         map[string]string // for on: condition; for send email: body
 	Paginate      int               // for query: items per page (0 = no pagination)
 	ModelName     string            // for validate: which model to validate against
-	QuerySQL      string            // for validate with query: pre-fill data
+	QuerySQL      string            // for respond ... query: pre-fill data
 	Validations   []Validation      // for validate block
 	RespondTarget string            // for respond: CSS selector target
 	RespondSwap   string            // for respond: htmx swap strategy
@@ -425,14 +434,21 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 					app.Translations[lang][k] = v
 				}
 			}
-		case "queries":
-			nq := p.parseNamedQueries()
+		case "query":
+			qn, err := p.parseQueryNode()
+			if err != nil {
+				p.addError(err)
+				p.synchronize()
+				continue
+			}
+			if qn.Name == "" {
+				p.addError(fmt.Errorf("top-level query must have a name: query <name>: <SQL>"))
+				continue
+			}
 			if app.NamedQueries == nil {
 				app.NamedQueries = make(map[string]string)
 			}
-			for k, v := range nq {
-				app.NamedQueries[k] = v
-			}
+			app.NamedQueries[qn.Name] = qn.SQL
 		default:
 			p.advance()
 		}
@@ -829,6 +845,9 @@ func (p *parserState) parseField(app *App) (Field, error) {
 				p.advance()
 			case "auto":
 				field.Auto = true
+				p.advance()
+			case "auto_update":
+				field.AutoUpdate = true
 				p.advance()
 			case "default":
 				p.advance()
@@ -1369,7 +1388,7 @@ func (p *parserState) parseFragment() (Page, error) {
 
 // parseRespondNode parses:
 //
-//	respond fragment ".user-row" with query: SELECT * FROM user WHERE id = :id
+//	respond fragment ".user-row" query: SELECT * FROM user WHERE id = :id
 //	respond fragment delete
 func (p *parserState) parseRespondNode() Node {
 	node := Node{Type: NodeRespond}
@@ -1409,21 +1428,17 @@ func (p *parserState) parseRespondNode() Node {
 		node.RespondTarget = p.advance().Value
 	}
 
-	// "with query: SQL" or "with" followed by body
-	if p.current().Type == lexer.TokenKeyword && p.current().Value == "with" {
+	// optional inline "query: SQL"
+	if p.current().Type == lexer.TokenKeyword && p.current().Value == "query" {
 		p.advance()
-		if p.current().Type == lexer.TokenKeyword && p.current().Value == "query" {
+		if p.current().Type == lexer.TokenColon {
 			p.advance()
-			if p.current().Type == lexer.TokenColon {
-				p.advance()
-			}
-			// Extract SQL from the line
-			if respondLine >= 1 && respondLine <= len(p.lines) {
-				line := p.lines[respondLine-1]
-				idx := strings.Index(line, "query:")
-				if idx >= 0 {
-					node.QuerySQL = strings.TrimSpace(line[idx+len("query:"):])
-				}
+		}
+		if respondLine >= 1 && respondLine <= len(p.lines) {
+			line := p.lines[respondLine-1]
+			idx := strings.Index(line, "query:")
+			if idx >= 0 {
+				node.QuerySQL = strings.TrimSpace(line[idx+len("query:"):])
 			}
 		}
 	}
@@ -2131,7 +2146,7 @@ func (p *parserState) parseSendEmailNode() Node {
 
 // parseEnqueueNode parses:
 //
-//	enqueue generate-report with
+//	enqueue generate-report
 //	  start_date: :start_date
 //	  requested_by: :current_user_email
 func (p *parserState) parseEnqueueNode() Node {
@@ -2143,11 +2158,6 @@ func (p *parserState) parseEnqueueNode() Node {
 	// job name
 	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
 		node.JobName = p.advance().Value
-	}
-
-	// optional "with"
-	if p.current().Type == lexer.TokenKeyword && p.current().Value == "with" {
-		p.advance()
 	}
 
 	p.skipToEndOfLine()
@@ -2457,9 +2467,9 @@ func (p *parserState) parseRateLimit() RateLimit {
 // parseTest parses:
 //
 //	test "user can create post"
-//	  as user with role editor
+//	  as editor
 //	  visit /posts/new
-//	  fill title with "Test Post"
+//	  fill title "Test Post"
 //	  submit
 //	  expect page /posts contains "Test Post"
 func (p *parserState) parseTest() Test {
@@ -2521,15 +2531,15 @@ func parseTestStep(line string) TestStep {
 			step.Target = parts[1]
 		}
 	case "fill":
-		// fill fieldName with "value"
+		// fill fieldName "value"
 		if len(parts) > 1 {
 			step.Target = parts[1]
 		}
-		// Extract quoted value after "with"
-		idx := strings.Index(line, "with ")
-		if idx >= 0 {
-			rest := strings.TrimSpace(line[idx+5:])
-			step.Value = strings.Trim(rest, "\"")
+		// Extract quoted value (between first and last double quote)
+		if start := strings.Index(line, "\""); start >= 0 {
+			if end := strings.LastIndex(line, "\""); end > start {
+				step.Value = line[start+1 : end]
+			}
 		}
 	case "submit":
 		// no args needed
@@ -2549,7 +2559,7 @@ func parseTestStep(line string) TestStep {
 			step.Value = strings.TrimSpace(line[idx+8:])
 		}
 	case "as":
-		// as user with role editor
+		// as ROLE
 		step.Target = strings.Join(parts[1:], " ")
 	}
 
@@ -2560,7 +2570,7 @@ func parseTestStep(line string) TestStep {
 //
 //	log
 //	  level: info
-//	  queries: slow > 100ms
+//	  slow-query: 100ms
 //	  requests: all
 //	  errors: all
 func (p *parserState) parseLogConfig() LogConfig {
@@ -2609,19 +2619,20 @@ func (p *parserState) parseLogConfig() LogConfig {
 				switch key {
 				case "level":
 					cfg.Level = resolveEnvValue(rawVal)
-				case "queries":
-					// "slow > 100ms"
-					if strings.Contains(rawVal, ">") {
-						ms := 0
-						fmt.Sscanf(rawVal, "slow > %dms", &ms)
-						if ms > 0 {
-							cfg.SlowQueryMs = ms
-						}
+				case "slow-query", "slow_query":
+					// "100ms" or "100" (ms assumed)
+					ms := 0
+					fmt.Sscanf(rawVal, "%dms", &ms)
+					if ms == 0 {
+						fmt.Sscanf(rawVal, "%d", &ms)
+					}
+					if ms > 0 {
+						cfg.SlowQueryMs = ms
 					}
 				case "requests":
 					cfg.LogRequests = rawVal == "all"
 				case "errors":
-					cfg.LogErrors = rawVal == "all" || rawVal == "all with stacktrace"
+					cfg.LogErrors = rawVal == "all" || strings.Contains(rawVal, "stacktrace")
 					if strings.Contains(rawVal, "stacktrace") {
 						cfg.Stacktrace = true
 					}
@@ -2893,66 +2904,6 @@ func (p *parserState) parseBroadcastNode() Node {
 	return node
 }
 
-// parseNamedQueries parses:
-//
-//	queries
-//	  active-users: SELECT u.name FROM users u WHERE u.active = true
-//	  recent-posts: SELECT * FROM post ORDER BY created DESC LIMIT 10
-func (p *parserState) parseNamedQueries() map[string]string {
-	result := make(map[string]string)
-
-	// consume "queries"
-	p.advance()
-
-	p.skipToEndOfLine()
-	p.skipNewlines()
-
-	if p.current().Type != lexer.TokenIndent {
-		return result
-	}
-	p.advance()
-
-	for !p.isEOF() {
-		if p.current().Type == lexer.TokenDedent {
-			p.advance()
-			break
-		}
-		if p.current().Type == lexer.TokenNewline {
-			p.advance()
-			continue
-		}
-
-		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-			lineNum := p.current().Line
-			name := p.advance().Value
-
-			if p.current().Type == lexer.TokenColon {
-				p.advance()
-			}
-
-			// Extract SQL from source line
-			if lineNum >= 1 && lineNum <= len(p.lines) {
-				line := p.lines[lineNum-1]
-				idx := strings.Index(line, ":")
-				if idx >= 0 {
-					result[name] = strings.TrimSpace(line[idx+1:])
-				}
-			}
-
-			p.skipToEndOfLine()
-			// Check for continuation SQL
-			cont := p.extractContinuationSQL()
-			if cont != "" {
-				result[name] += cont
-			}
-		} else {
-			p.advance()
-		}
-	}
-
-	return result
-}
-
 // resolveEnvValue handles "env VAR_NAME default VALUE" syntax.
 // Returns the resolved value.
 func resolveEnvValue(raw string) string {
@@ -3146,7 +3097,7 @@ func (p *parserState) skipRequiresClauses() {
 	}
 }
 
-// parseGeneratePDFNode parses: generate pdf from template X with data Y
+// parseGeneratePDFNode parses: generate pdf from template X data Y
 func (p *parserState) parseGeneratePDFNode() Node {
 	node := Node{Type: NodeGeneratePDF}
 
@@ -3171,11 +3122,6 @@ func (p *parserState) parseGeneratePDFNode() Node {
 	// template name
 	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword || p.current().Type == lexer.TokenString {
 		node.TemplateName = p.advance().Value
-	}
-
-	// expect "with"
-	if p.current().Type == lexer.TokenKeyword && p.current().Value == "with" {
-		p.advance()
 	}
 
 	// "data" keyword (optional)

@@ -37,12 +37,12 @@ var keywords = map[string]bool{
 	"webhook": true, "schedule": true, "job": true,
 	"model": true, "config": true, "auth": true,
 	"permissions": true, "layout": true,
-	"query": true, "queries": true, "validate": true,
+	"query": true, "validate": true,
 	"redirect": true, "on": true, "limit": true,
 	"log": true, "test": true, "translations": true,
 	"enqueue": true, "broadcast": true,
 	"send": true, "requires": true, "method": true, "fetch": true,
-	"title": true, "with": true,
+	"title": true,
 }
 
 // Field type keywords recognized inside model blocks
@@ -51,6 +51,9 @@ var fieldTypes = map[string]bool{
 	"timestamp": true, "richtext": true, "option": true,
 	"int": true, "float": true, "password": true,
 	"image": true, "phone": true,
+	"reference": true, "date": true, "url": true,
+	"decimal": true, "file": true, "tags": true,
+	"json": true, "uuid": true, "bigint": true,
 }
 
 // Field constraint keywords
@@ -58,6 +61,7 @@ var fieldConstraints = map[string]bool{
 	"required": true, "unique": true,
 	"default": true, "auto": true,
 	"min": true, "max": true,
+	"auto_update": true,
 }
 
 func IsFieldType(s string) bool {
