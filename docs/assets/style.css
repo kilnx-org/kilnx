@@ -78,11 +78,9 @@ nav {
   padding: 0 1.5rem;
 }
 
-/* -- Layout: sidebar + content -- */
+/* -- Layout: sidebar + content (full viewport width) -- */
 .layout {
-  max-width: var(--max-width);
-  margin: 0 auto;
-  padding: calc(var(--nav-height) + 2rem) 1.5rem 4rem;
+  padding: calc(var(--nav-height) + 2rem) 2rem 4rem;
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr;
   gap: 3rem;
@@ -132,7 +130,6 @@ nav {
 
 .content {
   min-width: 0;
-  max-width: 740px;
 }
 
 /* -- Content typography -- */
