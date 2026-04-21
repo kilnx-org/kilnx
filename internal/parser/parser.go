@@ -76,12 +76,13 @@ type WebhookEvent struct {
 }
 
 type Socket struct {
-	Path         string
-	Auth         bool
-	RequiresRole string
-	OnConnect    []Node
-	OnMessage    []Node
-	OnDisconnect []Node
+	Path            string
+	Auth            bool
+	RequiresRole    string
+	RequiresClauses []RequiresClause
+	OnConnect       []Node
+	OnMessage       []Node
+	OnDisconnect    []Node
 }
 
 type RateLimit struct {
@@ -107,12 +108,13 @@ type Job struct {
 }
 
 type Stream struct {
-	Path         string
-	Auth         bool
-	RequiresRole string
-	SQL          string // query to execute on each tick
-	IntervalSecs int    // polling interval in seconds
-	EventName    string // SSE event name (default: "message")
+	Path            string
+	Auth            bool
+	RequiresRole    string
+	RequiresClauses []RequiresClause
+	SQL             string // query to execute on each tick
+	IntervalSecs    int    // polling interval in seconds
+	EventName       string // SSE event name (default: "message")
 }
 
 type Permission struct {
@@ -136,6 +138,24 @@ type AuthConfig struct {
 	ForgotPath   string // forgot-password page path (default: "/forgot-password")
 	ResetPath    string // reset-password page path (default: "/reset-password")
 	AfterLogin   string // redirect after login (default: "/")
+	Superuser    string // identity of the platform operator (bypasses all role checks)
+}
+
+// RequiresClauseKind identifies the type of a single requires predicate.
+type RequiresClauseKind int
+
+const (
+	RequiresClauseAuth      RequiresClauseKind = iota // "auth" — any logged-in user
+	RequiresClauseRole                                 // named role, e.g. "admin"
+	RequiresClauseExpr                                 // expression, e.g. "current_user.plan in ['cad','full']"
+	RequiresClauseSuperuser                            // "superuser" — platform operator
+)
+
+// RequiresClause is one predicate in a comma-separated requires list.
+// All clauses are ANDed: the user must satisfy every clause.
+type RequiresClause struct {
+	Kind  RequiresClauseKind
+	Value string // role name for Role; expression text for Expr; empty for Auth/Superuser
 }
 
 type Model struct {
@@ -224,13 +244,14 @@ type Field struct {
 }
 
 type Page struct {
-	Path         string
-	Layout       string
-	Title        string
-	Auth         bool
-	RequiresRole string // "auth" = any logged in, "admin"/"editor" = specific role
-	Method       string
-	Body         []Node
+	Path            string
+	Layout          string
+	Title           string
+	Auth            bool
+	RequiresRole    string           // "auth" = any logged in, "admin"/"editor" = specific role
+	RequiresClauses []RequiresClause // full clause list; supersedes RequiresRole when non-nil
+	Method          string
+	Body            []Node
 }
 
 type NodeType int
@@ -866,13 +887,12 @@ func (p *parserState) parsePage() (Page, error) {
 					p.skipToEndOfModifier()
 				}
 			case "requires":
+				requiresLine := tok.Line
 				p.advance()
 				page.Auth = true
-				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-					page.RequiresRole = p.advance().Value
-				} else {
-					page.RequiresRole = "auth"
-				}
+				page.RequiresClauses = p.parseRequiresClauses(requiresLine)
+				page.RequiresRole = firstRoleValue(page.RequiresClauses)
+				p.skipRequiresClauses()
 			case "method":
 				p.advance()
 				if p.current().Type == lexer.TokenIdentifier {
@@ -896,6 +916,19 @@ func (p *parserState) parsePage() (Page, error) {
 	}
 
 	return page, nil
+}
+
+// firstRoleValue returns the first role/auth string from clauses for backward compat.
+func firstRoleValue(clauses []RequiresClause) string {
+	for _, c := range clauses {
+		switch c.Kind {
+		case RequiresClauseAuth:
+			return "auth"
+		case RequiresClauseRole:
+			return c.Value
+		}
+	}
+	return "auth"
 }
 
 func (p *parserState) parseBody() []Node {
@@ -1187,13 +1220,12 @@ func (p *parserState) parseAction() (Page, error) {
 					page.Method = p.advance().Value
 				}
 			case "requires":
+				requiresLine := tok.Line
 				p.advance()
 				page.Auth = true
-				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-					page.RequiresRole = p.advance().Value
-				} else {
-					page.RequiresRole = "auth"
-				}
+				page.RequiresClauses = p.parseRequiresClauses(requiresLine)
+				page.RequiresRole = firstRoleValue(page.RequiresClauses)
+				p.skipRequiresClauses()
 			default:
 				p.advance()
 			}
@@ -1314,13 +1346,12 @@ func (p *parserState) parseFragment() (Page, error) {
 	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
 		tok := p.current()
 		if (tok.Type == lexer.TokenKeyword || tok.Type == lexer.TokenIdentifier) && tok.Value == "requires" {
+			requiresLine := tok.Line
 			p.advance()
 			page.Auth = true
-			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-				page.RequiresRole = p.advance().Value
-			} else {
-				page.RequiresRole = "auth"
-			}
+			page.RequiresClauses = p.parseRequiresClauses(requiresLine)
+			page.RequiresRole = firstRoleValue(page.RequiresClauses)
+			p.skipRequiresClauses()
 		} else {
 			p.advance()
 		}
@@ -1503,6 +1534,7 @@ func (p *parserState) parseAuth() (AuthConfig, error) {
 		}
 
 		if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+			lineNum := p.current().Line
 			key := p.advance().Value
 
 			// "after login" is two words
@@ -1513,6 +1545,16 @@ func (p *parserState) parseAuth() (AuthConfig, error) {
 
 			if p.current().Type == lexer.TokenColon {
 				p.advance()
+			}
+
+			// raw line extraction preserves env var references with dots/spaces
+			rawVal := ""
+			if lineNum >= 1 && lineNum <= len(p.lines) {
+				line := p.lines[lineNum-1]
+				idx := strings.Index(line, ":")
+				if idx >= 0 {
+					rawVal = strings.TrimSpace(line[idx+1:])
+				}
 			}
 
 			var val string
@@ -1543,6 +1585,8 @@ func (p *parserState) parseAuth() (AuthConfig, error) {
 				cfg.ResetPath = val
 			case "after login":
 				cfg.AfterLogin = val
+			case "superuser":
+				cfg.Superuser = resolveEnvValue(rawVal)
 			}
 
 			p.skipToEndOfLine()
@@ -1707,13 +1751,12 @@ func (p *parserState) parseAPI() (Page, error) {
 					page.Method = p.advance().Value
 				}
 			case "requires":
+				requiresLine := tok.Line
 				p.advance()
 				page.Auth = true
-				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-					page.RequiresRole = p.advance().Value
-				} else {
-					page.RequiresRole = "auth"
-				}
+				page.RequiresClauses = p.parseRequiresClauses(requiresLine)
+				page.RequiresRole = firstRoleValue(page.RequiresClauses)
+				p.skipRequiresClauses()
 			default:
 				p.advance()
 			}
@@ -1756,13 +1799,12 @@ func (p *parserState) parseStream() (Stream, error) {
 	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
 		tok := p.current()
 		if (tok.Type == lexer.TokenKeyword || tok.Type == lexer.TokenIdentifier) && tok.Value == "requires" {
+			requiresLine := tok.Line
 			p.advance()
 			stream.Auth = true
-			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-				stream.RequiresRole = p.advance().Value
-			} else {
-				stream.RequiresRole = "auth"
-			}
+			stream.RequiresClauses = p.parseRequiresClauses(requiresLine)
+			stream.RequiresRole = firstRoleValue(stream.RequiresClauses)
+			p.skipRequiresClauses()
 		} else {
 			p.advance()
 		}
@@ -2245,14 +2287,14 @@ func (p *parserState) parseSocket() Socket {
 	}
 
 	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
-		if (p.current().Type == lexer.TokenKeyword || p.current().Type == lexer.TokenIdentifier) && p.current().Value == "requires" {
+		tok := p.current()
+		if (tok.Type == lexer.TokenKeyword || tok.Type == lexer.TokenIdentifier) && tok.Value == "requires" {
+			requiresLine := tok.Line
 			p.advance()
 			sock.Auth = true
-			if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-				sock.RequiresRole = p.advance().Value
-			} else {
-				sock.RequiresRole = "auth"
-			}
+			sock.RequiresClauses = p.parseRequiresClauses(requiresLine)
+			sock.RequiresRole = firstRoleValue(sock.RequiresClauses)
+			p.skipRequiresClauses()
 		} else {
 			p.advance()
 		}
@@ -2935,6 +2977,173 @@ func resolveEnvValue(raw string) string {
 	}
 
 	return strings.Trim(raw, "\"")
+}
+
+// --- requires clause helpers ---
+
+// parseRequiresClauses reads the raw source line at lineNum to extract the full
+// requires text (preserving dots and single quotes the lexer would drop), then
+// parses it into a []RequiresClause.
+func (p *parserState) parseRequiresClauses(lineNum int) []RequiresClause {
+	text := p.extractRequiresText(lineNum)
+	if text == "" {
+		return []RequiresClause{{Kind: RequiresClauseAuth}}
+	}
+	segments := splitClauseText(text)
+	clauses := make([]RequiresClause, 0, len(segments))
+	for _, seg := range segments {
+		clauses = append(clauses, parseOneClause(seg))
+	}
+	return clauses
+}
+
+// extractRequiresText returns the raw text that follows the `requires` keyword
+// on source line lineNum, stopping before any modifier keyword (method, layout,
+// title) at bracket depth 0, and before any inline comment.
+func (p *parserState) extractRequiresText(lineNum int) string {
+	if lineNum < 1 || lineNum > len(p.lines) {
+		return ""
+	}
+	rawLine := p.lines[lineNum-1]
+	lower := strings.ToLower(rawLine)
+	idx := strings.Index(lower, "requires")
+	if idx < 0 {
+		return ""
+	}
+	rest := rawLine[idx+len("requires"):]
+	if ci := strings.Index(rest, "//"); ci >= 0 {
+		rest = rest[:ci]
+	}
+	return strings.TrimSpace(requiresClauseEnd(rest))
+}
+
+// requiresClauseEnd walks s (text after "requires") and returns the portion
+// that belongs to the requires clauses, stopping before a modifier keyword
+// (method, layout, title) at bracket/quote depth 0.
+func requiresClauseEnd(s string) string {
+	depth := 0
+	inSingle := false
+	inDouble := false
+	modifiers := []string{"method", "layout", "title"}
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if inDouble {
+			if ch == '"' {
+				inDouble = false
+			}
+			continue
+		}
+		if inSingle {
+			if ch == '\'' {
+				inSingle = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inDouble = true
+		case '\'':
+			inSingle = true
+		case '[', '(':
+			depth++
+		case ']', ')':
+			depth--
+		}
+		if depth != 0 {
+			continue
+		}
+		// at depth 0 check for modifier boundary
+		for _, mod := range modifiers {
+			if i+len(mod) > len(s) {
+				continue
+			}
+			sub := strings.ToLower(s[i : i+len(mod)])
+			if sub != mod {
+				continue
+			}
+			preceded := i == 0 || s[i-1] == ' ' || s[i-1] == '\t'
+			followed := i+len(mod) >= len(s) || s[i+len(mod)] == ' ' || s[i+len(mod)] == '\t'
+			if preceded && followed {
+				return s[:i]
+			}
+		}
+	}
+	return s
+}
+
+// splitClauseText splits a requires text on commas at bracket/quote depth 0.
+func splitClauseText(text string) []string {
+	var segments []string
+	depth := 0
+	inSingle := false
+	inDouble := false
+	start := 0
+	for i := 0; i < len(text); i++ {
+		ch := text[i]
+		if inDouble {
+			if ch == '"' {
+				inDouble = false
+			}
+			continue
+		}
+		if inSingle {
+			if ch == '\'' {
+				inSingle = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inDouble = true
+		case '\'':
+			inSingle = true
+		case '[', '(':
+			depth++
+		case ']', ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				if seg := strings.TrimSpace(text[start:i]); seg != "" {
+					segments = append(segments, seg)
+				}
+				start = i + 1
+			}
+		}
+	}
+	if tail := strings.TrimSpace(text[start:]); tail != "" {
+		segments = append(segments, tail)
+	}
+	return segments
+}
+
+// parseOneClause classifies a single requires segment.
+func parseOneClause(s string) RequiresClause {
+	s = strings.TrimSpace(s)
+	switch strings.ToLower(s) {
+	case "", "auth":
+		return RequiresClause{Kind: RequiresClauseAuth}
+	case "superuser":
+		return RequiresClause{Kind: RequiresClauseSuperuser}
+	}
+	if strings.HasPrefix(s, ":") {
+		return RequiresClause{Kind: RequiresClauseExpr, Value: strings.TrimPrefix(s, ":")}
+	}
+	return RequiresClause{Kind: RequiresClauseRole, Value: s}
+}
+
+// skipRequiresClauses advances the token stream past clause tokens, stopping
+// before a modifier keyword (method, layout, title) or end of line.
+func (p *parserState) skipRequiresClauses() {
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
+		tok := p.current()
+		if tok.Type == lexer.TokenKeyword || tok.Type == lexer.TokenIdentifier {
+			v := tok.Value
+			if v == "method" || v == "layout" || v == "title" {
+				return
+			}
+		}
+		p.advance()
+	}
 }
 
 // parseGeneratePDFNode parses: generate pdf from template X with data Y

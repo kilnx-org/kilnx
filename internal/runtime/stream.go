@@ -22,7 +22,12 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request, stream par
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if stream.RequiresRole != "" && stream.RequiresRole != "auth" {
+		if len(stream.RequiresClauses) > 0 {
+			if !s.evalRequiresClauses(stream.RequiresClauses, session) {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		} else if stream.RequiresRole != "" && stream.RequiresRole != "auth" {
 			app := s.getApp()
 			if !s.hasPermission(session.Role, stream.RequiresRole, app.Permissions) {
 				http.Error(w, "Forbidden", http.StatusForbidden)
