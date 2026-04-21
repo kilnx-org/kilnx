@@ -152,7 +152,7 @@ func cmdRun(filename string) error {
 
 	// Auto-migrate if models exist
 	if len(app.Models) > 0 {
-		stmts, err := db.Migrate(app.Models)
+		stmts, err := db.Migrate(app.Models, app.CustomManifests)
 		if err != nil {
 			return err
 		}
@@ -219,7 +219,7 @@ func cmdMigrate(filename string, flags []string) error {
 		}
 
 		// Show pending changes
-		pending, err := db.PlanMigration(app.Models)
+		pending, err := db.PlanMigration(app.Models, app.CustomManifests)
 		if err != nil {
 			return err
 		}
@@ -236,7 +236,7 @@ func cmdMigrate(filename string, flags []string) error {
 	}
 
 	if dryRun {
-		stmts, err := db.PlanMigration(app.Models)
+		stmts, err := db.PlanMigration(app.Models, app.CustomManifests)
 		if err != nil {
 			return err
 		}
@@ -251,7 +251,7 @@ func cmdMigrate(filename string, flags []string) error {
 		return nil
 	}
 
-	stmts, err := db.Migrate(app.Models)
+	stmts, err := db.Migrate(app.Models, app.CustomManifests)
 	if err != nil {
 		return err
 	}
@@ -319,7 +319,7 @@ func cmdTest(filename string) error {
 	}()
 
 	if len(app.Models) > 0 {
-		stmts, err := db.Migrate(app.Models)
+		stmts, err := db.Migrate(app.Models, app.CustomManifests)
 		if err != nil {
 			return err
 		}

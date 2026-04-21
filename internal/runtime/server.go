@@ -434,6 +434,8 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 			if model := findModel(app.Models, node.SourceModel); model != nil {
 				if manifest := s.resolveManifest(model, app, ctx.currentUser, pathParams, r); manifest != nil {
 					ctx.customManifests[node.SourceModel] = manifest
+					rows = expandColumnModeFields(rows, manifest)
+					ctx.queries[queryName] = rows
 					if len(rows) > 0 {
 						ctx.queries[queryName+".custom"] = buildCustomIterRows(rows[0], manifest)
 					}
@@ -770,6 +772,8 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 					if model := findModel(app.Models, node.SourceModel); model != nil {
 						if manifest := s.resolveManifest(model, app, ctx.currentUser, pathParams, r); manifest != nil {
 							ctx.customManifests[node.SourceModel] = manifest
+							rows = expandColumnModeFields(rows, manifest)
+							ctx.queries[queryName] = rows
 							if len(rows) > 0 {
 								ctx.queries[queryName+".custom"] = buildCustomIterRows(rows[0], manifest)
 							}
@@ -837,6 +841,8 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 					if model := findModel(app.Models, node.SourceModel); model != nil {
 						if manifest := s.resolveManifest(model, app, nil, params, nil); manifest != nil {
 							ctx.customManifests[node.SourceModel] = manifest
+							rows = expandColumnModeFields(rows, manifest)
+							ctx.queries[name] = rows
 							if len(rows) > 0 {
 								ctx.queries[name+".custom"] = buildCustomIterRows(rows[0], manifest)
 							}
@@ -1602,12 +1608,33 @@ func buildCustomIterRows(row database.Row, manifest *parser.CustomFieldManifest)
 		if label == "" {
 			label = f.Name
 		}
+		val := values[f.Name]
+		if f.Mode == parser.CustomFieldModeColumn {
+			val = row[f.Name]
+		}
 		result = append(result, database.Row{
 			"name":  f.Name,
-			"value": values[f.Name],
+			"value": val,
 			"label": label,
 			"kind":  string(f.Kind),
 		})
 	}
 	return result
+}
+
+// expandColumnModeFields adds "custom.<field>" aliases for column-mode manifest fields
+// so that {q.custom.field} template access works the same as JSON-mode fields.
+func expandColumnModeFields(rows []database.Row, manifest *parser.CustomFieldManifest) []database.Row {
+	for i, row := range rows {
+		for _, f := range manifest.Fields {
+			if f.Mode != parser.CustomFieldModeColumn {
+				continue
+			}
+			if val, ok := row[f.Name]; ok {
+				row["custom."+f.Name] = val
+			}
+		}
+		rows[i] = row
+	}
+	return rows
 }

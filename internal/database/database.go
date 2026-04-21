@@ -109,7 +109,13 @@ func (db *DB) Conn() *sql.DB {
 
 // PlanMigration compares models with the current database state and returns
 // the SQL statements that would be executed, without applying them.
-func (db *DB) PlanMigration(models []parser.Model) ([]string, error) {
+// Pass a CustomManifests map as the optional second argument to include
+// column-mode custom field columns in the plan.
+func (db *DB) PlanMigration(models []parser.Model, manifests ...map[string]*parser.CustomFieldManifest) ([]string, error) {
+	var cm map[string]*parser.CustomFieldManifest
+	if len(manifests) > 0 {
+		cm = manifests[0]
+	}
 	var stmts []string
 
 	for _, model := range models {
@@ -123,9 +129,9 @@ func (db *DB) PlanMigration(models []parser.Model) ([]string, error) {
 		}
 
 		if !exists {
-			stmts = append(stmts, db.generateCreateTable(model))
+			stmts = append(stmts, db.generateCreateTable(model, cm))
 		} else {
-			alterStmts, err := db.planExistingTable(model)
+			alterStmts, err := db.planExistingTable(model, cm)
 			if err != nil {
 				return stmts, err
 			}
@@ -137,8 +143,10 @@ func (db *DB) PlanMigration(models []parser.Model) ([]string, error) {
 }
 
 // Migrate compares models with the current database state and applies changes.
-func (db *DB) Migrate(models []parser.Model) ([]string, error) {
-	stmts, err := db.PlanMigration(models)
+// Pass a CustomManifests map as the optional second argument to include
+// column-mode custom field columns.
+func (db *DB) Migrate(models []parser.Model, manifests ...map[string]*parser.CustomFieldManifest) ([]string, error) {
+	stmts, err := db.PlanMigration(models, manifests...)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +238,7 @@ func (db *DB) tableExists(name string) (bool, error) {
 }
 
 // planExistingTable returns ALTER TABLE statements needed without executing them
-func (db *DB) planExistingTable(model parser.Model) ([]string, error) {
+func (db *DB) planExistingTable(model parser.Model, cm map[string]*parser.CustomFieldManifest) ([]string, error) {
 	var stmts []string
 
 	existing, err := db.getColumns(model.Name)
@@ -263,6 +271,22 @@ func (db *DB) planExistingTable(model parser.Model) ([]string, error) {
 			}
 			stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"custom\" %s", model.Name, colType))
 		}
+		// column-mode custom fields become real columns
+		if manifest, ok := cm[model.Name]; ok {
+			for _, f := range manifest.Fields {
+				if f.Mode != parser.CustomFieldModeColumn {
+					continue
+				}
+				if !isValidIdentifier(f.Name) {
+					continue
+				}
+				if _, ok := existing[f.Name]; ok {
+					continue
+				}
+				sqlType := customKindToSQL(f.Kind, db.dialect.DriverName() == "pgx")
+				stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"%s\" %s", model.Name, f.Name, sqlType))
+			}
+		}
 	}
 
 	return stmts, nil
@@ -294,7 +318,7 @@ func (db *DB) getColumns(table string) (map[string]bool, error) {
 	return columns, nil
 }
 
-func (db *DB) generateCreateTable(model parser.Model) string {
+func (db *DB) generateCreateTable(model parser.Model, cm map[string]*parser.CustomFieldManifest) string {
 	var cols []string
 
 	cols = append(cols, db.dialect.AutoIncrementPK())
@@ -310,9 +334,47 @@ func (db *DB) generateCreateTable(model parser.Model) string {
 		} else {
 			cols = append(cols, `"custom" TEXT`)
 		}
+		// column-mode custom fields become real columns
+		if manifest, ok := cm[model.Name]; ok {
+			isPostgres := db.dialect.DriverName() == "pgx"
+			// build set of names already used by model fields + reserved names
+			usedNames := map[string]bool{"id": true, "custom": true}
+			for _, field := range model.Fields {
+				usedNames[fieldToColumnName(field)] = true
+			}
+			for _, f := range manifest.Fields {
+				if f.Mode != parser.CustomFieldModeColumn || !isValidIdentifier(f.Name) {
+					continue
+				}
+				if usedNames[f.Name] {
+					continue
+				}
+				cols = append(cols, fmt.Sprintf(`"%s" %s`, f.Name, customKindToSQL(f.Kind, isPostgres)))
+			}
+		}
 	}
 
 	return fmt.Sprintf("CREATE TABLE \"%s\" (\n  %s\n)", model.Name, strings.Join(cols, ",\n  "))
+}
+
+// customKindToSQL maps a manifest field kind to a SQL column type.
+func customKindToSQL(kind parser.CustomFieldKind, isPostgres bool) string {
+	switch kind {
+	case parser.CustomFieldKindNumber:
+		return "REAL"
+	case parser.CustomFieldKindBool:
+		if isPostgres {
+			return "BOOLEAN"
+		}
+		return "INTEGER"
+	case parser.CustomFieldKindReference:
+		if isPostgres {
+			return "BIGINT"
+		}
+		return "INTEGER"
+	default:
+		return "TEXT"
+	}
 }
 
 func (db *DB) fieldToColumnDef(f parser.Field) string {

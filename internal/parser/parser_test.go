@@ -1126,3 +1126,47 @@ field region
 		t.Error("expected required=true for region")
 	}
 }
+
+func TestParseManifestColumnModeAndReference(t *testing.T) {
+	src := `field revenue
+  kind: number
+  mode: column
+  label: "Revenue"
+
+field client
+  kind: reference company
+  mode: column
+  label: "Client"
+
+field notes
+  kind: text
+  label: "Notes"`
+	manifest, err := ParseManifest(src, "deal")
+	if err != nil {
+		t.Fatalf("ParseManifest error: %v", err)
+	}
+	if len(manifest.Fields) != 3 {
+		t.Fatalf("expected 3 fields, got %d", len(manifest.Fields))
+	}
+	rev := manifest.Fields[0]
+	if rev.Mode != CustomFieldModeColumn {
+		t.Errorf("revenue: expected mode=column, got %q", rev.Mode)
+	}
+	if rev.Kind != CustomFieldKindNumber {
+		t.Errorf("revenue: expected kind=number, got %q", rev.Kind)
+	}
+	client := manifest.Fields[1]
+	if client.Kind != CustomFieldKindReference {
+		t.Errorf("client: expected kind=reference, got %q", client.Kind)
+	}
+	if client.Reference != "company" {
+		t.Errorf("client: expected reference=company, got %q", client.Reference)
+	}
+	if client.Mode != CustomFieldModeColumn {
+		t.Errorf("client: expected mode=column, got %q", client.Mode)
+	}
+	notes := manifest.Fields[2]
+	if notes.Mode != CustomFieldModeJSON {
+		t.Errorf("notes: expected mode=JSON (empty), got %q", notes.Mode)
+	}
+}
