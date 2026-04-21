@@ -29,11 +29,11 @@ const (
 
 func categoryOf(ft parser.FieldType) TypeCategory {
 	switch ft {
-	case parser.FieldInt, parser.FieldFloat:
+	case parser.FieldInt, parser.FieldFloat, parser.FieldDecimal, parser.FieldBigInt:
 		return CategoryNumeric
 	case parser.FieldBool:
 		return CategoryBool
-	case parser.FieldTimestamp:
+	case parser.FieldTimestamp, parser.FieldDate:
 		return CategoryTime
 	default:
 		return CategoryText
@@ -161,9 +161,14 @@ func validateMinMax(val string, ft parser.FieldType) error {
 		if _, err := strconv.ParseFloat(val, 64); err != nil {
 			return fmt.Errorf("expected number for float field")
 		}
-	case parser.FieldText, parser.FieldEmail, parser.FieldPassword, parser.FieldPhone:
+	case parser.FieldText, parser.FieldEmail, parser.FieldPassword, parser.FieldPhone,
+		parser.FieldURL, parser.FieldDecimal, parser.FieldJSON, parser.FieldUUID:
 		if n, err := strconv.Atoi(val); err != nil || n < 0 {
 			return fmt.Errorf("expected non-negative integer (string length)")
+		}
+	case parser.FieldBigInt:
+		if _, err := strconv.ParseInt(val, 10, 64); err != nil {
+			return fmt.Errorf("expected integer for bigint field")
 		}
 	}
 	return nil

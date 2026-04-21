@@ -643,7 +643,7 @@ func TestRateLimitDefaults(t *testing.T) {
 func TestTestBlock(t *testing.T) {
 	src := `test "user can create post"
   visit /posts/new
-  fill title with "Test Post"
+  fill title "Test Post"
   submit
   expect page /posts contains "Test Post"`
 
@@ -728,9 +728,8 @@ func TestTranslations(t *testing.T) {
 }
 
 func TestNamedQueries(t *testing.T) {
-	src := `queries
-  active-users: SELECT name FROM user WHERE active = true
-  recent-posts: SELECT * FROM post ORDER BY created DESC LIMIT 10`
+	src := `query active-users: SELECT name FROM user WHERE active = true
+query recent-posts: SELECT * FROM post ORDER BY created DESC LIMIT 10`
 
 	app := parse(t, src)
 
@@ -945,8 +944,7 @@ func TestPageWithQueryAndHTML(t *testing.T) {
 }
 
 func TestNamedQueryResolution(t *testing.T) {
-	src := `queries
-  all-users: SELECT * FROM user
+	src := `query all-users: SELECT * FROM user
 
 page /users
   query users: all-users`
@@ -966,7 +964,7 @@ page /users
 
 func TestTestBlockWithAs(t *testing.T) {
 	src := `test "admin access"
-  as user with role admin
+  as admin
   visit /admin`
 
 	app := parse(t, src)

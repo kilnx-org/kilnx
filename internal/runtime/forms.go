@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -88,7 +89,7 @@ func validateFormData(modelName string, app *parser.App, formData map[string]str
 	}
 
 	for _, field := range model.Fields {
-		if field.Auto || field.Type == parser.FieldReference {
+		if field.Auto || field.AutoUpdate || field.Type == parser.FieldReference {
 			continue
 		}
 
@@ -102,6 +103,52 @@ func validateFormData(modelName string, app *parser.App, formData map[string]str
 		if field.Type == parser.FieldEmail && val != "" {
 			if !strings.Contains(val, "@") || !strings.Contains(val, ".") {
 				errors = append(errors, "Invalid email address")
+			}
+		}
+
+		if field.Type == parser.FieldURL && val != "" {
+			if u, err := url.Parse(val); err != nil || u.Scheme == "" || u.Host == "" {
+				errors = append(errors, "Invalid URL")
+			}
+		}
+
+		if field.Type == parser.FieldDate && val != "" {
+			if _, err := time.Parse("2006-01-02", val); err != nil {
+				errors = append(errors, "Invalid date (expected YYYY-MM-DD)")
+			}
+		}
+
+		if field.Type == parser.FieldDecimal && val != "" {
+			if _, err := strconv.ParseFloat(val, 64); err != nil {
+				errors = append(errors, "Invalid decimal number")
+			}
+		}
+
+		if field.Type == parser.FieldBigInt && val != "" {
+			if _, err := strconv.ParseInt(val, 10, 64); err != nil {
+				errors = append(errors, "Invalid integer")
+			}
+		}
+
+		if field.Type == parser.FieldJSON && val != "" {
+			var tmp interface{}
+			if err := json.Unmarshal([]byte(val), &tmp); err != nil {
+				errors = append(errors, "Invalid JSON")
+			}
+		}
+
+		if field.Type == parser.FieldTags && len(field.Options) > 0 && val != "" {
+			allowed := make(map[string]bool, len(field.Options))
+			for _, opt := range field.Options {
+				allowed[opt] = true
+			}
+			parts := strings.Split(val, ",")
+			for _, part := range parts {
+				tag := strings.TrimSpace(part)
+				if tag != "" && !allowed[tag] {
+					label := strings.ToUpper(field.Name[:1]) + field.Name[1:]
+					errors = append(errors, fmt.Sprintf("%s contains invalid tag: %s", label, tag))
+				}
 			}
 		}
 

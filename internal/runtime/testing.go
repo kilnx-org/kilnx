@@ -47,17 +47,14 @@ func runSingleTest(test parser.Test, app *parser.App, db *database.DB, baseURL s
 	for _, step := range test.Steps {
 		switch step.Action {
 		case "as":
-			// "as user with role editor" -> register + login a test user
+			// "as ROLE" -> register + login a test user with given role
 			if app.Auth == nil {
 				fmt.Printf("    no auth config, skipping 'as' step\n")
 				continue
 			}
-			role := "viewer"
-			if strings.Contains(step.Target, "role ") {
-				parts := strings.SplitAfter(step.Target, "role ")
-				if len(parts) > 1 {
-					role = strings.TrimSpace(parts[1])
-				}
+			role := strings.TrimSpace(step.Target)
+			if role == "" {
+				role = "viewer"
 			}
 
 			email := fmt.Sprintf("test_%s@kilnx.test", role)
