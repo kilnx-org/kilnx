@@ -459,10 +459,20 @@ var keywordDocs = map[string]string{
 	"option":      "Enumeration type. Syntax: `field: option [value1, value2, value3]`.",
 	"image":       "Image file path. Used with upload handling.",
 	"phone":       "Phone number field with format validation.",
+	"reference":   "Foreign key reference to another model. Syntax: `field: ModelName`. Stored as `field_id` INTEGER column.",
+	"date":        "Date-only type (no time component). Use `auto` for today's date on INSERT. Maps to TEXT/DATE.",
+	"url":         "URL string with format validation (requires scheme and host). Maps to TEXT.",
+	"decimal":     "Fixed-point decimal for precise numbers such as money. Maps to TEXT/NUMERIC.",
+	"file":        "Generic file path for any uploaded file. Maps to TEXT.",
+	"tags":        "Multi-value selection stored as comma-separated values. Syntax: `field: tags [val1, val2]` for constrained values.",
+	"json":        "Arbitrary JSON blob. Maps to TEXT/JSONB.",
+	"uuid":        "UUID v4. Use `auto` to generate on INSERT. Maps to TEXT/UUID.",
+	"bigint":      "64-bit integer. Maps to INTEGER/BIGINT.",
 	"required":    "Field constraint: value must be non-null.",
 	"unique":      "Field constraint: value must be unique across all rows.",
 	"default":     "Field constraint: provides a default value if none specified. Example: `status: text default \"active\"`.",
-	"auto":        "Field constraint: auto-generated value. On timestamp fields: current time on INSERT. On text fields with `default`: uses the default.",
+	"auto":        "Field constraint: auto-generated value. On timestamp fields: current time on INSERT. On uuid fields: UUID v4 on INSERT.",
+	"auto_update": "Field constraint: auto-set field to current timestamp on every UPDATE. Creates a DB trigger. Use on timestamp fields for updated_at pattern.",
 	"min":         "Field constraint: minimum value or length. Example: `name: text required min 2`.",
 	"max":         "Field constraint: maximum value or length. Example: `bio: text max 500`.",
 }
@@ -475,9 +485,9 @@ Kilnx is a declarative backend language that compiles .kilnx source files to a s
 
 Top-level blocks: config, model, auth, permissions, layout, page, action, fragment, stream, socket, api, webhook, job, schedule, test
 
-Field types: text, email, int, float, bool, timestamp, richtext, option, password, image, phone
+Field types: text, email, int, float, bool, timestamp, date, richtext, option, password, image, phone, reference, url, decimal, file, tags, json, uuid, bigint
 
-Constraints: required, unique, default, auto, min, max
+Constraints: required, unique, default, auto, auto_update, min, max
 
 Body keywords: query, validate, redirect, html, send, enqueue, broadcast, on, requires, fetch, respond
 

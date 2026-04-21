@@ -277,7 +277,7 @@ POST/PUT/DELETE route that mutates data.
 ```kilnx
 action /users/:id/archive method POST requires auth
   query: update users set archived = true where id = :id
-  respond fragment user-card with query:
+  respond fragment user-card query:
     select name, email from users where id = :id
 ```
 
@@ -399,24 +399,23 @@ job generate-report
   query data: select * from order
               where created > :start_date
               and created < :end_date
-  generate pdf from template report with data
+  generate pdf from template report data
   send email to :requested_by
     template: report-ready
     attach: generated pdf
     subject: "Your report is ready"
 ```
 
-### query / queries
+### query
 
-SQL inline or named. Queries can be defined at the top of a file and referenced by name.
+SQL inline or named. A top-level `query <name>: SQL` defines a reusable named query that can be referenced by other blocks. Inside a page, action, fragment, or api body, `query <name>: SQL` binds the result for template interpolation.
 
 ```kilnx
-queries
-  active-users: select u.name, u.email, count(o.id) as orders
-                from users u
-                left join orders o on o.user_id = u.id
-                where u.active = true
-                group by u.id
+query active-users: select u.name, u.email, count(o.id) as orders
+                    from users u
+                    left join orders o on o.user_id = u.id
+                    where u.active = true
+                    group by u.id
 
 page /users
   query users: active-users
@@ -521,9 +520,9 @@ Observability built in.
 ```kilnx
 log
   level: env LOG_LEVEL default info
-  queries: slow > 100ms
+  slow-query: 100ms
   requests: all
-  errors: all with stacktrace
+  errors: all stacktrace
 ```
 
 ### test
@@ -532,10 +531,10 @@ Declarative tests in the same language.
 
 ```kilnx
 test "user can create post"
-  as user with role editor
+  as editor
   visit /posts/new
-  fill title with "Test Post"
-  fill body with "Content here"
+  fill title "Test Post"
+  fill body "Content here"
   submit
   expect page /posts contains "Test Post"
   expect query: select count(*) from post
@@ -573,11 +572,11 @@ action /reports/generate method POST requires admin
   validate
     start_date: required, is date
     end_date: required, is date
-  enqueue generate-report with
+  enqueue generate-report
     start_date: :start_date
     end_date: :end_date
     requested_by: :current_user.email
-  respond fragment ".reports" with
+  respond fragment ".reports"
     alert success "Report is being generated"
 ```
 
@@ -671,7 +670,7 @@ action /tasks/create method POST requires auth
 
 action /tasks/:id/delete method POST requires auth
   query: delete from task where id = :id and owner = :current_user.id
-  respond fragment ".task-list" with query:
+  respond fragment ".task-list" query:
     select id, title, done from task
     where owner = :current_user.id
     order by created desc

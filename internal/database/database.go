@@ -142,6 +142,12 @@ func (db *DB) PlanMigration(models []parser.Model, manifests ...map[string]*pars
 			isPostgres := db.dialect.DriverName() == "pgx"
 			stmts = append(stmts, fieldDefsTableDDL(model.Name, isPostgres))
 		}
+
+		for _, field := range model.Fields {
+			if field.AutoUpdate {
+				stmts = append(stmts, db.dialect.AutoUpdateTriggerDDL(model.Name, field.Name)...)
+			}
+		}
 	}
 
 	return stmts, nil

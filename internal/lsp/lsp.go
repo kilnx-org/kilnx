@@ -886,7 +886,7 @@ var topLevelKeywords = []keywordInfo{
 	{"webhook", "External event receiver"},
 	{"schedule", "Timed background task"},
 	{"job", "Async background job"},
-	{"queries", "Named reusable SQL queries"},
+	{"query", "Named reusable SQL query (top-level)"},
 	{"test", "Declarative test case"},
 	{"translations", "i18n translation strings"},
 	{"log", "Logging configuration"},

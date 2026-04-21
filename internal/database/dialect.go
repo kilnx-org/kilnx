@@ -52,4 +52,8 @@ type Dialect interface {
 	// InternalTableDDL returns CREATE TABLE IF NOT EXISTS statements
 	// for Kilnx internal tables (sessions, password_resets, migrations, jobs).
 	InternalTableDDL() []string
+
+	// AutoUpdateTriggerDDL returns statements that create a trigger to
+	// automatically update the given field to the current timestamp on UPDATE.
+	AutoUpdateTriggerDDL(table, field string) []string
 }

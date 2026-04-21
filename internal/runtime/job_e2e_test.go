@@ -21,7 +21,8 @@ page /
     <h1>Home</h1>
 
 action /enqueue method POST
-  enqueue process-task with title: :title
+  enqueue process-task
+    title: :title
   redirect /
 `
 	baseURL, cleanup := startTestServer(t, src)

@@ -43,7 +43,10 @@ func (SqliteDialect) AutoIncrementPK() string {
 func (d SqliteDialect) FieldToSQLType(f parser.Field) string {
 	switch f.Type {
 	case parser.FieldText, parser.FieldEmail, parser.FieldRichtext,
-		parser.FieldPassword, parser.FieldPhone, parser.FieldImage:
+		parser.FieldPassword, parser.FieldPhone, parser.FieldImage,
+		parser.FieldURL, parser.FieldDecimal, parser.FieldFile,
+		parser.FieldTags, parser.FieldJSON, parser.FieldUUID,
+		parser.FieldOption, parser.FieldDate:
 		return "TEXT"
 	case parser.FieldBool:
 		return "INTEGER"
@@ -53,9 +56,7 @@ func (d SqliteDialect) FieldToSQLType(f parser.Field) string {
 		return "INTEGER"
 	case parser.FieldFloat:
 		return "REAL"
-	case parser.FieldOption:
-		return "TEXT"
-	case parser.FieldReference:
+	case parser.FieldReference, parser.FieldBigInt:
 		return "INTEGER"
 	default:
 		return "TEXT"
@@ -65,6 +66,12 @@ func (d SqliteDialect) FieldToSQLType(f parser.Field) string {
 func (d SqliteDialect) FieldToDefault(f parser.Field) string {
 	if f.Auto && f.Type == parser.FieldTimestamp {
 		return " DEFAULT CURRENT_TIMESTAMP"
+	}
+	if f.Auto && f.Type == parser.FieldDate {
+		return " DEFAULT (date('now'))"
+	}
+	if f.Auto && f.Type == parser.FieldUUID {
+		return ` DEFAULT (lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || substr(lower(hex(randomblob(2))),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(lower(hex(randomblob(2))),2) || '-' || lower(hex(randomblob(6))))`
 	}
 	if f.Auto && f.Type == parser.FieldBool {
 		return " DEFAULT 0"
@@ -91,6 +98,15 @@ func (d SqliteDialect) FieldToDefault(f parser.Field) string {
 
 func (SqliteDialect) BoolTrue() string  { return "1" }
 func (SqliteDialect) BoolFalse() string { return "0" }
+
+func (SqliteDialect) AutoUpdateTriggerDDL(table, field string) []string {
+	return []string{
+		fmt.Sprintf(
+			`CREATE TRIGGER IF NOT EXISTS "_kilnx_upd_%s_%s" AFTER UPDATE ON "%s" BEGIN UPDATE "%s" SET "%s" = CURRENT_TIMESTAMP WHERE id = NEW.id; END`,
+			table, field, table, table, field,
+		),
+	}
+}
 
 func (SqliteDialect) InternalTableDDL() []string {
 	return []string{
