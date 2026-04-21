@@ -667,6 +667,16 @@ func checkTableColumnRefs(app *parser.App, schema *Schema) []Diagnostic {
 // customFieldRefRe matches {queryName.custom.fieldName} in HTML content.
 var customFieldRefRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\.custom\.([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 
+// isDynamicManifest reports whether a model uses a dynamic manifest path.
+func isDynamicManifest(app *parser.App, modelName string) bool {
+	for _, m := range app.Models {
+		if m.Name == modelName {
+			return strings.Contains(m.CustomFieldsFile, "{")
+		}
+	}
+	return false
+}
+
 // checkCustomFieldRefs validates {q.custom.fieldName} template references
 // against the corresponding model's custom field manifest.
 func checkCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
@@ -689,6 +699,10 @@ func checkCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
 				continue // unknown query already reported by checkTemplateInterpolations
 			}
 
+			// Skip validation for models with dynamic manifest paths
+			if isDynamicManifest(app, modelName) {
+				continue
+			}
 			manifest, ok := app.CustomManifests[modelName]
 			if !ok {
 				diags = append(diags, Diagnostic{
@@ -758,6 +772,10 @@ func checkSQLCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
 	scanSQL := func(nodes []parser.Node, context string) {
 		for _, n := range nodes {
 			if n.Type != parser.NodeQuery || n.SQL == "" || n.SourceModel == "" {
+				continue
+			}
+			// Skip validation for models with dynamic manifest paths
+			if isDynamicManifest(app, n.SourceModel) {
 				continue
 			}
 			manifest, ok := app.CustomManifests[n.SourceModel]

@@ -145,9 +145,10 @@ type Model struct {
 	// field named after the tenant model (e.g. `tenant: org` adds an
 	// `org_id` column) and the runtime injects a WHERE filter on SELECT
 	// queries against this table.
-	Tenant           string
-	Fields           []Field
-	CustomFieldsFile string // path to *_fields.kilnx manifest; empty if unused
+	Tenant               string
+	Fields               []Field
+	CustomFieldsFile     string // path to *_fields.kilnx manifest (may contain {placeholder})
+	CustomFieldsFallback string // fallback manifest path used when dynamic file not found
 }
 
 // CustomFieldKind is the type of a runtime-extensible custom field.
@@ -578,7 +579,7 @@ func (p *parserState) parseModel(app *App) (Model, error) {
 		// custom fields from "<file>" is a model-level meta directive.
 		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) &&
 			tok.Value == "custom" && p.peekIsCustomFieldsDirective() {
-			path, err := p.parseCustomFieldsDirective()
+			path, fallback, err := p.parseCustomFieldsDirective()
 			if err != nil {
 				return model, err
 			}
@@ -586,6 +587,7 @@ func (p *parserState) parseModel(app *App) (Model, error) {
 				return model, fmt.Errorf("line %d: model '%s' already has a custom fields directive", tok.Line, model.Name)
 			}
 			model.CustomFieldsFile = path
+			model.CustomFieldsFallback = fallback
 			continue
 		}
 
@@ -678,20 +680,29 @@ func (p *parserState) peekIsCustomFieldsDirective() bool {
 		t3.Type == lexer.TokenString
 }
 
-// parseCustomFieldsDirective parses `custom fields from "<path>"` and
-// returns the manifest file path. Caller verified with peekIsCustomFieldsDirective.
-func (p *parserState) parseCustomFieldsDirective() (string, error) {
+// parseCustomFieldsDirective parses `custom fields from "<path>" [or "<fallback>"]`
+// and returns (path, fallback, error). Caller verified with peekIsCustomFieldsDirective.
+func (p *parserState) parseCustomFieldsDirective() (string, string, error) {
 	p.advance() // consume "custom"
 	p.advance() // consume "fields"
 	p.advance() // consume "from"
 	pathTok := p.advance()
 	if pathTok.Type != lexer.TokenString {
-		return "", fmt.Errorf("line %d: expected file path string after 'custom fields from'", pathTok.Line)
+		return "", "", fmt.Errorf("line %d: expected file path string after 'custom fields from'", pathTok.Line)
+	}
+	path := pathTok.Value
+	fallback := ""
+	// Optional: or "<fallback>"
+	if !p.isEOF() && p.current().Type == lexer.TokenIdentifier && p.current().Value == "or" {
+		p.advance() // consume "or"
+		if p.current().Type == lexer.TokenString {
+			fallback = p.advance().Value
+		}
 	}
 	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
 		p.advance()
 	}
-	return pathTok.Value, nil
+	return path, fallback, nil
 }
 
 func (p *parserState) parseField(app *App) (Field, error) {

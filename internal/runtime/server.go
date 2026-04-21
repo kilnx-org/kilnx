@@ -24,17 +24,18 @@ var staticFS embed.FS
 var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}`)
 
 type Server struct {
-	app          *parser.App
-	db           *database.DB
-	sessions     *SessionStore
-	jobQueue     *JobQueue
-	rateLimiter  *RateLimiter
-	logger       *Logger
-	i18n         *I18n
-	tenants      TenantMap // models with a `tenant: <model>` directive
-	mu           sync.RWMutex
-	port         int
-	scheduleStop chan struct{}
+	app           *parser.App
+	db            *database.DB
+	sessions      *SessionStore
+	jobQueue      *JobQueue
+	rateLimiter   *RateLimiter
+	logger        *Logger
+	i18n          *I18n
+	tenants       TenantMap // models with a `tenant: <model>` directive
+	manifestCache sync.Map  // resolved path -> *parser.CustomFieldManifest (dynamic manifests)
+	mu            sync.RWMutex
+	port          int
+	scheduleStop  chan struct{}
 }
 
 func NewServer(app *parser.App, db *database.DB, port int) *Server {
@@ -430,8 +431,13 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		ctx.queries[queryName] = rows
 		if node.SourceModel != "" {
 			ctx.querySourceModels[queryName] = node.SourceModel
-			if manifest, ok := app.CustomManifests[node.SourceModel]; ok && len(rows) > 0 {
-				ctx.queries[queryName+".custom"] = buildCustomIterRows(rows[0], manifest)
+			if model := findModel(app.Models, node.SourceModel); model != nil {
+				if manifest := s.resolveManifest(model, app, ctx.currentUser, pathParams, r); manifest != nil {
+					ctx.customManifests[node.SourceModel] = manifest
+					if len(rows) > 0 {
+						ctx.queries[queryName+".custom"] = buildCustomIterRows(rows[0], manifest)
+					}
+				}
 			}
 		}
 	}
@@ -761,8 +767,13 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 				ctx.queries[queryName] = rows
 				if node.SourceModel != "" {
 					ctx.querySourceModels[queryName] = node.SourceModel
-					if manifest, ok := app.CustomManifests[node.SourceModel]; ok && len(rows) > 0 {
-						ctx.queries[queryName+".custom"] = buildCustomIterRows(rows[0], manifest)
+					if model := findModel(app.Models, node.SourceModel); model != nil {
+						if manifest := s.resolveManifest(model, app, ctx.currentUser, pathParams, r); manifest != nil {
+							ctx.customManifests[node.SourceModel] = manifest
+							if len(rows) > 0 {
+								ctx.queries[queryName+".custom"] = buildCustomIterRows(rows[0], manifest)
+							}
+						}
 					}
 				}
 			}
@@ -823,8 +834,13 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 				ctx.queries[name] = rows
 				if node.SourceModel != "" {
 					ctx.querySourceModels[name] = node.SourceModel
-					if manifest, ok := app.CustomManifests[node.SourceModel]; ok && len(rows) > 0 {
-						ctx.queries[name+".custom"] = buildCustomIterRows(rows[0], manifest)
+					if model := findModel(app.Models, node.SourceModel); model != nil {
+						if manifest := s.resolveManifest(model, app, nil, params, nil); manifest != nil {
+							ctx.customManifests[node.SourceModel] = manifest
+							if len(rows) > 0 {
+								ctx.queries[name+".custom"] = buildCustomIterRows(rows[0], manifest)
+							}
+						}
 					}
 				}
 			}
@@ -1478,6 +1494,92 @@ func expandCustomFields(rows []database.Row) []database.Row {
 		rows[i] = row
 	}
 	return rows
+}
+
+// findModel returns a pointer to the model with the given name, or nil if not found.
+func findModel(models []parser.Model, name string) *parser.Model {
+	for i := range models {
+		if models[i].Name == name {
+			return &models[i]
+		}
+	}
+	return nil
+}
+
+// resolveTenantPlaceholder replaces {user.field}, {:param}, {header.H} in a manifest
+// path template using session, path params, and request headers.
+func resolveTenantPlaceholder(template string, session *Session, pathParams map[string]string, r *http.Request) string {
+	return tenantPlaceholderRe.ReplaceAllStringFunc(template, func(m string) string {
+		inner := m[1 : len(m)-1] // strip { }
+		parts := strings.SplitN(inner, ".", 2)
+		switch {
+		case parts[0] == "header" && len(parts) == 2:
+			if r != nil {
+				return r.Header.Get(parts[1])
+			}
+		case parts[0] == "user" && len(parts) == 2:
+			if session != nil {
+				if v, ok := session.Data[parts[1]]; ok {
+					return v
+				}
+			}
+		case strings.HasPrefix(inner, ":"):
+			key := inner[1:]
+			if v, ok := pathParams[key]; ok {
+				return v
+			}
+		}
+		return ""
+	})
+}
+
+var tenantPlaceholderRe = regexp.MustCompile(`\{[^}]+\}`)
+
+// resolveManifest returns the custom field manifest for a model, resolving dynamic
+// paths at request time. Results are cached per resolved path.
+func (s *Server) resolveManifest(model *parser.Model, app *parser.App, session *Session, pathParams map[string]string, r *http.Request) *parser.CustomFieldManifest {
+	if model.CustomFieldsFile == "" {
+		return nil
+	}
+	if !strings.Contains(model.CustomFieldsFile, "{") {
+		// Static path: already loaded into app.CustomManifests at startup
+		if m, ok := app.CustomManifests[model.Name]; ok {
+			return m
+		}
+		return nil
+	}
+	// Dynamic path: resolve placeholder and load on demand
+	resolved := resolveTenantPlaceholder(model.CustomFieldsFile, session, pathParams, r)
+	if resolved == "" || strings.Contains(resolved, "{") {
+		// Placeholder couldn't be resolved; fall back to static manifest
+		if m, ok := app.CustomManifests[model.Name]; ok {
+			return m
+		}
+		return nil
+	}
+	// Sanitize: must end in .kilnx, no path traversal
+	if !strings.HasSuffix(resolved, ".kilnx") || strings.Contains(resolved, "..") {
+		return nil
+	}
+	if cached, ok := s.manifestCache.Load(resolved); ok {
+		return cached.(*parser.CustomFieldManifest)
+	}
+	raw, err := os.ReadFile(resolved)
+	if err != nil {
+		// File not found — try fallback
+		if model.CustomFieldsFallback != "" && !strings.Contains(model.CustomFieldsFallback, "{") {
+			if m, ok := app.CustomManifests[model.Name]; ok {
+				return m // fallback was loaded at startup
+			}
+		}
+		return nil
+	}
+	m, err := parser.ParseManifest(string(raw), model.Name)
+	if err != nil {
+		return nil
+	}
+	s.manifestCache.Store(resolved, m)
+	return m
 }
 
 // buildCustomIterRows creates synthetic rows for {{each q.custom}} iteration.
