@@ -123,8 +123,8 @@ See [FEATURES.md](FEATURES.md) for examples of each, and [GRAMMAR.md](GRAMMAR.md
 
 | Example | LOC | What it demonstrates |
 |---------|-----|---------------------|
-| [hello.kilnx](examples/hello.kilnx) | 3 | Minimal app |
-| [blog.kilnx](examples/blog.kilnx) | 94 | Auth, pagination, validation, fragments, declarative tests |
+| [hello.kilnx](smoke/hello.kilnx) | 3 | Minimal app |
+| [blog.kilnx](https://github.com/kilnx-org/examples/blob/main/blog/app.kilnx) | 94 | Auth, pagination, validation, fragments, declarative tests |
 | [CRM](https://github.com/kilnx-org/examples/blob/main/crm/app.kilnx) | 813 | Full CRUD with JOINs, layouts, Tailwind, 3 related models |
 
 ## Architecture

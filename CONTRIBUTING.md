@@ -22,7 +22,8 @@ internal/     Core implementation
   optimizer/  SQL optimization
   runtime/    HTTP server and AST interpreter
   lsp/        Language Server Protocol
-examples/     Example .kilnx apps
+smoke/        Smoke test .kilnx apps (used by CI)
+docs/         Documentation source (.md files)
 ```
 
 ## Guidelines
