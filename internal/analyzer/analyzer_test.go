@@ -1790,3 +1790,80 @@ func TestCheckCustomFieldRefs(t *testing.T) {
 		t.Errorf("expected 'unknown' in diagnostic, got %q", diags[0].Message)
 	}
 }
+
+func TestCheckCustomManifestRefs_InvalidReference(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "deal", CustomFieldsFile: "deal_fields.kilnx"},
+		},
+		CustomManifests: map[string]*parser.CustomFieldManifest{
+			"deal": {
+				ModelName: "deal",
+				Fields: []parser.CustomFieldDef{
+					{Name: "client", Kind: parser.CustomFieldKindReference, Reference: "nonexistent"},
+				},
+			},
+		},
+	}
+	diags := checkCustomManifestRefs(app)
+	if len(diags) != 1 {
+		t.Fatalf("expected 1 diagnostic for bad reference target, got %d", len(diags))
+	}
+	if !strings.Contains(diags[0].Message, "nonexistent") {
+		t.Errorf("expected model name in diagnostic, got %q", diags[0].Message)
+	}
+}
+
+func TestCheckCustomManifestRefs_ValidReference(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{
+			{Name: "deal", CustomFieldsFile: "deal_fields.kilnx"},
+			{Name: "client"},
+		},
+		CustomManifests: map[string]*parser.CustomFieldManifest{
+			"deal": {
+				ModelName: "deal",
+				Fields: []parser.CustomFieldDef{
+					{Name: "client_ref", Kind: parser.CustomFieldKindReference, Reference: "client"},
+				},
+			},
+		},
+	}
+	diags := checkCustomManifestRefs(app)
+	if len(diags) != 0 {
+		t.Errorf("expected no diagnostics for valid reference, got %v", diags)
+	}
+}
+
+func TestBuildSchemaColumnModeFields(t *testing.T) {
+	models := []parser.Model{
+		{
+			Name:             "deal",
+			CustomFieldsFile: "deal_fields.kilnx",
+			Fields:           []parser.Field{{Name: "title", Type: parser.FieldText}},
+		},
+	}
+	cm := map[string]*parser.CustomFieldManifest{
+		"deal": {
+			ModelName: "deal",
+			Fields: []parser.CustomFieldDef{
+				{Name: "revenue", Kind: parser.CustomFieldKindNumber, Mode: parser.CustomFieldModeColumn},
+				{Name: "region", Kind: parser.CustomFieldKindText, Mode: parser.CustomFieldModeJSON},
+			},
+		},
+	}
+	schema := BuildSchema(models, cm)
+	tbl := schema.Tables["deal"]
+	if tbl == nil {
+		t.Fatal("table 'deal' not in schema")
+	}
+	if _, ok := tbl.Columns["revenue"]; !ok {
+		t.Error("column-mode field 'revenue' should be a real schema column")
+	}
+	if _, ok := tbl.Columns["custom"]; !ok {
+		t.Error("'custom' JSON column should still be in schema")
+	}
+	if _, ok := tbl.Columns["region"]; ok {
+		t.Error("JSON-mode field 'region' should not be a real schema column")
+	}
+}

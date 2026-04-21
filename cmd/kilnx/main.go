@@ -155,7 +155,7 @@ func cmdRun(filename string) error {
 
 	// Auto-migrate if models exist
 	if len(app.Models) > 0 {
-		stmts, err := db.Migrate(app.Models)
+		stmts, err := db.Migrate(app.Models, app.CustomManifests)
 		if err != nil {
 			return err
 		}
@@ -222,7 +222,7 @@ func cmdMigrate(filename string, flags []string) error {
 		}
 
 		// Show pending changes
-		pending, err := db.PlanMigration(app.Models)
+		pending, err := db.PlanMigration(app.Models, app.CustomManifests)
 		if err != nil {
 			return err
 		}
@@ -239,7 +239,7 @@ func cmdMigrate(filename string, flags []string) error {
 	}
 
 	if dryRun {
-		stmts, err := db.PlanMigration(app.Models)
+		stmts, err := db.PlanMigration(app.Models, app.CustomManifests)
 		if err != nil {
 			return err
 		}
@@ -254,7 +254,7 @@ func cmdMigrate(filename string, flags []string) error {
 		return nil
 	}
 
-	stmts, err := db.Migrate(app.Models)
+	stmts, err := db.Migrate(app.Models, app.CustomManifests)
 	if err != nil {
 		return err
 	}
@@ -322,7 +322,7 @@ func cmdTest(filename string) error {
 	}()
 
 	if len(app.Models) > 0 {
-		stmts, err := db.Migrate(app.Models)
+		stmts, err := db.Migrate(app.Models, app.CustomManifests)
 		if err != nil {
 			return err
 		}
@@ -378,26 +378,46 @@ func loadApp(filename string) (*parser.App, error) {
 		if model.CustomFieldsFile == "" {
 			continue
 		}
-		if !strings.HasSuffix(model.CustomFieldsFile, ".kilnx") {
-			return nil, fmt.Errorf("custom fields manifest must be a .kilnx file: %s", model.CustomFieldsFile)
+		// Dynamic paths (containing {placeholder}) are resolved at request time.
+		// Load the fallback manifest at startup if it is a static path.
+		if strings.Contains(model.CustomFieldsFile, "{") {
+			if model.CustomFieldsFallback != "" && !strings.Contains(model.CustomFieldsFallback, "{") {
+				m, err := loadManifest(projectRoot, model.CustomFieldsFallback, model.Name)
+				if err != nil {
+					return nil, err
+				}
+				app.CustomManifests[model.Name] = m
+			}
+			continue
 		}
-		manifestPath := filepath.Join(projectRoot, model.CustomFieldsFile)
-		rel, err := filepath.Rel(projectRoot, manifestPath)
-		if err != nil || strings.HasPrefix(rel, "..") {
-			return nil, fmt.Errorf("custom fields manifest escapes project directory: %s", model.CustomFieldsFile)
-		}
-		raw, err := os.ReadFile(manifestPath)
+		m, err := loadManifest(projectRoot, model.CustomFieldsFile, model.Name)
 		if err != nil {
-			return nil, fmt.Errorf("reading manifest %s: %w", model.CustomFieldsFile, err)
+			return nil, err
 		}
-		manifest, err := parser.ParseManifest(string(raw), model.Name)
-		if err != nil {
-			return nil, fmt.Errorf("parsing manifest %s: %w", model.CustomFieldsFile, err)
-		}
-		app.CustomManifests[model.Name] = manifest
+		app.CustomManifests[model.Name] = m
 	}
 
 	return app, nil
+}
+
+func loadManifest(projectRoot, path, modelName string) (*parser.CustomFieldManifest, error) {
+	if !strings.HasSuffix(path, ".kilnx") {
+		return nil, fmt.Errorf("custom fields manifest must be a .kilnx file: %s", path)
+	}
+	manifestPath := filepath.Join(projectRoot, path)
+	rel, err := filepath.Rel(projectRoot, manifestPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return nil, fmt.Errorf("custom fields manifest escapes project directory: %s", path)
+	}
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading manifest %s: %w", path, err)
+	}
+	m, err := parser.ParseManifest(string(raw), modelName)
+	if err != nil {
+		return nil, fmt.Errorf("parsing manifest %s: %w", path, err)
+	}
+	return m, nil
 }
 
 const maxImportDepth = 64

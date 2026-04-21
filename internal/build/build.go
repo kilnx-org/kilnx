@@ -155,7 +155,7 @@ func main() {
 	}
 
 	if len(app.Models) > 0 {
-		stmts, _ := db.Migrate(app.Models)
+		stmts, _ := db.Migrate(app.Models, app.CustomManifests)
 		if len(stmts) > 0 {
 			fmt.Printf("Migrated %d change(s)\n", len(stmts))
 		}

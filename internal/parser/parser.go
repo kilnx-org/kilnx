@@ -145,28 +145,45 @@ type Model struct {
 	// field named after the tenant model (e.g. `tenant: org` adds an
 	// `org_id` column) and the runtime injects a WHERE filter on SELECT
 	// queries against this table.
-	Tenant           string
-	Fields           []Field
-	CustomFieldsFile string // path to *_fields.kilnx manifest; empty if unused
+	Tenant               string
+	Fields               []Field
+	CustomFieldsFile     string // path to *_fields.kilnx manifest (may contain {placeholder})
+	CustomFieldsFallback string // fallback manifest path used when dynamic file not found
 }
 
 // CustomFieldKind is the type of a runtime-extensible custom field.
 type CustomFieldKind string
 
 const (
-	CustomFieldKindText   CustomFieldKind = "text"
-	CustomFieldKindNumber CustomFieldKind = "number"
-	CustomFieldKindDate   CustomFieldKind = "date"
-	CustomFieldKindOption CustomFieldKind = "option"
+	CustomFieldKindText      CustomFieldKind = "text"
+	CustomFieldKindNumber    CustomFieldKind = "number"
+	CustomFieldKindDate      CustomFieldKind = "date"
+	CustomFieldKindOption    CustomFieldKind = "option"
+	CustomFieldKindEmail     CustomFieldKind = "email"
+	CustomFieldKindPhone     CustomFieldKind = "phone"
+	CustomFieldKindBool      CustomFieldKind = "bool"
+	CustomFieldKindRichtext  CustomFieldKind = "richtext"
+	CustomFieldKindReference CustomFieldKind = "reference"
+	CustomFieldKindImage     CustomFieldKind = "image"
+)
+
+// CustomFieldMode controls how a custom field is stored in the database.
+type CustomFieldMode string
+
+const (
+	CustomFieldModeJSON   CustomFieldMode = ""       // stored in custom JSON column (default)
+	CustomFieldModeColumn CustomFieldMode = "column" // promoted to a dedicated real column
 )
 
 // CustomFieldDef describes a single custom field from a manifest file.
 type CustomFieldDef struct {
-	Name     string
-	Kind     CustomFieldKind
-	Label    string
-	Required bool
-	Options  []string
+	Name      string
+	Kind      CustomFieldKind
+	Label     string
+	Required  bool
+	Options   []string
+	Mode      CustomFieldMode // "" = JSON, "column" = dedicated column
+	Reference string          // target model name for kind: reference
 }
 
 // CustomFieldManifest holds all custom field definitions for a model.
@@ -574,7 +591,7 @@ func (p *parserState) parseModel(app *App) (Model, error) {
 		// custom fields from "<file>" is a model-level meta directive.
 		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) &&
 			tok.Value == "custom" && p.peekIsCustomFieldsDirective() {
-			path, err := p.parseCustomFieldsDirective()
+			path, fallback, err := p.parseCustomFieldsDirective()
 			if err != nil {
 				return model, err
 			}
@@ -582,6 +599,7 @@ func (p *parserState) parseModel(app *App) (Model, error) {
 				return model, fmt.Errorf("line %d: model '%s' already has a custom fields directive", tok.Line, model.Name)
 			}
 			model.CustomFieldsFile = path
+			model.CustomFieldsFallback = fallback
 			continue
 		}
 
@@ -674,20 +692,29 @@ func (p *parserState) peekIsCustomFieldsDirective() bool {
 		t3.Type == lexer.TokenString
 }
 
-// parseCustomFieldsDirective parses `custom fields from "<path>"` and
-// returns the manifest file path. Caller verified with peekIsCustomFieldsDirective.
-func (p *parserState) parseCustomFieldsDirective() (string, error) {
+// parseCustomFieldsDirective parses `custom fields from "<path>" [or "<fallback>"]`
+// and returns (path, fallback, error). Caller verified with peekIsCustomFieldsDirective.
+func (p *parserState) parseCustomFieldsDirective() (string, string, error) {
 	p.advance() // consume "custom"
 	p.advance() // consume "fields"
 	p.advance() // consume "from"
 	pathTok := p.advance()
 	if pathTok.Type != lexer.TokenString {
-		return "", fmt.Errorf("line %d: expected file path string after 'custom fields from'", pathTok.Line)
+		return "", "", fmt.Errorf("line %d: expected file path string after 'custom fields from'", pathTok.Line)
+	}
+	path := pathTok.Value
+	fallback := ""
+	// Optional: or "<fallback>"
+	if !p.isEOF() && p.current().Type == lexer.TokenIdentifier && p.current().Value == "or" {
+		p.advance() // consume "or"
+		if p.current().Type == lexer.TokenString {
+			fallback = p.advance().Value
+		}
 	}
 	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
 		p.advance()
 	}
-	return pathTok.Value, nil
+	return path, fallback, nil
 }
 
 func (p *parserState) parseField(app *App) (Field, error) {
@@ -3122,6 +3149,12 @@ func (p *parserState) parseManifestField() (CustomFieldDef, error) {
 				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
 					def.Kind = CustomFieldKind(p.advance().Value)
 				}
+				// kind: reference <model> — reference target follows on same line
+				if def.Kind == CustomFieldKindReference {
+					if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+						def.Reference = p.advance().Value
+					}
+				}
 				// kind: option [A, B, C] — options may follow on the same line
 				if def.Kind == CustomFieldKindOption && p.current().Type == lexer.TokenBracketOpen {
 					p.advance() // consume '['
@@ -3152,6 +3185,10 @@ func (p *parserState) parseManifestField() (CustomFieldDef, error) {
 					p.advance()
 				} else {
 					def.Required = true // bare keyword, no value
+				}
+			case "mode":
+				if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					def.Mode = CustomFieldMode(p.advance().Value)
 				}
 			}
 		}

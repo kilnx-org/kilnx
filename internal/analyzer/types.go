@@ -667,6 +667,16 @@ func checkTableColumnRefs(app *parser.App, schema *Schema) []Diagnostic {
 // customFieldRefRe matches {queryName.custom.fieldName} in HTML content.
 var customFieldRefRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\.custom\.([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 
+// isDynamicManifest reports whether a model uses a dynamic manifest path.
+func isDynamicManifest(app *parser.App, modelName string) bool {
+	for _, m := range app.Models {
+		if m.Name == modelName {
+			return strings.Contains(m.CustomFieldsFile, "{")
+		}
+	}
+	return false
+}
+
 // checkCustomFieldRefs validates {q.custom.fieldName} template references
 // against the corresponding model's custom field manifest.
 func checkCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
@@ -689,6 +699,10 @@ func checkCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
 				continue // unknown query already reported by checkTemplateInterpolations
 			}
 
+			// Skip validation for models with dynamic manifest paths
+			if isDynamicManifest(app, modelName) {
+				continue
+			}
 			manifest, ok := app.CustomManifests[modelName]
 			if !ok {
 				diags = append(diags, Diagnostic{
@@ -732,6 +746,76 @@ func checkCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
 	}
 	for _, a := range app.APIs {
 		scanNodes(a.Body, fmt.Sprintf("api %s", a.Path))
+	}
+
+	return diags
+}
+
+// jsonExtractSQLiteRe matches json_extract(custom, '$.fieldName') in SQL.
+var jsonExtractSQLiteRe = regexp.MustCompile(`(?i)json_extract\s*\(\s*custom\s*,\s*'\$\.([a-zA-Z_][a-zA-Z0-9_]*)'\s*\)`)
+
+// jsonExtractPGRe matches custom->>'fieldName' and custom->'fieldName' in SQL.
+var jsonExtractPGRe = regexp.MustCompile(`\bcustom\s*->>?\s*'([a-zA-Z_][a-zA-Z0-9_]*)'`)
+
+// customShorthandAnalyzerRe matches the "custom.fieldName" shorthand in SQL.
+var customShorthandAnalyzerRe = regexp.MustCompile(`\bcustom\.([a-zA-Z_][a-zA-Z0-9_]*)\b`)
+
+// checkSQLCustomFieldRefs validates json_extract(custom, '$.field') and
+// custom->>'field' patterns in SQL query nodes against the custom field manifest.
+func checkSQLCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
+	if len(app.CustomManifests) == 0 {
+		return nil
+	}
+
+	var diags []Diagnostic
+
+	scanSQL := func(nodes []parser.Node, context string) {
+		for _, n := range nodes {
+			if n.Type != parser.NodeQuery || n.SQL == "" || n.SourceModel == "" {
+				continue
+			}
+			// Skip validation for models with dynamic manifest paths
+			if isDynamicManifest(app, n.SourceModel) {
+				continue
+			}
+			manifest, ok := app.CustomManifests[n.SourceModel]
+			if !ok {
+				continue
+			}
+			known := make(map[string]bool, len(manifest.Fields))
+			for _, f := range manifest.Fields {
+				known[f.Name] = true
+			}
+			check := func(fieldName string) {
+				if !known[fieldName] {
+					diags = append(diags, Diagnostic{
+						Level:   "error",
+						Message: fmt.Sprintf("SQL references unknown custom field '%s' (model '%s')", fieldName, n.SourceModel),
+						Context: context,
+					})
+				}
+			}
+			for _, m := range jsonExtractSQLiteRe.FindAllStringSubmatch(n.SQL, -1) {
+				check(m[1])
+			}
+			for _, m := range jsonExtractPGRe.FindAllStringSubmatch(n.SQL, -1) {
+				check(m[1])
+			}
+			for _, m := range customShorthandAnalyzerRe.FindAllStringSubmatch(n.SQL, -1) {
+				check(m[1])
+			}
+		}
+	}
+
+	scanPage := func(p parser.Page, context string) { scanSQL(p.Body, context) }
+	for _, p := range app.Pages {
+		scanPage(p, fmt.Sprintf("page %s", p.Path))
+	}
+	for _, f := range app.Fragments {
+		scanPage(f, fmt.Sprintf("fragment %s", f.Path))
+	}
+	for _, a := range app.APIs {
+		scanPage(a, fmt.Sprintf("api %s", a.Path))
 	}
 
 	return diags

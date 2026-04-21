@@ -37,7 +37,13 @@ type Schema struct {
 }
 
 // BuildSchema creates a compile-time view of the database from model declarations.
-func BuildSchema(models []parser.Model) *Schema {
+// Pass app.CustomManifests as the optional second argument to include column-mode
+// custom fields as real schema columns.
+func BuildSchema(models []parser.Model, manifests ...map[string]*parser.CustomFieldManifest) *Schema {
+	var cm map[string]*parser.CustomFieldManifest
+	if len(manifests) > 0 {
+		cm = manifests[0]
+	}
 	s := &Schema{
 		Tables:      make(map[string]*TableInfo),
 		ModelFields: make(map[string]*ModelFieldInfo),
@@ -72,6 +78,19 @@ func BuildSchema(models []parser.Model) *Schema {
 			mf.FormFields["custom"] = true
 			mf.FieldToColumn["custom"] = "custom"
 			mf.ColumnToField["custom"] = "custom"
+			// column-mode custom fields become real DB columns visible to the analyzer
+			if manifest, ok := cm[m.Name]; ok {
+				for _, f := range manifest.Fields {
+					if f.Mode != parser.CustomFieldModeColumn {
+						continue
+					}
+					ft := customKindToFieldType(f.Kind)
+					info.Columns[f.Name] = &ColumnInfo{FieldType: ft}
+					mf.FormFields[f.Name] = true
+					mf.FieldToColumn[f.Name] = f.Name
+					mf.ColumnToField[f.Name] = f.Name
+				}
+			}
 		}
 		s.Tables[m.Name] = info
 		s.ModelFields[m.Name] = mf
@@ -79,11 +98,23 @@ func BuildSchema(models []parser.Model) *Schema {
 	return s
 }
 
+// customKindToFieldType maps a manifest field kind to a parser FieldType for schema purposes.
+func customKindToFieldType(kind parser.CustomFieldKind) parser.FieldType {
+	switch kind {
+	case parser.CustomFieldKindNumber:
+		return parser.FieldFloat
+	case parser.CustomFieldKindBool:
+		return parser.FieldBool
+	default:
+		return parser.FieldText
+	}
+}
+
 // Analyze performs static analysis on a parsed Kilnx app, checking SQL
 // references against declared models and type compatibility.
 func Analyze(app *parser.App) []Diagnostic {
 	var diags []Diagnostic
-	schema := BuildSchema(app.Models)
+	schema := BuildSchema(app.Models, app.CustomManifests)
 
 	populateSourceModels(app)
 
@@ -98,7 +129,36 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkTemplateInterpolations(app, schema)...)
 	diags = append(diags, checkTableColumnRefs(app, schema)...)
 	diags = append(diags, checkCustomFieldRefs(app, schema)...)
+	diags = append(diags, checkSQLCustomFieldRefs(app, schema)...)
+	diags = append(diags, checkCustomManifestRefs(app)...)
 
+	return diags
+}
+
+// checkCustomManifestRefs validates that kind: reference targets in manifests refer to known models.
+func checkCustomManifestRefs(app *parser.App) []Diagnostic {
+	if len(app.CustomManifests) == 0 {
+		return nil
+	}
+	modelSet := make(map[string]bool, len(app.Models))
+	for _, m := range app.Models {
+		modelSet[m.Name] = true
+	}
+	var diags []Diagnostic
+	for modelName, manifest := range app.CustomManifests {
+		for _, f := range manifest.Fields {
+			if f.Kind != parser.CustomFieldKindReference {
+				continue
+			}
+			if f.Reference == "" || !modelSet[f.Reference] {
+				diags = append(diags, Diagnostic{
+					Level:   "error",
+					Message: fmt.Sprintf("custom field '%s' on model '%s': reference target '%s' is not a declared model", f.Name, modelName, f.Reference),
+					Context: fmt.Sprintf("manifest for %s", modelName),
+				})
+			}
+		}
+	}
 	return diags
 }
 
