@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/kilnx-org/kilnx/internal/lexer"
 )
 
 const protocolVersion = "2024-11-05"
@@ -32,10 +34,21 @@ type mcpError struct {
 	Message string `json:"message"`
 }
 
+// stdin and stdout are package-level so tests can inject substitutes.
+var (
+	stdin  *bufio.Reader
+	stdout io.Writer
+)
+
+func init() {
+	stdin = bufio.NewReader(os.Stdin)
+	stdout = os.Stdout
+}
+
 // Serve starts the MCP server on stdin/stdout using JSON-RPC 2.0 over stdio.
 func Serve() {
-	reader := bufio.NewReader(os.Stdin)
-	writer := os.Stdout
+	reader := stdin
+	writer := stdout
 
 	for {
 		msg, err := readMessage(reader)
@@ -137,6 +150,13 @@ func Serve() {
 					},
 					"isError": isErr,
 				},
+			})
+
+		case "shutdown":
+			writeMessage(writer, mcpResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  map[string]any{},
 			})
 
 		default:
@@ -305,10 +325,12 @@ func checkSource(source string) (string, bool) {
 }
 
 // extractEnvVars scans source for "env VARNAME" patterns and returns the var names.
+// Comments are stripped first so "# env FOO" does not produce a false positive.
 func extractEnvVars(source string) []string {
 	var vars []string
 	seen := map[string]bool{}
-	for _, line := range strings.Split(source, "\n") {
+	stripped := lexer.StripComments(source)
+	for _, line := range strings.Split(stripped, "\n") {
 		fields := strings.Fields(line)
 		for i, f := range fields {
 			if f == "env" && i+1 < len(fields) {
@@ -328,30 +350,15 @@ func buildKeywordRef() string {
 	sb.WriteString("# Kilnx Keyword Reference\n\n")
 
 	sb.WriteString("## Top-level blocks\n\n")
-	for kw, doc := range keywordDocs {
-		// Only top-level blocks in this section
-		isTopLevel := false
-		for _, tl := range topLevelKeywords {
-			if tl == kw {
-				isTopLevel = true
-				break
-			}
-		}
-		if isTopLevel {
+	for _, kw := range topLevelKeywords {
+		if doc, ok := keywordDocs[kw]; ok {
 			sb.WriteString(fmt.Sprintf("### %s\n%s\n\n", kw, doc))
 		}
 	}
 
 	sb.WriteString("## Body keywords\n\n")
-	for kw, doc := range keywordDocs {
-		isBody := false
-		for _, b := range bodyKeywords {
-			if b == kw {
-				isBody = true
-				break
-			}
-		}
-		if isBody {
+	for _, kw := range bodyKeywords {
+		if doc, ok := keywordDocs[kw]; ok {
 			sb.WriteString(fmt.Sprintf("### %s\n%s\n\n", kw, doc))
 		}
 	}
@@ -367,29 +374,20 @@ func buildKeywordRef() string {
 	return sb.String()
 }
 
-// JSON-RPC transport (identical pattern to internal/lsp)
+// JSON-RPC transport — MCP stdio uses newline-delimited JSON (one JSON object per line).
+// This differs from LSP which uses Content-Length framing.
 
 func readMessage(r *bufio.Reader) ([]byte, error) {
-	contentLength := 0
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
 			return nil, err
 		}
 		line = strings.TrimSpace(line)
-		if line == "" {
-			break
-		}
-		if strings.HasPrefix(line, "Content-Length:") {
-			fmt.Sscanf(strings.TrimPrefix(line, "Content-Length:"), "%d", &contentLength)
+		if line != "" {
+			return []byte(line), nil
 		}
 	}
-	if contentLength == 0 {
-		return nil, fmt.Errorf("no content length")
-	}
-	body := make([]byte, contentLength)
-	_, err := io.ReadFull(r, body)
-	return body, err
 }
 
 func writeMessage(w io.Writer, msg any) {
@@ -397,7 +395,7 @@ func writeMessage(w io.Writer, msg any) {
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(w, "Content-Length: %d\r\n\r\n", len(body))
+	body = append(body, '\n')
 	w.Write(body)
 }
 
