@@ -67,17 +67,10 @@ func main() {
 		}
 	case "check":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: kilnx check <file.kilnx> [--db <url>]")
+			fmt.Println("Usage: kilnx check <file.kilnx>")
 			os.Exit(1)
 		}
-		dbURL := ""
-		args := os.Args[3:]
-		for i, arg := range args {
-			if arg == "--db" && i+1 < len(args) {
-				dbURL = args[i+1]
-			}
-		}
-		if err := cmdCheck(os.Args[2], dbURL); err != nil {
+		if err := cmdCheck(os.Args[2]); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -94,24 +87,13 @@ func main() {
 	}
 }
 
-func cmdCheck(filename, dbURL string) error {
+func cmdCheck(filename string) error {
 	app, err := loadApp(filename)
 	if err != nil {
 		return err
 	}
 
-	var diags []analyzer.Diagnostic
-	if dbURL != "" {
-		db, err := database.Open(dbURL)
-		if err != nil {
-			return fmt.Errorf("opening DB for check: %w", err)
-		}
-		defer db.Close()
-		diags = analyzer.AnalyzeWithDB(app, db)
-	} else {
-		diags = analyzer.Analyze(app)
-	}
-
+	diags := analyzer.Analyze(app)
 	if len(diags) == 0 {
 		fmt.Println("No issues found.")
 		return nil

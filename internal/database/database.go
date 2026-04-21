@@ -137,11 +137,6 @@ func (db *DB) PlanMigration(models []parser.Model, manifests ...map[string]*pars
 			}
 			stmts = append(stmts, alterStmts...)
 		}
-
-		if model.DynamicFields {
-			isPostgres := db.dialect.DriverName() == "pgx"
-			stmts = append(stmts, fieldDefsTableDDL(model.Name, isPostgres))
-		}
 	}
 
 	return stmts, nil
@@ -217,9 +212,6 @@ func schemaHash(models []parser.Model) string {
 	var b strings.Builder
 	for _, m := range models {
 		fmt.Fprintf(&b, "model:%s\n", m.Name)
-		if m.DynamicFields {
-			b.WriteString("  dynamic_fields:true\n")
-		}
 		for _, f := range m.Fields {
 			fmt.Fprintf(&b, "  %s:%s", f.Name, f.Type)
 			if f.Required {
@@ -271,7 +263,7 @@ func (db *DB) planExistingTable(model parser.Model, cm map[string]*parser.Custom
 		stmts = append(stmts, stmt)
 	}
 
-	if model.CustomFieldsFile != "" || model.DynamicFields {
+	if model.CustomFieldsFile != "" {
 		if _, ok := existing["custom"]; !ok {
 			colType := "TEXT"
 			if db.dialect.DriverName() == "pgx" {
@@ -336,7 +328,7 @@ func (db *DB) generateCreateTable(model parser.Model, cm map[string]*parser.Cust
 		cols = append(cols, col)
 	}
 
-	if model.CustomFieldsFile != "" || model.DynamicFields {
+	if model.CustomFieldsFile != "" {
 		if db.dialect.DriverName() == "pgx" {
 			cols = append(cols, `"custom" JSONB`)
 		} else {
@@ -383,31 +375,6 @@ func customKindToSQL(kind parser.CustomFieldKind, isPostgres bool) string {
 	default:
 		return "TEXT"
 	}
-}
-
-// fieldDefsTableDDL returns the CREATE TABLE IF NOT EXISTS for _<model>_field_defs.
-func fieldDefsTableDDL(modelName string, isPostgres bool) string {
-	pkDef := "id INTEGER PRIMARY KEY AUTOINCREMENT"
-	boolType := "INTEGER"
-	boolDefault := "DEFAULT 0"
-	if isPostgres {
-		pkDef = "id BIGSERIAL PRIMARY KEY"
-		boolType = "BOOLEAN"
-		boolDefault = "DEFAULT FALSE"
-	}
-	return fmt.Sprintf(
-		"CREATE TABLE IF NOT EXISTS \"_%s_field_defs\" (\n"+
-			"  %s,\n"+
-			"  \"name\" TEXT NOT NULL,\n"+
-			"  \"kind\" TEXT NOT NULL,\n"+
-			"  \"label\" TEXT NOT NULL,\n"+
-			"  \"required\" %s NOT NULL %s,\n"+
-			"  \"options\" TEXT,\n"+
-			"  \"reference_model\" TEXT,\n"+
-			"  \"tenant_id\" TEXT,\n"+
-			"  \"sort_order\" INTEGER DEFAULT 0\n"+
-			")",
-		modelName, pkDef, boolType, boolDefault)
 }
 
 func (db *DB) fieldToColumnDef(f parser.Field) string {
@@ -464,9 +431,4 @@ func (db *DB) MigrateInternal() error {
 
 func isValidIdentifier(name string) bool {
 	return identifierRe.MatchString(name)
-}
-
-// IsValidIdentifier reports whether name is a safe SQL identifier.
-func IsValidIdentifier(name string) bool {
-	return isValidIdentifier(name)
 }

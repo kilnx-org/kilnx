@@ -73,7 +73,7 @@ func BuildSchema(models []parser.Model, manifests ...map[string]*parser.CustomFi
 				mf.ColumnToField[f.Name] = f.Name
 			}
 		}
-		if m.CustomFieldsFile != "" || m.DynamicFields {
+		if m.CustomFieldsFile != "" {
 			info.Columns["custom"] = &ColumnInfo{FieldType: parser.FieldText}
 			mf.FormFields["custom"] = true
 			mf.FieldToColumn["custom"] = "custom"
