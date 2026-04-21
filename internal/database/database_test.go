@@ -888,3 +888,49 @@ func TestCustomFieldsColumn(t *testing.T) {
 		t.Errorf("expected 0 pending changes (custom column already exists), got %d: %v", len(pending), pending)
 	}
 }
+
+func TestRewriteCustomFieldShorthand_SQLite(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{
+			`SELECT * FROM deal WHERE custom.revenue > 100`,
+			`SELECT * FROM deal WHERE json_extract("custom", '$.revenue') > 100`,
+		},
+		{
+			`SELECT custom.region FROM deal ORDER BY custom.region`,
+			`SELECT json_extract("custom", '$.region') FROM deal ORDER BY json_extract("custom", '$.region')`,
+		},
+		{
+			`SELECT * FROM deal WHERE status = 'open'`,
+			`SELECT * FROM deal WHERE status = 'open'`, // no change
+		},
+	}
+	for _, c := range cases {
+		got := RewriteCustomFieldShorthand(c.in, false)
+		if got != c.want {
+			t.Errorf("SQLite rewrite:\n  in:   %s\n  want: %s\n  got:  %s", c.in, c.want, got)
+		}
+	}
+}
+
+func TestRewriteCustomFieldShorthand_Postgres(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{
+			`SELECT * FROM deal WHERE custom.revenue > 100`,
+			`SELECT * FROM deal WHERE "custom"->>'revenue' > 100`,
+		},
+		{
+			`SELECT custom.region FROM deal`,
+			`SELECT "custom"->>'region' FROM deal`,
+		},
+	}
+	for _, c := range cases {
+		got := RewriteCustomFieldShorthand(c.in, true)
+		if got != c.want {
+			t.Errorf("Postgres rewrite:\n  in:   %s\n  want: %s\n  got:  %s", c.in, c.want, got)
+		}
+	}
+}

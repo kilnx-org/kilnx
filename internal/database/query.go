@@ -110,6 +110,27 @@ func QueryRowsWithParamsTx(tx *sql.Tx, dialect Dialect, sqlStr string, params ma
 
 // bindParams converts :name style params to dialect-specific positional params.
 // SQLite uses ?, PostgreSQL uses $1, $2, etc.
+// customShorthandRe matches "custom.fieldName" in SQL (shorthand for JSON extraction).
+var customShorthandRe = regexp.MustCompile(`\bcustom\.([a-zA-Z_]\w*)\b`)
+
+// RewriteCustomFieldShorthand rewrites the "custom.fieldName" shorthand to the
+// dialect-appropriate JSON extraction syntax. Only call for models with custom fields.
+// SQLite: custom.field -> json_extract("custom", '$.field')
+// PostgreSQL: custom.field -> "custom"->>'field'
+func RewriteCustomFieldShorthand(sqlStr string, isPostgres bool) string {
+	return customShorthandRe.ReplaceAllStringFunc(sqlStr, func(match string) string {
+		sub := customShorthandRe.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		field := sub[1]
+		if isPostgres {
+			return `"custom"->>'` + field + `'`
+		}
+		return `json_extract("custom", '$.` + field + `')`
+	})
+}
+
 func bindParams(dialect Dialect, sqlStr string, params map[string]string) (string, []interface{}) {
 	var args []interface{}
 	idx := 0

@@ -366,6 +366,11 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 			s.logger.LogSecurity("tenant guard rejected page query", tErr)
 			continue
 		}
+		if node.SourceModel != "" {
+			if _, hasCustom := app.CustomManifests[node.SourceModel]; hasCustom {
+				sql = database.RewriteCustomFieldShorthand(sql, s.db.Dialect().DriverName() == "pgx")
+			}
+		}
 
 		queryName := node.Name
 		if queryName == "" {
@@ -719,6 +724,11 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 					s.logger.LogSecurity("tenant guard rejected fragment query", tErr)
 					continue
 				}
+				if node.SourceModel != "" {
+					if _, hasCustom := app.CustomManifests[node.SourceModel]; hasCustom {
+						sql = database.RewriteCustomFieldShorthand(sql, s.db.Dialect().DriverName() == "pgx")
+					}
+				}
 				queryName := node.Name
 				if queryName == "" {
 					queryName = "_last"
@@ -793,6 +803,11 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 					s.logger.LogSecurity("tenant guard rejected fragment query", tErr)
 					body.WriteString("<p style=\"color:red\">Query rejected</p>")
 					continue
+				}
+				if node.SourceModel != "" {
+					if _, hasCustom := app.CustomManifests[node.SourceModel]; hasCustom {
+						sql = database.RewriteCustomFieldShorthand(sql, s.db.Dialect().DriverName() == "pgx")
+					}
 				}
 				rows, err := s.db.QueryRowsWithParams(sql, params)
 				if err != nil {

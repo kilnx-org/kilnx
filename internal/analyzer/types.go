@@ -743,6 +743,9 @@ var jsonExtractSQLiteRe = regexp.MustCompile(`(?i)json_extract\s*\(\s*custom\s*,
 // jsonExtractPGRe matches custom->>'fieldName' and custom->'fieldName' in SQL.
 var jsonExtractPGRe = regexp.MustCompile(`\bcustom\s*->>?\s*'([a-zA-Z_][a-zA-Z0-9_]*)'`)
 
+// customShorthandAnalyzerRe matches the "custom.fieldName" shorthand in SQL.
+var customShorthandAnalyzerRe = regexp.MustCompile(`\bcustom\.([a-zA-Z_][a-zA-Z0-9_]*)\b`)
+
 // checkSQLCustomFieldRefs validates json_extract(custom, '$.field') and
 // custom->>'field' patterns in SQL query nodes against the custom field manifest.
 func checkSQLCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
@@ -778,6 +781,9 @@ func checkSQLCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
 				check(m[1])
 			}
 			for _, m := range jsonExtractPGRe.FindAllStringSubmatch(n.SQL, -1) {
+				check(m[1])
+			}
+			for _, m := range customShorthandAnalyzerRe.FindAllStringSubmatch(n.SQL, -1) {
 				check(m[1])
 			}
 		}
