@@ -198,6 +198,27 @@ authorization. The rewriter closes the "forgot the tenant predicate"
 failure mode; other access-control concerns remain the developer's
 responsibility.
 
+#### composite unique
+
+For uniqueness spanning more than one field, declare a model-level
+`unique (...)` directive:
+
+```kilnx
+model membership
+  user: user required
+  project: project required
+  role: option [owner, admin, member] default member
+  unique (user, project)
+```
+
+The directive takes two or more field names (single-field uniqueness
+uses the field-level `unique` constraint). Reference fields resolve to
+their `<name>_id` column. Migration emits `CREATE UNIQUE INDEX IF NOT
+EXISTS "uq_<table>_<col>_<col>" ON "<table>" (...)`, which is
+idempotent on both SQLite and PostgreSQL. Multiple `unique (...)` lines
+are allowed for independent groups. The analyzer rejects unknown field
+names, fields repeated within a group, and duplicate groups.
+
 ### permissions
 
 Access rules by role.

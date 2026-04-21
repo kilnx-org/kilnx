@@ -124,6 +124,7 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkAuthPages(app)...)
 	diags = append(diags, checkModelRefs(app, schema)...)
 	diags = append(diags, checkTenantRefs(app, schema)...)
+	diags = append(diags, checkUniqueConstraints(app)...)
 	diags = append(diags, checkAllSQL(app, schema)...)
 	diags = append(diags, checkSecurity(app, schema)...)
 	diags = append(diags, checkTemplateInterpolations(app, schema)...)
@@ -284,6 +285,54 @@ func checkTenantRefs(app *parser.App, schema *Schema) []Diagnostic {
 				Message: fmt.Sprintf("model '%s' declares tenant '%s' which is not a defined model", m.Name, m.Tenant),
 				Context: "model " + m.Name,
 			})
+		}
+	}
+	return diags
+}
+
+// checkUniqueConstraints validates that every field named inside a
+// `unique (a, b, ...)` directive exists on its model, that no field is
+// repeated within a single group, and that no two groups are identical.
+func checkUniqueConstraints(app *parser.App) []Diagnostic {
+	var diags []Diagnostic
+	for _, m := range app.Models {
+		if len(m.UniqueConstraints) == 0 {
+			continue
+		}
+		fieldSet := make(map[string]bool, len(m.Fields))
+		for _, f := range m.Fields {
+			fieldSet[f.Name] = true
+		}
+		seenGroups := make(map[string]bool)
+		for _, group := range m.UniqueConstraints {
+			seenInGroup := make(map[string]bool, len(group))
+			for _, name := range group {
+				if !fieldSet[name] {
+					diags = append(diags, Diagnostic{
+						Level:   "error",
+						Message: fmt.Sprintf("unique constraint references unknown field '%s' on model '%s'", name, m.Name),
+						Context: "model " + m.Name,
+					})
+					continue
+				}
+				if seenInGroup[name] {
+					diags = append(diags, Diagnostic{
+						Level:   "error",
+						Message: fmt.Sprintf("unique constraint on model '%s' repeats field '%s'", m.Name, name),
+						Context: "model " + m.Name,
+					})
+				}
+				seenInGroup[name] = true
+			}
+			key := strings.Join(group, "\x00")
+			if seenGroups[key] {
+				diags = append(diags, Diagnostic{
+					Level:   "error",
+					Message: fmt.Sprintf("duplicate unique constraint on model '%s': (%s)", m.Name, strings.Join(group, ", ")),
+					Context: "model " + m.Name,
+				})
+			}
+			seenGroups[key] = true
 		}
 	}
 	return diags

@@ -17,6 +17,8 @@ const (
 	TokenComma                         // ,
 	TokenBracketOpen                   // [
 	TokenBracketClose                  // ]
+	TokenParenOpen                     // (
+	TokenParenClose                    // )
 	TokenNewline                       // end of line
 	TokenIndent                        // increase in indentation
 	TokenDedent                        // decrease in indentation
@@ -202,6 +204,14 @@ func tokenizeLine(line string, lineNum int) []Token {
 			continue
 		case ']':
 			tokens = append(tokens, Token{Type: TokenBracketClose, Value: "]", Line: lineNum, Column: i})
+			i++
+			continue
+		case '(':
+			tokens = append(tokens, Token{Type: TokenParenOpen, Value: "(", Line: lineNum, Column: i})
+			i++
+			continue
+		case ')':
+			tokens = append(tokens, Token{Type: TokenParenClose, Value: ")", Line: lineNum, Column: i})
 			i++
 			continue
 		}
