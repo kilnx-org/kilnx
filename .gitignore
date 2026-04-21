@@ -5,3 +5,9 @@
 *.db-shm
 .claude/worktrees/
 cmd/benchmark
+
+# Docs site generated output
+docs/pages/
+docs/content/reference/grammar.md
+docs/content/principles.md
+docs/content/changelog.md
