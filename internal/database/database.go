@@ -148,9 +148,60 @@ func (db *DB) PlanMigration(models []parser.Model, manifests ...map[string]*pars
 				stmts = append(stmts, db.dialect.AutoUpdateTriggerDDL(model.Name, field.Name)...)
 			}
 		}
+
+		stmts = append(stmts, uniqueIndexDDLs(model)...)
 	}
 
 	return stmts, nil
+}
+
+// uniqueIndexDDLs emits `CREATE UNIQUE INDEX IF NOT EXISTS` statements for
+// each composite UNIQUE group declared on the model. Field names are
+// resolved to their DB column names via fieldToColumnName (so references
+// map to their `<name>_id` columns). Groups that reference unknown fields
+// are skipped, the analyzer surfaces the error.
+func uniqueIndexDDLs(model parser.Model) []string {
+	if len(model.UniqueConstraints) == 0 {
+		return nil
+	}
+	byName := make(map[string]parser.Field, len(model.Fields))
+	for _, f := range model.Fields {
+		byName[f.Name] = f
+	}
+	var stmts []string
+	for _, group := range model.UniqueConstraints {
+		cols := make([]string, 0, len(group))
+		ok := true
+		for _, name := range group {
+			f, found := byName[name]
+			if !found {
+				ok = false
+				break
+			}
+			col := fieldToColumnName(f)
+			if !isValidIdentifier(col) {
+				ok = false
+				break
+			}
+			cols = append(cols, col)
+		}
+		if !ok || len(cols) < 2 {
+			continue
+		}
+		indexName := "uq_" + model.Name + "_" + strings.Join(cols, "_")
+		if !isValidIdentifier(indexName) {
+			continue
+		}
+		quoted := make([]string, len(cols))
+		for i, c := range cols {
+			quoted[i] = fmt.Sprintf("\"%s\"", c)
+		}
+		stmts = append(stmts, fmt.Sprintf(
+			"CREATE UNIQUE INDEX IF NOT EXISTS \"%s\" ON \"%s\" (%s)",
+			indexName, model.Name, strings.Join(quoted, ", "),
+		))
+	}
+	return stmts
 }
 
 // Migrate compares models with the current database state and applies changes.
@@ -238,6 +289,9 @@ func schemaHash(models []parser.Model) string {
 				fmt.Fprintf(&b, ":def=%s", f.Default)
 			}
 			b.WriteString("\n")
+		}
+		for _, group := range m.UniqueConstraints {
+			fmt.Fprintf(&b, "  unique:%s\n", strings.Join(group, ","))
 		}
 	}
 	h := sha256.Sum256([]byte(b.String()))

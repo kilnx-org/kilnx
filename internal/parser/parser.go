@@ -170,6 +170,11 @@ type Model struct {
 	CustomFieldsFile     string // path to *_fields.kilnx manifest (may contain {placeholder})
 	CustomFieldsFallback string // fallback manifest path used when dynamic file not found
 	DynamicFields        bool   // opts model into DB-backed runtime field definitions
+	// UniqueConstraints lists composite UNIQUE groups declared with
+	// `unique (a, b, ...)` directives. Each group is the list of field
+	// names as written; references resolve to their `<name>_id` column
+	// at DDL generation time.
+	UniqueConstraints [][]string
 }
 
 // CustomFieldKind is the type of a runtime-extensible custom field.
@@ -656,6 +661,19 @@ func (p *parserState) parseModel(app *App) (Model, error) {
 			continue
 		}
 
+		// unique (a, b, ...) is a composite UNIQUE constraint directive.
+		// Distinguished from the field-level `unique` constraint by the
+		// presence of '(' immediately after.
+		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) &&
+			tok.Value == "unique" && p.peekIsUniqueDirective() {
+			group, err := p.parseUniqueDirective()
+			if err != nil {
+				return model, err
+			}
+			model.UniqueConstraints = append(model.UniqueConstraints, group)
+			continue
+		}
+
 		// tenant: <model> is a model-level meta directive, not a field.
 		// Must appear before any field declaration.
 		if (tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword) &&
@@ -696,6 +714,58 @@ func (p *parserState) parseModel(app *App) (Model, error) {
 	}
 
 	return model, nil
+}
+
+// peekIsUniqueDirective reports whether the tokens at the current position
+// match `unique (` — a composite UNIQUE directive — rather than the field
+// constraint `unique` appearing as part of `<name>: <type> unique`.
+func (p *parserState) peekIsUniqueDirective() bool {
+	if p.pos+1 >= len(p.tokens) {
+		return false
+	}
+	return p.tokens[p.pos+1].Type == lexer.TokenParenOpen
+}
+
+// parseUniqueDirective consumes `unique ( ident (, ident)+ )` and returns
+// the list of field names. Caller has already verified with
+// peekIsUniqueDirective. Groups with fewer than two fields are rejected
+// because single-field uniqueness is expressed with the field-level
+// constraint `field: <type> unique`.
+func (p *parserState) parseUniqueDirective() ([]string, error) {
+	line := p.current().Line
+	p.advance() // consume 'unique'
+	if p.current().Type != lexer.TokenParenOpen {
+		return nil, fmt.Errorf("line %d: expected '(' after 'unique'", line)
+	}
+	p.advance() // consume '('
+
+	var names []string
+	for !p.isEOF() && p.current().Type != lexer.TokenParenClose {
+		tok := p.current()
+		if tok.Type == lexer.TokenComma {
+			p.advance()
+			continue
+		}
+		if tok.Type != lexer.TokenIdentifier && tok.Type != lexer.TokenKeyword {
+			return nil, fmt.Errorf("line %d: expected field name in unique(), got %q", tok.Line, tok.Value)
+		}
+		names = append(names, tok.Value)
+		p.advance()
+	}
+	if p.isEOF() || p.current().Type != lexer.TokenParenClose {
+		return nil, fmt.Errorf("line %d: unclosed unique(...) directive", line)
+	}
+	p.advance() // consume ')'
+
+	if len(names) < 2 {
+		return nil, fmt.Errorf("line %d: unique() requires at least two fields; use field-level 'unique' for single-column uniqueness", line)
+	}
+
+	// consume trailing tokens to end of line (forgiving)
+	for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+		p.advance()
+	}
+	return names, nil
 }
 
 // peekIsTenantDirective returns true if the tokens at the current position

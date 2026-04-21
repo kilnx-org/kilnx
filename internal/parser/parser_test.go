@@ -1168,3 +1168,80 @@ field notes
 		t.Errorf("notes: expected mode=JSON (empty), got %q", notes.Mode)
 	}
 }
+
+func TestParseUniqueDirective_TwoFields(t *testing.T) {
+	src := `model membership
+  user: user required
+  project: project required
+  unique (user, project)
+`
+	app := parse(t, src)
+	if len(app.Models) != 1 {
+		t.Fatalf("expected 1 model, got %d", len(app.Models))
+	}
+	m := app.Models[0]
+	if len(m.UniqueConstraints) != 1 {
+		t.Fatalf("expected 1 unique constraint group, got %d", len(m.UniqueConstraints))
+	}
+	g := m.UniqueConstraints[0]
+	if len(g) != 2 || g[0] != "user" || g[1] != "project" {
+		t.Errorf("unexpected unique group: %#v", g)
+	}
+}
+
+func TestParseUniqueDirective_MultipleGroups(t *testing.T) {
+	src := `model doc
+  slug: text required
+  tenant: text required
+  locale: text required
+  unique (tenant, slug)
+  unique (tenant, locale, slug)
+`
+	app := parse(t, src)
+	m := app.Models[0]
+	if len(m.UniqueConstraints) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(m.UniqueConstraints))
+	}
+	if len(m.UniqueConstraints[1]) != 3 {
+		t.Errorf("expected 3-field second group, got %v", m.UniqueConstraints[1])
+	}
+}
+
+func TestParseUniqueDirective_RejectsSingleField(t *testing.T) {
+	src := `model m
+  name: text required
+  unique (name)
+`
+	_, err := parseAllowErrors(t, src)
+	if err == nil {
+		t.Fatal("expected error for single-field unique()")
+	}
+	if !strings.Contains(err.Error(), "at least two") {
+		t.Errorf("expected message about at least two fields, got: %v", err)
+	}
+}
+
+func TestParseUniqueDirective_RejectsUnclosed(t *testing.T) {
+	src := `model m
+  a: text
+  b: text
+  unique (a, b
+`
+	_, err := parseAllowErrors(t, src)
+	if err == nil {
+		t.Fatal("expected error for unclosed unique(")
+	}
+}
+
+func TestParseFieldLevelUniqueStillWorks(t *testing.T) {
+	src := `model m
+  email: email unique
+`
+	app := parse(t, src)
+	if !app.Models[0].Fields[0].Unique {
+		t.Error("field-level unique not set")
+	}
+	if len(app.Models[0].UniqueConstraints) != 0 {
+		t.Error("composite constraints should be empty for field-level unique")
+	}
+}

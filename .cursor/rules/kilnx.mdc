@@ -68,6 +68,8 @@ Full references:
 
 `required` `unique` `default <val>` `auto` `min <n>` `max <n>`
 
+Composite UNIQUE: `unique (field_a, field_b, ...)` as a model-level line (two or more fields; references resolve to `_id` columns).
+
 ---
 
 ## Syntax examples

@@ -1046,3 +1046,93 @@ func TestColumnModeMigrate(t *testing.T) {
 		t.Error("JSON 'custom' column not present in table after migration")
 	}
 }
+
+// ---------- Composite UNIQUE ----------
+
+func TestMigrateCompositeUnique(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	models := []parser.Model{
+		{Name: "user", Fields: []parser.Field{{Name: "email", Type: parser.FieldText}}},
+		{Name: "project", Fields: []parser.Field{{Name: "name", Type: parser.FieldText}}},
+		{Name: "membership", Fields: []parser.Field{
+			{Name: "user", Type: parser.FieldReference, Reference: "user", Required: true},
+			{Name: "project", Type: parser.FieldReference, Reference: "project", Required: true},
+			{Name: "role", Type: parser.FieldText},
+		}, UniqueConstraints: [][]string{{"user", "project"}}},
+	}
+
+	stmts, err := db.Migrate(models)
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	foundIdx := false
+	for _, s := range stmts {
+		if strings.Contains(s, `CREATE UNIQUE INDEX IF NOT EXISTS "uq_membership_user_id_project_id"`) &&
+			strings.Contains(s, `("user_id", "project_id")`) {
+			foundIdx = true
+		}
+	}
+	if !foundIdx {
+		t.Fatalf("expected CREATE UNIQUE INDEX for membership (user_id, project_id); got %v", stmts)
+	}
+
+	if err := db.ExecWithParams(`INSERT INTO "user" (email) VALUES (:e)`, map[string]string{"e": "a@b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ExecWithParams(`INSERT INTO "project" (name) VALUES (:n)`, map[string]string{"n": "p1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ExecWithParams(`INSERT INTO "membership" (user_id, project_id, role) VALUES (1, 1, 'owner')`, nil); err != nil {
+		t.Fatal(err)
+	}
+	err = db.ExecWithParams(`INSERT INTO "membership" (user_id, project_id, role) VALUES (1, 1, 'member')`, nil)
+	if err == nil {
+		t.Fatal("expected UNIQUE constraint violation on duplicate (user_id, project_id)")
+	}
+}
+
+func TestMigrateCompositeUniqueIdempotent(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	models := []parser.Model{{
+		Name: "tag",
+		Fields: []parser.Field{
+			{Name: "scope", Type: parser.FieldText},
+			{Name: "name", Type: parser.FieldText},
+		},
+		UniqueConstraints: [][]string{{"scope", "name"}},
+	}}
+
+	if _, err := db.Migrate(models); err != nil {
+		t.Fatalf("first Migrate: %v", err)
+	}
+	stmts, err := db.Migrate(models)
+	if err != nil {
+		t.Fatalf("second Migrate: %v", err)
+	}
+	// IF NOT EXISTS makes repeated runs safe; the statement may still be
+	// re-emitted but must succeed without error.
+	for _, s := range stmts {
+		if strings.Contains(s, "CREATE UNIQUE INDEX") && !strings.Contains(s, "IF NOT EXISTS") {
+			t.Errorf("expected IF NOT EXISTS guard, got %q", s)
+		}
+	}
+}
+
+func TestSchemaHashIncludesUniqueConstraints(t *testing.T) {
+	a := []parser.Model{{
+		Name:              "m",
+		Fields:            []parser.Field{{Name: "x", Type: parser.FieldText}, {Name: "y", Type: parser.FieldText}},
+		UniqueConstraints: [][]string{{"x", "y"}},
+	}}
+	b := []parser.Model{{
+		Name:   "m",
+		Fields: []parser.Field{{Name: "x", Type: parser.FieldText}, {Name: "y", Type: parser.FieldText}},
+	}}
+	if schemaHash(a) == schemaHash(b) {
+		t.Error("schemaHash must differ when composite UNIQUE groups differ")
+	}
+}

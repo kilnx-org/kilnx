@@ -48,6 +48,26 @@ model post
 
 `auto_update` emits a database trigger so the column auto-updates on every UPDATE statement. No application code required.
 
+## Composite unique
+
+For uniqueness that spans two or more columns, declare a model-level `unique (...)` directive:
+
+```kilnx
+model membership
+  user: user required
+  project: project required
+  role: option [owner, admin, member] default member
+  unique (user, project)
+```
+
+Rules:
+
+- At least two fields. Use the field-level `unique` constraint for single-column uniqueness.
+- Reference fields resolve to their `<name>_id` column automatically (above: `user_id`, `project_id`).
+- Multiple `unique (...)` lines are allowed for independent groups on the same model.
+
+Migration emits `CREATE UNIQUE INDEX IF NOT EXISTS "uq_<table>_<col>_<col>" ON "<table>" (...)`, which is idempotent on SQLite and PostgreSQL. `kilnx check` rejects unknown field names, fields repeated within a group, and duplicated groups.
+
 ## References (foreign keys)
 
 Use another model's name as the field type:

@@ -1867,3 +1867,90 @@ func TestBuildSchemaColumnModeFields(t *testing.T) {
 		t.Error("JSON-mode field 'region' should not be a real schema column")
 	}
 }
+
+func TestAnalyze_UniqueConstraintUnknownField(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "m",
+			Fields: []parser.Field{
+				{Name: "a", Type: parser.FieldText},
+				{Name: "b", Type: parser.FieldText},
+			},
+			UniqueConstraints: [][]string{{"a", "c"}}, // c doesn't exist
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "unknown field 'c'") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected error for unknown field in unique(), got: %+v", diags)
+	}
+}
+
+func TestAnalyze_UniqueConstraintDuplicateFieldInGroup(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "m",
+			Fields: []parser.Field{
+				{Name: "a", Type: parser.FieldText},
+			},
+			UniqueConstraints: [][]string{{"a", "a"}},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "repeats field") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected repeat-field error, got: %+v", diags)
+	}
+}
+
+func TestAnalyze_UniqueConstraintDuplicateGroup(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "m",
+			Fields: []parser.Field{
+				{Name: "a", Type: parser.FieldText},
+				{Name: "b", Type: parser.FieldText},
+			},
+			UniqueConstraints: [][]string{{"a", "b"}, {"a", "b"}},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "duplicate unique constraint") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected duplicate-group error, got: %+v", diags)
+	}
+}
+
+func TestAnalyze_UniqueConstraintValid(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "m",
+			Fields: []parser.Field{
+				{Name: "a", Type: parser.FieldText},
+				{Name: "b", Type: parser.FieldText},
+			},
+			UniqueConstraints: [][]string{{"a", "b"}},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "unique constraint") {
+			t.Fatalf("unexpected error on valid constraint: %+v", d)
+		}
+	}
+}

@@ -89,6 +89,26 @@ title: text required max 200
 score: int max 100
 ```
 
+## Composite unique
+
+For uniqueness across two or more fields, declare a model-level `unique (...)` directive instead of marking a single field `unique`:
+
+```kilnx
+model membership
+  user: user required
+  project: project required
+  role: option [owner, admin, member] default member
+  unique (user, project)
+```
+
+Rules:
+
+- At least two fields. Single-column uniqueness uses the field-level `unique` constraint.
+- Fields must be declared on the same model. Reference fields resolve to their `<name>_id` column automatically.
+- Multiple `unique (...)` lines are allowed for independent composite groups.
+
+Migration emits `CREATE UNIQUE INDEX IF NOT EXISTS "uq_&lt;table&gt;_&lt;col&gt;_&lt;col&gt;" ON "&lt;table&gt;" (...)`, safe to rerun on both SQLite and PostgreSQL.
+
 ## Combining constraints
 
 Constraints appear space-separated after the field type:
@@ -116,5 +136,6 @@ Order is not significant.
 | `auto_update` | `timestamp` | DB trigger: update on every UPDATE |
 | `min <n>` | Text (length) or numeric (value) | Lower bound |
 | `max <n>` | Text (length) or numeric (value) | Upper bound |
+| `unique (a, b, ...)` | Model-level, 2+ fields | Composite UNIQUE index |
 
-Total: 7 constraints.
+Total: 7 field constraints plus 1 model-level directive.

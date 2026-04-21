@@ -24,6 +24,8 @@ model post
 
 Field types: `text`, `email`, `int`, `float`, `bool`, `timestamp`, `richtext`, `option`, `password`, `image`, `phone`. Constraints: `required`, `unique`, `default`, `auto`, `min`, `max`.
 
+Composite uniqueness: declare `unique (field_a, field_b, ...)` at the model level for two or more fields. References resolve to their `_id` column automatically.
+
 ## Auth
 
 Six lines. Registration, login, logout, bcrypt hashing, session cookies, and `current_user` available everywhere.
