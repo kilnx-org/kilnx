@@ -257,7 +257,11 @@ func (db *DB) planExistingTable(model parser.Model) ([]string, error) {
 
 	if model.CustomFieldsFile != "" {
 		if _, ok := existing["custom"]; !ok {
-			stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"custom\" TEXT", model.Name))
+			colType := "TEXT"
+			if db.dialect.DriverName() == "pgx" {
+				colType = "JSONB"
+			}
+			stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"custom\" %s", model.Name, colType))
 		}
 	}
 
@@ -301,7 +305,11 @@ func (db *DB) generateCreateTable(model parser.Model) string {
 	}
 
 	if model.CustomFieldsFile != "" {
-		cols = append(cols, `"custom" TEXT`)
+		if db.dialect.DriverName() == "pgx" {
+			cols = append(cols, `"custom" JSONB`)
+		} else {
+			cols = append(cols, `"custom" TEXT`)
+		}
 	}
 
 	return fmt.Sprintf("CREATE TABLE \"%s\" (\n  %s\n)", model.Name, strings.Join(cols, ",\n  "))

@@ -98,6 +98,7 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkTemplateInterpolations(app, schema)...)
 	diags = append(diags, checkTableColumnRefs(app, schema)...)
 	diags = append(diags, checkCustomFieldRefs(app, schema)...)
+	diags = append(diags, checkSQLCustomFieldRefs(app, schema)...)
 
 	return diags
 }

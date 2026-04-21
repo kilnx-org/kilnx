@@ -315,8 +315,9 @@ type renderContext struct {
 	queries           map[string][]database.Row
 	paginate          map[string]PaginateInfo
 	currentUser       *Session
-	queryParams       map[string]string // URL query parameters (?key=value)
-	querySourceModels map[string]string // query name -> primary model name (set by analyzer)
+	queryParams       map[string]string                      // URL query parameters (?key=value)
+	querySourceModels map[string]string                      // query name -> primary model name (set by analyzer)
+	customManifests   map[string]*parser.CustomFieldManifest // model name -> manifest (for list-page rebinding)
 }
 
 func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Request) string {
@@ -327,6 +328,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		currentUser:       s.getSession(r),
 		queryParams:       make(map[string]string),
 		querySourceModels: make(map[string]string),
+		customManifests:   app.CustomManifests,
 	}
 
 	pathParams := matchPathParams(p.Path, r.URL.Path)
@@ -680,6 +682,7 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 		currentUser:       s.getSession(r),
 		queryParams:       make(map[string]string),
 		querySourceModels: make(map[string]string),
+		customManifests:   app.CustomManifests,
 	}
 
 	// Make current_user available in fragments
@@ -776,6 +779,7 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 		queries:           make(map[string][]database.Row),
 		paginate:          make(map[string]PaginateInfo),
 		querySourceModels: make(map[string]string),
+		customManifests:   app.CustomManifests,
 	}
 
 	var body strings.Builder
@@ -1187,9 +1191,11 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				}
 				tx.Commit()
 				rows = expandCustomFields(rows)
+				respondApp := s.getApp()
 				ctx := &renderContext{
 					queries:           map[string][]database.Row{"_result": rows},
 					querySourceModels: make(map[string]string),
+					customManifests:   respondApp.CustomManifests,
 				}
 				if node.RespondTarget != "" {
 					w.Header().Set("HX-Retarget", node.RespondTarget)

@@ -422,6 +422,12 @@ func expandEachBlocks(content string, ctx *renderContext, nonce string) string {
 			}
 		} else {
 			for _, row := range rows {
+				// Rebind q.custom per row so {{each q.custom}} works on list pages (#66)
+				if sourceModel, ok := ctx.querySourceModels[queryName]; ok {
+					if manifest, ok := ctx.customManifests[sourceModel]; ok {
+						ctx.queries[queryName+".custom"] = buildCustomIterRows(row, manifest)
+					}
+				}
 				// Process raw filters inside each body with current row context
 				expanded := processRawInRow(body, row, ctx, nonce)
 				// Process nested {{each}} blocks

@@ -154,10 +154,14 @@ type Model struct {
 type CustomFieldKind string
 
 const (
-	CustomFieldKindText   CustomFieldKind = "text"
-	CustomFieldKindNumber CustomFieldKind = "number"
-	CustomFieldKindDate   CustomFieldKind = "date"
-	CustomFieldKindOption CustomFieldKind = "option"
+	CustomFieldKindText     CustomFieldKind = "text"
+	CustomFieldKindNumber   CustomFieldKind = "number"
+	CustomFieldKindDate     CustomFieldKind = "date"
+	CustomFieldKindOption   CustomFieldKind = "option"
+	CustomFieldKindEmail    CustomFieldKind = "email"
+	CustomFieldKindPhone    CustomFieldKind = "phone"
+	CustomFieldKindBool     CustomFieldKind = "bool"
+	CustomFieldKindRichtext CustomFieldKind = "richtext"
 )
 
 // CustomFieldDef describes a single custom field from a manifest file.

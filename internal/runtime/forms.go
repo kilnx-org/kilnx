@@ -194,6 +194,29 @@ func validateFormData(modelName string, app *parser.App, formData map[string]str
 						errors = append(errors, fmt.Sprintf("%s must be a valid date", label))
 					}
 				}
+				if f.Kind == parser.CustomFieldKindEmail && val != "" {
+					if !strings.Contains(val, "@") || !strings.Contains(val, ".") {
+						errors = append(errors, fmt.Sprintf("%s must be a valid email address", label))
+					}
+				}
+				if f.Kind == parser.CustomFieldKindPhone && val != "" {
+					stripped := strings.Map(func(r rune) rune {
+						if r >= '0' && r <= '9' {
+							return r
+						}
+						return -1
+					}, val)
+					if len(stripped) < 7 {
+						errors = append(errors, fmt.Sprintf("%s must be a valid phone number", label))
+					}
+				}
+				if f.Kind == parser.CustomFieldKindBool && val != "" {
+					switch strings.ToLower(val) {
+					case "true", "false", "1", "0", "on", "off", "yes", "no":
+					default:
+						errors = append(errors, fmt.Sprintf("%s must be a boolean value", label))
+					}
+				}
 				if f.Kind == parser.CustomFieldKindOption && len(f.Options) > 0 && val != "" {
 					valid := false
 					for _, opt := range f.Options {

@@ -11,9 +11,11 @@ import (
 
 func newTestContext() *renderContext {
 	return &renderContext{
-		queries:     make(map[string][]database.Row),
-		paginate:    make(map[string]PaginateInfo),
-		queryParams: make(map[string]string),
+		queries:           make(map[string][]database.Row),
+		paginate:          make(map[string]PaginateInfo),
+		queryParams:       make(map[string]string),
+		querySourceModels: make(map[string]string),
+		customManifests:   make(map[string]*parser.CustomFieldManifest),
 	}
 }
 
@@ -657,5 +659,36 @@ func TestBuildCustomIterRows_EmptyCustomColumn(t *testing.T) {
 	}
 	if result[0]["value"] != "" {
 		t.Errorf("expected empty value, got %q", result[0]["value"])
+	}
+}
+
+// TestEachCustomRebindPerRow verifies that {{each q.custom}} inside {{each q}}
+// shows each row's own custom fields, not always row[0] (#66).
+func TestEachCustomRebindPerRow(t *testing.T) {
+	manifest := &parser.CustomFieldManifest{
+		ModelName: "deal",
+		Fields: []parser.CustomFieldDef{
+			{Name: "revenue", Kind: parser.CustomFieldKindNumber, Label: "Revenue"},
+		},
+	}
+	ctx := newTestContext()
+	ctx.querySourceModels["d"] = "deal"
+	ctx.customManifests["deal"] = manifest
+	ctx.queries["d"] = []database.Row{
+		{"title": "Deal A", "custom": `{"revenue":"100"}`},
+		{"title": "Deal B", "custom": `{"revenue":"200"}`},
+	}
+	// Pre-populate with row[0] data (as server.go does at query time)
+	ctx.queries["d.custom"] = buildCustomIterRows(ctx.queries["d"][0], manifest)
+
+	// Inside {{each d}}, bare {title} uses current row; {d.title} always uses row[0]
+	tmpl := `{{each d}}<div>{title}:{{each d.custom}}{value}{{end}}</div>{{end}}`
+	result := renderHTML(tmpl, ctx)
+
+	if !strings.Contains(result, "Deal A:100") {
+		t.Errorf("expected Deal A:100 in output, got: %s", result)
+	}
+	if !strings.Contains(result, "Deal B:200") {
+		t.Errorf("expected Deal B:200 in output, got: %s", result)
 	}
 }

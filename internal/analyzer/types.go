@@ -736,3 +736,63 @@ func checkCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
 
 	return diags
 }
+
+// jsonExtractSQLiteRe matches json_extract(custom, '$.fieldName') in SQL.
+var jsonExtractSQLiteRe = regexp.MustCompile(`(?i)json_extract\s*\(\s*custom\s*,\s*'\$\.([a-zA-Z_][a-zA-Z0-9_]*)'\s*\)`)
+
+// jsonExtractPGRe matches custom->>'fieldName' and custom->'fieldName' in SQL.
+var jsonExtractPGRe = regexp.MustCompile(`\bcustom\s*->>?\s*'([a-zA-Z_][a-zA-Z0-9_]*)'`)
+
+// checkSQLCustomFieldRefs validates json_extract(custom, '$.field') and
+// custom->>'field' patterns in SQL query nodes against the custom field manifest.
+func checkSQLCustomFieldRefs(app *parser.App, schema *Schema) []Diagnostic {
+	if len(app.CustomManifests) == 0 {
+		return nil
+	}
+
+	var diags []Diagnostic
+
+	scanSQL := func(nodes []parser.Node, context string) {
+		for _, n := range nodes {
+			if n.Type != parser.NodeQuery || n.SQL == "" || n.SourceModel == "" {
+				continue
+			}
+			manifest, ok := app.CustomManifests[n.SourceModel]
+			if !ok {
+				continue
+			}
+			known := make(map[string]bool, len(manifest.Fields))
+			for _, f := range manifest.Fields {
+				known[f.Name] = true
+			}
+			check := func(fieldName string) {
+				if !known[fieldName] {
+					diags = append(diags, Diagnostic{
+						Level:   "error",
+						Message: fmt.Sprintf("SQL references unknown custom field '%s' (model '%s')", fieldName, n.SourceModel),
+						Context: context,
+					})
+				}
+			}
+			for _, m := range jsonExtractSQLiteRe.FindAllStringSubmatch(n.SQL, -1) {
+				check(m[1])
+			}
+			for _, m := range jsonExtractPGRe.FindAllStringSubmatch(n.SQL, -1) {
+				check(m[1])
+			}
+		}
+	}
+
+	scanPage := func(p parser.Page, context string) { scanSQL(p.Body, context) }
+	for _, p := range app.Pages {
+		scanPage(p, fmt.Sprintf("page %s", p.Path))
+	}
+	for _, f := range app.Fragments {
+		scanPage(f, fmt.Sprintf("fragment %s", f.Path))
+	}
+	for _, a := range app.APIs {
+		scanPage(a, fmt.Sprintf("api %s", a.Path))
+	}
+
+	return diags
+}
