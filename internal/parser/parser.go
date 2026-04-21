@@ -146,9 +146,9 @@ type RequiresClauseKind int
 
 const (
 	RequiresClauseAuth      RequiresClauseKind = iota // "auth" — any logged-in user
-	RequiresClauseRole                                 // named role, e.g. "admin"
-	RequiresClauseExpr                                 // expression, e.g. "current_user.plan in ['cad','full']"
-	RequiresClauseSuperuser                            // "superuser" — platform operator
+	RequiresClauseRole                                // named role, e.g. "admin"
+	RequiresClauseExpr                                // expression, e.g. "current_user.plan in ['cad','full']"
+	RequiresClauseSuperuser                           // "superuser" — platform operator
 )
 
 // RequiresClause is one predicate in a comma-separated requires list.
