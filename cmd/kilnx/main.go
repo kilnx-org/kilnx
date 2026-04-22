@@ -127,6 +127,9 @@ func cmdCheck(filename, dbURL string) error {
 }
 
 func cmdRun(filename string) error {
+	if os.Getenv("KILNX_DEV") == "" {
+		os.Setenv("KILNX_DEV", "1")
+	}
 	app, err := loadApp(filename)
 	if err != nil {
 		return err
