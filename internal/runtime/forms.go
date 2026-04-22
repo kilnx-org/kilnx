@@ -18,6 +18,7 @@ import (
 
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
+
 // allowedUploadExts is the whitelist of permitted file extensions for uploads.
 var allowedUploadExts = map[string]bool{
 	"jpg": true, "jpeg": true, "png": true, "gif": true,
@@ -34,7 +35,6 @@ func isAllowedUploadExt(filename string) bool {
 	ext = ext[1:] // remove leading dot
 	return allowedUploadExts[ext]
 }
-
 
 var customBracketRe = regexp.MustCompile(`^custom\[(\w+)\]$`)
 
