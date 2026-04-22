@@ -1,2 +1,8 @@
 page /
-  "Hello World"
+  html
+    <p>Hello World</p>
+
+test "homepage loads"
+  visit /
+  expect status 200
+  expect page / contains "Hello World"
