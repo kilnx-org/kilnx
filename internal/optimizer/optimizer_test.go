@@ -305,6 +305,100 @@ func TestRewrite_CaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestRewrite_ParentScopeField(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "id", Type: parser.FieldInt},
+				{Name: "name", Type: parser.FieldText},
+			},
+		}, {
+			Name: "post",
+			Fields: []parser.Field{
+				{Name: "id", Type: parser.FieldInt},
+				{Name: "title", Type: parser.FieldText},
+				{Name: "user_id", Type: parser.FieldInt},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/user/:id",
+			Body: []parser.Node{
+				{
+					Type: parser.NodeQuery,
+					Name: "u",
+					SQL:  "SELECT * FROM user WHERE id = :id",
+				},
+				{
+					Type: parser.NodeQuery,
+					Name: "posts",
+					SQL:  "SELECT * FROM post WHERE user_id = :id",
+				},
+				{
+					Type:        parser.NodeHTML,
+					HTMLContent: `{{each u}}<h1>{u.name}</h1>{{each posts}}<a href="/user/{^id}/posts/{id}">{title}</a>{{end}}{{end}}`,
+				},
+			},
+		}},
+	}
+
+	Optimize(app)
+
+	// The {^id} reference inside {{each u}} should cause 'id' to be collected for query 'u'
+	got := app.Pages[0].Body[0].SQL
+	want := "SELECT id, name FROM user WHERE id = :id"
+	wantAlt := "SELECT name, id FROM user WHERE id = :id"
+	if got != want && got != wantAlt {
+		t.Errorf("parent-scope field not collected for outer query, got %q, want %q or %q", got, want, wantAlt)
+	}
+}
+
+func TestRewrite_ParentScopeFieldOnly(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "id", Type: parser.FieldInt},
+				{Name: "name", Type: parser.FieldText},
+			},
+		}, {
+			Name: "post",
+			Fields: []parser.Field{
+				{Name: "id", Type: parser.FieldInt},
+				{Name: "title", Type: parser.FieldText},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/user/:id",
+			Body: []parser.Node{
+				{
+					Type: parser.NodeQuery,
+					Name: "u",
+					SQL:  "SELECT * FROM user WHERE id = :id",
+				},
+				{
+					Type: parser.NodeQuery,
+					Name: "posts",
+					SQL:  "SELECT * FROM post WHERE user_id = :id",
+				},
+				{
+					Type:        parser.NodeHTML,
+					HTMLContent: `{{each u}}<h1>{name}</h1>{{each posts}}<a href="/user/{^id}/posts/{id}">{title}</a>{{end}}{{end}}`,
+				},
+			},
+		}},
+	}
+
+	Optimize(app)
+
+	// Bare {name} is not detected, but {^id} should be — so id must be in the rewritten query
+	got := app.Pages[0].Body[0].SQL
+	want := "SELECT id FROM user WHERE id = :id"
+	if got != want {
+		t.Errorf("parent-scope-only field not collected, got %q, want %q", got, want)
+	}
+}
+
 func TestRewrite_DedupFields(t *testing.T) {
 	app := &parser.App{
 		Pages: []parser.Page{{

@@ -26,10 +26,10 @@ import (
 //   {paginate.queryName.field}               - pagination metadata
 //   {params.key}                             - URL query parameter
 
-var rawFilterRe = regexp.MustCompile(`\{([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)\s*\|\s*raw\}`)
+var rawFilterRe = regexp.MustCompile(`\{(\^*[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)\s*\|\s*raw\}`)
 
 // filterRe matches {expr | filter} or {expr | filter1 | filter2: arg}
-var filterRe = regexp.MustCompile(`\{([a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)\s*\|([^}]+)\}`)
+var filterRe = regexp.MustCompile(`\{(\^*[a-zA-Z_]\w*(?:\.[a-zA-Z_]\w*)*)\s*\|([^}]+)\}`)
 
 // parsedFilter represents a single filter in a chain
 type parsedFilter struct {
@@ -423,6 +423,8 @@ func expandEachBlocks(content string, ctx *renderContext, nonce string) string {
 			}
 		} else {
 			for _, row := range rows {
+				// Push current row onto eachStack for parent-scope resolution
+				ctx.eachStack = append(ctx.eachStack, row)
 				// Rebind q.custom per row so {{each q.custom}} works on list pages (#66)
 				if sourceModel, ok := ctx.querySourceModels[queryName]; ok {
 					if manifest, ok := ctx.customManifests[sourceModel]; ok {
@@ -438,6 +440,8 @@ func expandEachBlocks(content string, ctx *renderContext, nonce string) string {
 				// Interpolate row fields
 				expanded = interpolateRow(expanded, row, ctx)
 				result.WriteString(expanded)
+				// Pop row from eachStack
+				ctx.eachStack = ctx.eachStack[:len(ctx.eachStack)-1]
 			}
 		}
 
@@ -447,10 +451,12 @@ func expandEachBlocks(content string, ctx *renderContext, nonce string) string {
 	return result.String()
 }
 
-// processRawInRow handles {field | filters} inside {{each}} blocks where field comes from the current row
+// processRawInRow handles {field | filters} inside {{each}} blocks where field comes from the current row.
+// Skips expressions that are inside nested {{each}} blocks so the inner loop processes them.
 func processRawInRow(content string, row database.Row, ctx *renderContext, nonce string) string {
 	counter := 0
 	placeholders := make(map[string]string)
+	insideEach := isInsideEachBlock(content)
 
 	result := filterRe.ReplaceAllStringFunc(content, func(match string) string {
 		parts := filterRe.FindStringSubmatch(match)
@@ -459,6 +465,11 @@ func processRawInRow(content string, row database.Row, ctx *renderContext, nonce
 		}
 		expr := parts[1]
 		chain := strings.TrimSpace(parts[2])
+		// Skip if this expression is inside a nested {{each}} block
+		matchIdx := strings.Index(content, match)
+		if matchIdx >= 0 && insideEach(matchIdx) {
+			return match
+		}
 		val := resolveValue(expr, ctx, row)
 		if val == "{"+expr+"}" {
 			return match
@@ -747,9 +758,26 @@ func compareNumeric(a, b string) int {
 }
 
 // resolveValue resolves a template expression to its value.
-// Handles: "paginate.query.field", "params.key", "queryName.field", "queryName.count", bare "field"
+// Handles: "paginate.query.field", "params.key", "queryName.field", "queryName.count",
+// bare "field", and parent-scope "^field", "^^field", etc.
 // Returns the original "{expr}" string if not found.
 func resolveValue(expr string, ctx *renderContext, currentRow database.Row) string {
+	// Parent-scope reference: count leading ^ to walk up the eachStack
+	if strings.HasPrefix(expr, "^") {
+		depth := 0
+		for depth < len(expr) && expr[depth] == '^' {
+			depth++
+		}
+		field := expr[depth:]
+		if len(ctx.eachStack) > depth {
+			idx := len(ctx.eachStack) - depth - 1
+			if val, ok := ctx.eachStack[idx][field]; ok {
+				return val
+			}
+		}
+		return "{" + expr + "}"
+	}
+
 	allParts := strings.Split(expr, ".")
 
 	// paginate.queryName.field (3 parts)

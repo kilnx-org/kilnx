@@ -21,7 +21,7 @@ import (
 //go:embed static/htmx.min.js static/sse.js
 var staticFS embed.FS
 
-var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}`)
+var interpolateRe = regexp.MustCompile(`\{(\^*[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}`)
 
 type Server struct {
 	app               *parser.App
@@ -336,6 +336,7 @@ type renderContext struct {
 	queryParams       map[string]string                      // URL query parameters (?key=value)
 	querySourceModels map[string]string                      // query name -> primary model name (set by analyzer)
 	customManifests   map[string]*parser.CustomFieldManifest // model name -> manifest (for list-page rebinding)
+	eachStack         []database.Row                         // stack of active {{each}} rows for parent-scope resolution
 }
 
 func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Request) string {

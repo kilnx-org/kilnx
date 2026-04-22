@@ -1711,6 +1711,138 @@ func TestCheckTemplateInterpolations_Fragment(t *testing.T) {
 	}
 }
 
+func TestCheckTemplateInterpolations_ParentScopeValid(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "id", Type: parser.FieldInt},
+				{Name: "name", Type: parser.FieldText},
+			},
+		}, {
+			Name: "post",
+			Fields: []parser.Field{
+				{Name: "id", Type: parser.FieldInt},
+				{Name: "title", Type: parser.FieldText},
+				{Name: "user_id", Type: parser.FieldInt},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/users",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "users", SQL: "SELECT id, name FROM user"},
+				{Type: parser.NodeQuery, Name: "posts", SQL: "SELECT id, title FROM post WHERE user_id = :id"},
+				{Type: parser.NodeHTML, HTMLContent: `{{each users}}<div>{{each posts}}<a href="/user/{^id}/posts/{id}">{title}</a>{{end}}</div>{{end}}`},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "template reference") {
+			t.Errorf("unexpected template error: %s", d.Message)
+		}
+	}
+}
+
+func TestCheckTemplateInterpolations_ParentScopeInvalidField(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "id", Type: parser.FieldInt},
+			},
+		}, {
+			Name: "post",
+			Fields: []parser.Field{
+				{Name: "id", Type: parser.FieldInt},
+				{Name: "title", Type: parser.FieldText},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/users",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "users", SQL: "SELECT id FROM user"},
+				{Type: parser.NodeQuery, Name: "posts", SQL: "SELECT id, title FROM post"},
+				{Type: parser.NodeHTML, HTMLContent: `{{each users}}{{each posts}}<span>{^nonexistent}</span>{{end}}{{end}}`},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "{^nonexistent}") && strings.Contains(d.Message, "does not exist") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected error for invalid parent-scope field, got: %v", diags)
+	}
+}
+
+func TestCheckTemplateInterpolations_ParentScopeTooDeep(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "user",
+			Fields: []parser.Field{
+				{Name: "id", Type: parser.FieldInt},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/users",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "users", SQL: "SELECT id FROM user"},
+				{Type: parser.NodeHTML, HTMLContent: `{{each users}}<span>{^^id}</span>{{end}}`},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "{^^id}") && strings.Contains(d.Message, "exceeds") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected error for too-deep parent scope, got: %v", diags)
+	}
+}
+
+func TestCheckTemplateInterpolations_ParentScopeMultiLevel(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "a",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+			},
+		}, {
+			Name: "b",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+			},
+		}, {
+			Name: "c",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText},
+			},
+		}},
+		Pages: []parser.Page{{
+			Path: "/test",
+			Body: []parser.Node{
+				{Type: parser.NodeQuery, Name: "a", SQL: "SELECT name FROM a"},
+				{Type: parser.NodeQuery, Name: "b", SQL: "SELECT name FROM b"},
+				{Type: parser.NodeQuery, Name: "c", SQL: "SELECT name FROM c"},
+				{Type: parser.NodeHTML, HTMLContent: `{{each a}}<a>{name}</a>{{each b}}<b>{name}</b>{{each c}}<c>{^^name}</c>{{end}}{{end}}</a>{{end}}`},
+			},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "template reference") {
+			t.Errorf("unexpected template error: %s", d.Message)
+		}
+	}
+}
+
 func TestQueryModelMap(t *testing.T) {
 	pages := []parser.Page{{
 		Path: "/users",

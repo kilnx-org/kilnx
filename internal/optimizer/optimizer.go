@@ -7,8 +7,8 @@ import (
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
-// interpolateRe matches {queryName.field} patterns used in text/html interpolation.
-var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\}`)
+// interpolateRe matches {queryName.field}, {^field}, {^^field}, and bare {field} patterns.
+var interpolateRe = regexp.MustCompile(`\{(\^*[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}`)
 
 // selectStarRe matches SELECT * or SELECT DISTINCT * at the start of a SQL query (case-insensitive).
 var selectStarRe = regexp.MustCompile(`(?i)^(SELECT\s+(?:DISTINCT\s+)?)\*(\s+FROM\s+)`)
@@ -109,13 +109,52 @@ func collectUsedFields(nodes []parser.Node) map[string]*fieldSet {
 	return result
 }
 
-// addInterpolatedFields extracts {queryName.field} references from text
+// addInterpolatedFields extracts {queryName.field} and {^field} references from text
 // and adds the fields to the appropriate query's field set.
 func addInterpolatedFields(result map[string]*fieldSet, text string) {
-	matches := interpolateRe.FindAllStringSubmatch(text, -1)
+	blocks := findEachBlocks(text)
+	matches := interpolateRe.FindAllStringSubmatchIndex(text, -1)
 	for _, m := range matches {
-		queryName := m[1]
-		field := m[2]
+		expr := text[m[2]:m[3]]
+
+		// Parent-scope reference: {^field}, {^^field}, etc.
+		if strings.HasPrefix(expr, "^") {
+			depth := 0
+			for depth < len(expr) && expr[depth] == '^' {
+				depth++
+			}
+			field := expr[depth:]
+			if field == "" {
+				continue
+			}
+			eachNames := countEachEnclosing(m[0], blocks)
+			if depth > len(eachNames) {
+				continue
+			}
+			targetQuery := eachNames[len(eachNames)-depth-1]
+			if targetQuery == "" {
+				continue
+			}
+			if result[targetQuery] == nil && !hasKey(result, targetQuery) {
+				result[targetQuery] = newFieldSet()
+			}
+			fs := result[targetQuery]
+			if fs == nil {
+				continue
+			}
+			fs.add(field)
+			continue
+		}
+
+		// Bare field: {field} — cannot determine which query it belongs to
+		if !strings.Contains(expr, ".") {
+			continue
+		}
+
+		// queryName.field or queryName.count
+		parts := strings.SplitN(expr, ".", 2)
+		queryName := parts[0]
+		field := parts[1]
 		if field == "count" {
 			continue // built-in, not a real column
 		}
@@ -128,6 +167,113 @@ func addInterpolatedFields(result map[string]*fieldSet, text string) {
 		}
 		fs.add(field)
 	}
+}
+
+// eachBlock represents a single {{each queryName}}...{{end}} span.
+type eachBlock struct {
+	start     int
+	end       int
+	queryName string
+}
+
+// findMatchingEnd finds the body, else body, and position after {{end}} for a block,
+// accounting for nested {{each}}/{{if}} blocks.
+func findMatchingEnd(content string) (body, elseBody string, endPos int) {
+	depth := 1
+	pos := 0
+	bodyEnd := -1
+	elseStart := -1
+
+	for pos < len(content) {
+		nextTag := strings.Index(content[pos:], "{{")
+		if nextTag < 0 {
+			return "", "", -1
+		}
+		nextTag += pos
+
+		closeTag := strings.Index(content[nextTag:], "}}")
+		if closeTag < 0 {
+			return "", "", -1
+		}
+		closeTag += nextTag + 2
+
+		tagInner := strings.TrimSpace(content[nextTag+2 : closeTag-2])
+
+		if strings.HasPrefix(tagInner, "each ") || strings.HasPrefix(tagInner, "if ") {
+			depth++
+		} else if tagInner == "end" {
+			depth--
+			if depth == 0 {
+				if elseStart >= 0 {
+					body = content[:bodyEnd]
+					elseBody = content[elseStart:nextTag]
+				} else {
+					body = content[:nextTag]
+				}
+				return body, elseBody, closeTag
+			}
+		} else if tagInner == "else" && depth == 1 {
+			bodyEnd = nextTag
+			elseStart = closeTag
+		}
+
+		pos = closeTag
+	}
+
+	return "", "", -1
+}
+
+// findEachBlocks returns all {{each}} blocks in the given text, including nested ones.
+func findEachBlocks(text string) []eachBlock {
+	var blocks []eachBlock
+	remaining := text
+	offset := 0
+	for {
+		idx := strings.Index(remaining, "{{each ")
+		if idx < 0 {
+			break
+		}
+		tagEnd := strings.Index(remaining[idx:], "}}")
+		if tagEnd < 0 {
+			break
+		}
+		tagEnd += idx + 2
+		queryName := strings.TrimSpace(remaining[idx+7 : tagEnd-2])
+		bodyStart := tagEnd
+		body, _, endPos := findMatchingEnd(remaining[bodyStart:])
+		if endPos < 0 {
+			break
+		}
+		absStart := offset + idx
+		absEnd := offset + bodyStart + endPos
+		blocks = append(blocks, eachBlock{
+			start:     absStart,
+			end:       absEnd,
+			queryName: queryName,
+		})
+		if body != "" {
+			nested := findEachBlocks(body)
+			for i := range nested {
+				nested[i].start += absStart + (tagEnd - idx)
+				nested[i].end += absStart + (tagEnd - idx)
+			}
+			blocks = append(blocks, nested...)
+		}
+		remaining = remaining[bodyStart+endPos:]
+		offset += bodyStart + endPos
+	}
+	return blocks
+}
+
+// countEachEnclosing returns the names of {{each}} blocks that enclose the given position.
+func countEachEnclosing(pos int, blocks []eachBlock) []string {
+	var names []string
+	for _, b := range blocks {
+		if pos >= b.start && pos < b.end {
+			names = append(names, b.queryName)
+		}
+	}
+	return names
 }
 
 // extractPathParams pulls :param names from a URL path like /users/:id/edit.

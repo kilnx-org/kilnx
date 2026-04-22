@@ -327,6 +327,21 @@ page /users layout main title "Users"
     {{end}}
 ```
 
+Nested `{{each}}` blocks can reference fields from outer loops with `{^field}` (one level up), `{^^field}` (two levels), etc.:
+
+```kilnx
+page /user/:id
+  query u: select id, name from user where id = :id
+  query posts: select id, title from post where user_id = :id
+  html
+    {{each u}}
+    <h1>{name}</h1>
+    {{each posts}}
+      <a href="/user/{^id}/posts/{id}/delete">delete {title}</a>
+    {{end}}
+    {{end}}
+```
+
 With auth:
 
 ```kilnx
