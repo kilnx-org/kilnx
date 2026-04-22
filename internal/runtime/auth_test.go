@@ -171,7 +171,7 @@ func TestSanitizeIdentifier(t *testing.T) {
 		{"drop;table", "droptable"},
 		{`"quoted"`, "quoted"},
 		{"special!@#chars", "specialchars"},
-		{"123numbers", "123numbers"},
+		{"123numbers", "_123numbers"},
 		{"", ""},
 		{"a-b-c", "abc"},
 	}

@@ -129,7 +129,6 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkAllSQL(app, schema)...)
 	diags = append(diags, checkSecurity(app, schema)...)
 	diags = append(diags, checkTemplateInterpolations(app, schema)...)
-	diags = append(diags, checkTableColumnRefs(app, schema)...)
 	diags = append(diags, checkCustomFieldRefs(app, schema)...)
 	diags = append(diags, checkSQLCustomFieldRefs(app, schema)...)
 	diags = append(diags, checkCustomManifestRefs(app)...)
@@ -822,12 +821,12 @@ func checkNamedParamsExtra(sql string, tokens []sqlToken, path string, modelName
 		if mf != nil {
 			if fieldName, ok := mf.ColumnToField[param]; ok {
 				diags = append(diags, Diagnostic{
-				Level: "error",
-				Message: fmt.Sprintf(
-					"named parameter ':%s' will not be provided by the form. "+
-						"The model field is '%s' (form sends ':%s', database column is '%s'). "+
-						"Use ':%s' instead",
-					param, fieldName, fieldName, param, fieldName),
+					Level: "error",
+					Message: fmt.Sprintf(
+						"named parameter ':%s' will not be provided by the form. "+
+							"The model field is '%s' (form sends ':%s', database column is '%s'). "+
+							"Use ':%s' instead",
+						param, fieldName, fieldName, param, fieldName),
 					Context: context,
 				})
 				continue

@@ -22,11 +22,35 @@ type RateLimiter struct {
 
 const maxRateLimitEntries = 100_000
 
+// defaultAuthRateLimits are implicit protections for auth endpoints
+// when the developer has not configured explicit rate limits.
+var defaultAuthRateLimits = []parser.RateLimit{
+	{PathPattern: "/login", Requests: 10, Window: "minute", Per: "ip", Message: "Too many login attempts"},
+	{PathPattern: "/register", Requests: 10, Window: "minute", Per: "ip", Message: "Too many registration attempts"},
+	{PathPattern: "/forgot-password", Requests: 10, Window: "minute", Per: "ip", Message: "Too many password reset attempts"},
+}
+
 func NewRateLimiter(rules []parser.RateLimit) *RateLimiter {
 	rl := &RateLimiter{
 		entries: make(map[string]*rateLimitEntry),
 		rules:   rules,
 	}
+
+	// Apply default auth rate limits unless the developer has explicitly
+	// configured limits for those paths.
+	for _, def := range defaultAuthRateLimits {
+		hasCustom := false
+		for _, r := range rules {
+			if matchRateLimitPath(r.PathPattern, def.PathPattern) {
+				hasCustom = true
+				break
+			}
+		}
+		if !hasCustom {
+			rl.rules = append(rl.rules, def)
+		}
+	}
+
 	// Adaptive cleanup: interval based on shortest configured window
 	interval := rl.minWindow() / 2
 	if interval < time.Second {

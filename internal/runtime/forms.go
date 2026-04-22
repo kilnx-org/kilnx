@@ -19,6 +19,23 @@ import (
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
+// allowedUploadExts is the whitelist of permitted file extensions for uploads.
+var allowedUploadExts = map[string]bool{
+	"jpg": true, "jpeg": true, "png": true, "gif": true,
+	"webp": true, "pdf": true, "txt": true,
+	"doc": true, "docx": true, "xls": true, "xlsx": true,
+	"csv": true, "zip": true,
+}
+
+func isAllowedUploadExt(filename string) bool {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext == "" {
+		return false
+	}
+	ext = ext[1:] // remove leading dot
+	return allowedUploadExts[ext]
+}
+
 var customBracketRe = regexp.MustCompile(`^custom\[(\w+)\]$`)
 
 // CSRF token store with expiry (#6 fix: bounded store with TTL cleanup)
@@ -390,6 +407,11 @@ func extractFormData(r *http.Request, config *parser.AppConfig) map[string]strin
 			for key, fileHeaders := range r.MultipartForm.File {
 				if len(fileHeaders) > 0 {
 					if fileHeaders[0].Filename == "" {
+						continue
+					}
+					// Validate file extension against whitelist
+					if !isAllowedUploadExt(fileHeaders[0].Filename) {
+						fmt.Fprintf(os.Stderr, "kilnx: rejected upload of disallowed file type: %s\n", fileHeaders[0].Filename)
 						continue
 					}
 					file, err := fileHeaders[0].Open()

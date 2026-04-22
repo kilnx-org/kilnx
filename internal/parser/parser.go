@@ -1772,6 +1772,9 @@ func (p *parserState) parseLayout() Layout {
 	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
 		layout.Name = p.advance().Value
 	}
+	if layout.Name == "" {
+		p.addError(fmt.Errorf("layout name is required"))
+	}
 
 	p.skipToEndOfLine()
 	p.skipNewlines()
@@ -2091,6 +2094,9 @@ func (p *parserState) parseSchedule() Schedule {
 	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
 		sched.Name = p.advance().Value
 	}
+	if sched.Name == "" {
+		p.addError(fmt.Errorf("schedule name is required"))
+	}
 
 	// "every" interval: "every 1h", "every 24h", "every 5m", "every 30s"
 	// or cron: "every monday at 9:00"
@@ -2111,7 +2117,7 @@ func (p *parserState) parseSchedule() Schedule {
 			if schedLine >= 1 && schedLine <= len(p.lines) {
 				line := p.lines[schedLine-1]
 				idx := strings.Index(strings.ToLower(line), "every ")
-				if idx >= 0 {
+				if idx >= 0 && idx <= len(line) {
 					sched.Cron = strings.TrimSpace(line[idx:])
 				}
 			}
@@ -2147,6 +2153,9 @@ func (p *parserState) parseJob() Job {
 	// job name
 	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
 		job.Name = p.advance().Value
+	}
+	if job.Name == "" {
+		p.addError(fmt.Errorf("job name is required"))
 	}
 
 	p.skipToEndOfLine()
@@ -2358,6 +2367,9 @@ func (p *parserState) parseWebhook() Webhook {
 	if p.current().Type == lexer.TokenPath {
 		wh.Path = p.advance().Value
 	}
+	if wh.Path == "" {
+		p.addError(fmt.Errorf("webhook path is required"))
+	}
 
 	// "secret env VAR_NAME"
 	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
@@ -2399,7 +2411,7 @@ func (p *parserState) parseWebhook() Webhook {
 				if eventLine >= 1 && eventLine <= len(p.lines) {
 					line := p.lines[eventLine-1]
 					idx := strings.Index(strings.ToLower(line), "event ")
-					if idx >= 0 {
+					if idx >= 0 && idx+len("event ") <= len(line) {
 						event.Name = strings.TrimSpace(line[idx+len("event "):])
 					}
 				}
@@ -2435,6 +2447,9 @@ func (p *parserState) parseSocket() Socket {
 
 	if p.current().Type == lexer.TokenPath {
 		sock.Path = p.advance().Value
+	}
+	if sock.Path == "" {
+		p.addError(fmt.Errorf("socket path is required"))
 	}
 
 	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
@@ -2508,6 +2523,9 @@ func (p *parserState) parseRateLimit() RateLimit {
 
 	if p.current().Type == lexer.TokenPath {
 		rl.PathPattern = p.advance().Value
+	}
+	if rl.PathPattern == "" {
+		p.addError(fmt.Errorf("rate limit path is required"))
 	}
 
 	p.skipToEndOfLine()
@@ -2622,6 +2640,9 @@ func (p *parserState) parseTest() Test {
 	// test name (string)
 	if p.current().Type == lexer.TokenString {
 		t.Name = p.advance().Value
+	}
+	if t.Name == "" {
+		p.addError(fmt.Errorf("test name is required"))
 	}
 
 	p.skipToEndOfLine()
@@ -3099,7 +3120,7 @@ func (p *parserState) extractRequiresText(lineNum int) string {
 	rawLine := p.lines[lineNum-1]
 	lower := strings.ToLower(rawLine)
 	idx := strings.Index(lower, "requires")
-	if idx < 0 {
+	if idx < 0 || idx+len("requires") > len(rawLine) {
 		return ""
 	}
 	rest := rawLine[idx+len("requires"):]

@@ -34,12 +34,21 @@ type Session struct {
 type SessionStore struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
-	db       *database.DB
+	db       database.Executor
 	secret   string // used for HMAC signing of session cookie values
 }
 
 func NewSessionStore(secret string) *SessionStore {
 	ss := &SessionStore{sessions: make(map[string]*Session), secret: secret}
+	if ss.secret == "" {
+		// Generate a random fallback secret to prevent session forgery.
+		// A warning is logged so the operator knows the config is incomplete.
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err == nil {
+			ss.secret = hex.EncodeToString(b)
+		}
+		fmt.Fprintf(os.Stderr, "kilnx: WARNING: config.secret is empty. A temporary session secret has been generated. Set config.secret to avoid session invalidation on restart.\n")
+	}
 	go ss.cleanupLoop()
 	return ss
 }
@@ -53,6 +62,17 @@ func (ss *SessionStore) signSessionID(id string) string {
 	mac.Write([]byte(id))
 	sig := hex.EncodeToString(mac.Sum(nil))
 	return id + "." + sig
+}
+
+// sanitizeHostHeader removes control characters and spaces from a Host header
+// to prevent Host Header Injection attacks.
+func sanitizeHostHeader(host string) string {
+	host = strings.ReplaceAll(host, "\r", "")
+	host = strings.ReplaceAll(host, "\n", "")
+	host = strings.ReplaceAll(host, "\x00", "")
+	host = strings.ReplaceAll(host, " ", "")
+	host = strings.ReplaceAll(host, "\t", "")
+	return host
 }
 
 // verifySessionID verifies and extracts the session ID from a signed cookie value
@@ -75,7 +95,7 @@ func (ss *SessionStore) verifySessionID(signed string) (string, bool) {
 }
 
 // SetDB attaches a database for session persistence and loads existing sessions
-func (ss *SessionStore) SetDB(db *database.DB) {
+func (ss *SessionStore) SetDB(db database.Executor) {
 	ss.db = db
 	ss.loadFromDB()
 }
@@ -806,7 +826,8 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	resetURL := fmt.Sprintf("%s://%s%s?token=%s", scheme, r.Host, app.Auth.ResetPath, token)
+	host := sanitizeHostHeader(r.Host)
+	resetURL := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, app.Auth.ResetPath, token)
 
 	// Try to send email, fall back to console
 	sent := false
@@ -820,6 +841,8 @@ func (s *Server) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		smtpUser := os.Getenv("KILNX_SMTP_USER")
 		smtpPass := os.Getenv("KILNX_SMTP_PASS")
 
+		email = sanitizeEmailAddress(email)
+		smtpFrom = sanitizeEmailAddress(smtpFrom)
 		msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: Password Reset\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n"+
 			"<p>Click the link below to reset your password:</p>"+
 			"<p><a href=\"%s\">Reset Password</a></p>"+
@@ -945,5 +968,10 @@ func sanitizeIdentifier(name string) string {
 			b.WriteRune(c)
 		}
 	}
-	return b.String()
+	result := b.String()
+	// Ensure the first character is a letter or underscore, matching isValidIdentifier.
+	if len(result) > 0 && result[0] >= '0' && result[0] <= '9' {
+		result = "_" + result
+	}
+	return result
 }

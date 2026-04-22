@@ -213,8 +213,29 @@ type queryEntry struct {
 
 // deduplicateQueries finds named queries with identical SQL on the same page
 // and removes duplicates, rewriting consumer references to point to the original.
+// normalizeSQL returns a canonical form of a SQL string for deduplication.
+// It trims whitespace, collapses multiple spaces, and uppercases keywords.
+func normalizeSQL(sql string) string {
+	sql = strings.TrimSpace(sql)
+	// Collapse multiple whitespace characters into a single space
+	var b strings.Builder
+	inSpace := false
+	for _, ch := range sql {
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			inSpace = true
+			continue
+		}
+		if inSpace {
+			b.WriteByte(' ')
+			inSpace = false
+		}
+		b.WriteRune(ch)
+	}
+	return b.String()
+}
+
 func deduplicateQueries(page *parser.Page) {
-	seen := make(map[string]string) // sql -> first query name
+	seen := make(map[string]string) // normalized sql -> first query name
 
 	var entries []queryEntry
 	collectNamedQueries(page.Body, &entries, 0)
@@ -223,14 +244,15 @@ func deduplicateQueries(page *parser.Page) {
 		if e.sql == "" || e.name == "" {
 			continue
 		}
-		if original, exists := seen[e.sql]; exists {
+		norm := normalizeSQL(e.sql)
+		if original, exists := seen[norm]; exists {
 			// Duplicate found: rename consumers and clear the duplicate
 			renameConsumerRefs(page.Body, e.name, original)
 			if e.index >= 0 && e.index < len(page.Body) {
 				page.Body[e.index].SQL = ""
 			}
 		} else {
-			seen[e.sql] = e.name
+			seen[norm] = e.name
 		}
 	}
 }

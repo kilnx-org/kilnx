@@ -22,7 +22,7 @@ func TestMergeDBFieldDefs_EmptyTable(t *testing.T) {
 	s := newTestServerWithDB(t)
 
 	// Create the _deal_field_defs table.
-	_, err := s.db.Conn().Exec(`CREATE TABLE "_deal_field_defs" (
+	_, err := s.db.(*database.DB).Conn().Exec(`CREATE TABLE "_deal_field_defs" (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		"name" TEXT NOT NULL, "kind" TEXT NOT NULL, "label" TEXT NOT NULL,
 		"required" INTEGER NOT NULL DEFAULT 0, "options" TEXT,
@@ -47,7 +47,7 @@ func TestMergeDBFieldDefs_EmptyTable(t *testing.T) {
 func TestMergeDBFieldDefs_MergesRows(t *testing.T) {
 	s := newTestServerWithDB(t)
 
-	_, err := s.db.Conn().Exec(`CREATE TABLE "_deal_field_defs" (
+	_, err := s.db.(*database.DB).Conn().Exec(`CREATE TABLE "_deal_field_defs" (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		"name" TEXT NOT NULL, "kind" TEXT NOT NULL, "label" TEXT NOT NULL,
 		"required" INTEGER NOT NULL DEFAULT 0, "options" TEXT,
@@ -55,7 +55,7 @@ func TestMergeDBFieldDefs_MergesRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create table: %v", err)
 	}
-	_, err = s.db.Conn().Exec(`INSERT INTO "_deal_field_defs" (name,kind,label) VALUES ('panel_brand','text','Panel Brand')`)
+	_, err = s.db.(*database.DB).Conn().Exec(`INSERT INTO "_deal_field_defs" (name,kind,label) VALUES ('panel_brand','text','Panel Brand')`)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestMergeDBFieldDefs_MergesRows(t *testing.T) {
 func TestMergeDBFieldDefs_StaticFieldWins(t *testing.T) {
 	s := newTestServerWithDB(t)
 
-	_, err := s.db.Conn().Exec(`CREATE TABLE "_deal_field_defs" (
+	_, err := s.db.(*database.DB).Conn().Exec(`CREATE TABLE "_deal_field_defs" (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		"name" TEXT NOT NULL, "kind" TEXT NOT NULL, "label" TEXT NOT NULL,
 		"required" INTEGER NOT NULL DEFAULT 0, "options" TEXT,
@@ -84,7 +84,7 @@ func TestMergeDBFieldDefs_StaticFieldWins(t *testing.T) {
 		t.Fatalf("create table: %v", err)
 	}
 	// Same name as a static field — must be skipped.
-	_, err = s.db.Conn().Exec(`INSERT INTO "_deal_field_defs" (name,kind,label) VALUES ('revenue','text','Override Attempt')`)
+	_, err = s.db.(*database.DB).Conn().Exec(`INSERT INTO "_deal_field_defs" (name,kind,label) VALUES ('revenue','text','Override Attempt')`)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestMergeDBFieldDefs_StaticFieldWins(t *testing.T) {
 func TestMergeDBFieldDefs_InvalidIdentifierSkipped(t *testing.T) {
 	s := newTestServerWithDB(t)
 
-	_, err := s.db.Conn().Exec(`CREATE TABLE "_deal_field_defs" (
+	_, err := s.db.(*database.DB).Conn().Exec(`CREATE TABLE "_deal_field_defs" (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		"name" TEXT NOT NULL, "kind" TEXT NOT NULL, "label" TEXT NOT NULL,
 		"required" INTEGER NOT NULL DEFAULT 0, "options" TEXT,
@@ -113,7 +113,7 @@ func TestMergeDBFieldDefs_InvalidIdentifierSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create table: %v", err)
 	}
-	_, err = s.db.Conn().Exec(`INSERT INTO "_deal_field_defs" (name,kind,label) VALUES ('bad name!','text','Bad')`)
+	_, err = s.db.(*database.DB).Conn().Exec(`INSERT INTO "_deal_field_defs" (name,kind,label) VALUES ('bad name!','text','Bad')`)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}

@@ -1,0 +1,27 @@
+name: Kilnx Declarative Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  declarative-tests:
+    name: Declarative Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build CLI
+        run: go build -o kilnx ./cmd/kilnx/
+
+      - name: Run declarative tests
+        run: ./kilnx test smoke/hello.kilnx
