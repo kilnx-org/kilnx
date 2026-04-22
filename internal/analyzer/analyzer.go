@@ -475,6 +475,17 @@ func checkActionParams(action parser.Page, modelName string, schema *Schema, con
 }
 
 func checkActionParamsNodes(nodes []parser.Node, path string, modelName string, schema *Schema, context string) []Diagnostic {
+	// Pre-scan: collect names produced at runtime by llm and fetch nodes.
+	runtimeParams := make(map[string]bool)
+	for _, node := range nodes {
+		if node.Type == parser.NodeLLM && node.Name != "" {
+			runtimeParams[node.Name] = true
+		}
+		if node.Type == parser.NodeFetch && node.Name != "" {
+			runtimeParams[node.Name] = true
+		}
+	}
+
 	var diags []Diagnostic
 	for _, node := range nodes {
 		sql := ""
@@ -488,7 +499,7 @@ func checkActionParamsNodes(nodes []parser.Node, path string, modelName string, 
 		}
 		if sql != "" {
 			tokens := tokenizeSQL(sql)
-			diags = append(diags, checkNamedParams(sql, tokens, path, modelName, schema, context)...)
+			diags = append(diags, checkNamedParamsExtra(sql, tokens, path, modelName, schema, context, runtimeParams)...)
 		}
 	}
 	return diags
@@ -772,6 +783,10 @@ func findActionModel(action parser.Page, app *parser.App) string {
 }
 
 func checkNamedParams(sql string, tokens []sqlToken, path string, modelName string, schema *Schema, context string) []Diagnostic {
+	return checkNamedParamsExtra(sql, tokens, path, modelName, schema, context, nil)
+}
+
+func checkNamedParamsExtra(sql string, tokens []sqlToken, path string, modelName string, schema *Schema, context string, extra map[string]bool) []Diagnostic {
 	var diags []Diagnostic
 	params := extractNamedParams(tokens)
 	if len(params) == 0 {
@@ -780,6 +795,9 @@ func checkNamedParams(sql string, tokens []sqlToken, path string, modelName stri
 
 	available := make(map[string]bool)
 	for p := range extractURLParams(path) {
+		available[p] = true
+	}
+	for p := range extra {
 		available[p] = true
 	}
 
@@ -804,12 +822,12 @@ func checkNamedParams(sql string, tokens []sqlToken, path string, modelName stri
 		if mf != nil {
 			if fieldName, ok := mf.ColumnToField[param]; ok {
 				diags = append(diags, Diagnostic{
-					Level: "error",
-					Message: fmt.Sprintf(
-						"named parameter ':%s' will not be provided by the form. "+
-							"The model field is '%s' (form sends ':%s', database column is '%s'). "+
-							"Use ':%s' instead",
-						param, fieldName, fieldName, param, fieldName),
+				Level: "error",
+				Message: fmt.Sprintf(
+					"named parameter ':%s' will not be provided by the form. "+
+						"The model field is '%s' (form sends ':%s', database column is '%s'). "+
+						"Use ':%s' instead",
+					param, fieldName, fieldName, param, fieldName),
 					Context: context,
 				})
 				continue

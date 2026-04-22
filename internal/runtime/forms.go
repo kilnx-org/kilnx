@@ -389,6 +389,9 @@ func extractFormData(r *http.Request, config *parser.AppConfig) map[string]strin
 			// Handle file uploads
 			for key, fileHeaders := range r.MultipartForm.File {
 				if len(fileHeaders) > 0 {
+					if fileHeaders[0].Filename == "" {
+						continue
+					}
 					file, err := fileHeaders[0].Open()
 					if err != nil {
 						continue

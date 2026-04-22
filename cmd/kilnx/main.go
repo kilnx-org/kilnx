@@ -18,6 +18,8 @@ import (
 	"github.com/kilnx-org/kilnx/internal/runtime"
 )
 
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -86,7 +88,7 @@ func main() {
 	case "mcp":
 		mcp.Serve()
 	case "version":
-		fmt.Println("kilnx v0.1.0")
+		fmt.Printf("kilnx %s\n", version)
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])
 		printUsage()

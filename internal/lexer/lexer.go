@@ -43,7 +43,7 @@ var keywords = map[string]bool{
 	"redirect": true, "on": true, "limit": true,
 	"log": true, "test": true, "translations": true,
 	"enqueue": true, "broadcast": true,
-	"send": true, "requires": true, "method": true, "fetch": true,
+	"send": true, "requires": true, "method": true, "fetch": true, "llm": true,
 	"title": true,
 }
 

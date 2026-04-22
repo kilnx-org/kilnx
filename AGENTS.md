@@ -24,8 +24,8 @@ Read, in order:
 
 ## When editing the compiler (Go source)
 
-- `internal/lexer/`, `internal/parser/`, `internal/analyzer/`, `internal/runtime/`, `internal/database/`, `internal/lsp/`, `internal/build/` are the module boundaries. Respect them.
-- Run `go test -race ./...` before declaring work complete. Target is all 311 tests green.
+- `internal/lexer/`, `internal/parser/`, `internal/analyzer/`, `internal/optimizer/`, `internal/runtime/`, `internal/database/`, `internal/lsp/`, `internal/mcp/`, `internal/build/`, `internal/pdf/` are the module boundaries. Respect them.
+- Run `go test -race ./...` before declaring work complete. Target is all tests green.
 - Never skip pre-commit hooks (no `--no-verify`).
 - Commits follow Conventional Commits. Never add `Co-Authored-By` or any mention of the generating model.
 

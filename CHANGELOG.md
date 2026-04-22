@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-22
+
 ### Added
 - Non-unique model-level `index (field_a, field_b, ...)` directive; emits idempotent `CREATE INDEX IF NOT EXISTS ix_<table>_<cols>` for query acceleration, validated by the analyzer the same way as composite UNIQUE
 - LSP and MCP surfaces advertise the composite `unique (...)` and `index (...)` directives; model hover lists declared groups
@@ -72,6 +74,7 @@ All 14 hardening items from the pre-release security review landed in this versi
 - `.kilnx` import sandbox: extension check, project root containment, depth limit
 - Sensitive field redaction in logs and error output
 
-[Unreleased]: https://github.com/kilnx-org/kilnx/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/kilnx-org/kilnx/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/kilnx-org/kilnx/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/kilnx-org/kilnx/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kilnx-org/kilnx/releases/tag/v0.1.0

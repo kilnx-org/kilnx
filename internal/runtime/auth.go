@@ -258,7 +258,13 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request, page parser
 	session := s.getSession(r)
 	if session == nil {
 		loginPath := app.Auth.LoginPath
-		http.Redirect(w, r, loginPath+"?next="+url.QueryEscape(r.URL.Path), http.StatusSeeOther)
+		target := loginPath + "?next=" + url.QueryEscape(r.URL.Path)
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("HX-Redirect", target)
+			w.WriteHeader(http.StatusUnauthorized)
+			return false
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
 		return false
 	}
 

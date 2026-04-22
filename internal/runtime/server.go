@@ -713,6 +713,7 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 
 	// Get path params and merge query params
 	pathParams := matchPathParams(frag.Path, r.URL.Path)
+	s.populateCurrentUserParams(pathParams, ctx.currentUser)
 	for key, values := range r.URL.Query() {
 		if len(values) > 0 {
 			ctx.queryParams[key] = values[0]
@@ -1156,6 +1157,48 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				}
 			}
 
+		case parser.NodeLLM:
+			varName := node.Name
+			if varName == "" {
+				varName = "_llm"
+			}
+			var querier rowQuerier
+			if tx != nil {
+				querier = tx
+			} else if s.db != nil {
+				querier = s.db
+			}
+			if querier != nil {
+				text, err := executeLLM(node, querier, formData)
+				if err != nil {
+					fmt.Printf("  llm error: %v\n", err)
+					formData[varName] = "Desculpe, ocorreu um erro ao processar sua mensagem."
+				} else {
+					formData[varName] = text
+				}
+			}
+
+		case parser.NodeHTML:
+			if tx != nil {
+				tx.Commit()
+			}
+			formRow := make(database.Row)
+			for k, v := range formData {
+				formRow[k] = v
+			}
+			htmlCtx := &renderContext{
+				queries:           map[string][]database.Row{"_form": {formRow}},
+				paginate:          make(map[string]PaginateInfo),
+				currentUser:       s.getSession(r),
+				queryParams:       formData,
+				querySourceModels: make(map[string]string),
+				customManifests:   app.CustomManifests,
+			}
+			htmlContent := renderHTML(node.HTMLContent, htmlCtx)
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Write([]byte(htmlContent))
+			return
+
 		case parser.NodeRedirect:
 			path := node.Value
 			for k, v := range formData {
@@ -1168,7 +1211,34 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				// For htmx: find a fragment under the redirect path
 				// e.g., redirect to /channel/6 finds fragment /channel/:id/messages
 				rendered := false
+				// First: check for exact fragment match
 				for _, frag := range app.Fragments {
+					fragParts := strings.Split(frag.Path, "/")
+					pathParts := strings.Split(path, "/")
+					if len(fragParts) == len(pathParts) {
+						match := true
+						for i, pp := range pathParts {
+							fp := fragParts[i]
+							if fp != pp && !strings.HasPrefix(fp, ":") {
+								match = false
+								break
+							}
+						}
+						if match {
+							fakeReq := r.Clone(r.Context())
+							fakeReq.URL.Path = path
+							content := s.renderFragment(frag, fakeReq)
+							w.Header().Set("Content-Type", "text/html; charset=utf-8")
+							w.Write([]byte(content))
+							rendered = true
+							break
+						}
+					}
+				}
+				for _, frag := range app.Fragments {
+					if rendered {
+						break
+					}
 					// Check if fragment path starts with same prefix as redirect
 					fragParts := strings.Split(frag.Path, "/")
 					pathParts := strings.Split(path, "/")

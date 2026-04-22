@@ -286,6 +286,7 @@ const (
 	NodeBroadcast            // broadcast to :room
 	NodeGeneratePDF          // generate pdf from template X data Y
 	NodeFetch                // fetch data: GET https://api.example.com/endpoint
+	NodeLLM                  // llm varname: model\n  history: SQL\n  system: prompt
 )
 
 type Node struct {
@@ -318,6 +319,9 @@ type Node struct {
 	FetchMethod   string            // for fetch: GET, POST, PUT, DELETE
 	FetchHeaders  map[string]string // for fetch: request headers
 	FetchBody     map[string]string // for fetch: POST body params
+	LLMModel      string            // for llm: model name (e.g. claude-sonnet-4-6)
+	LLMSystem     string            // for llm: system prompt
+	LLMHistorySQL string            // for llm: SQL to fetch message history
 }
 
 type Validation struct {
@@ -1133,6 +1137,10 @@ func (p *parserState) parseBody() []Node {
 				continue
 			case "fetch":
 				node := p.parseFetchNode()
+				nodes = append(nodes, node)
+				continue
+			case "llm":
+				node := p.parseLLMNode()
 				nodes = append(nodes, node)
 				continue
 			}
@@ -3380,6 +3388,78 @@ func (p *parserState) parseFetchNode() Node {
 			}
 
 			p.advance()
+		}
+	}
+
+	return node
+}
+
+// parseLLMNode parses:
+//
+//	llm varname: model-name
+//	  history: SELECT papel, conteudo FROM mensagem WHERE conversa_id = :id ORDER BY criada ASC
+//	  system: You are a helpful assistant...
+func (p *parserState) parseLLMNode() Node {
+	node := Node{Type: NodeLLM}
+
+	llmLine := p.current().Line
+	p.advance() // consume "llm"
+
+	// varname (optional, before colon)
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		next := p.peek()
+		if next.Type == lexer.TokenColon {
+			node.Name = p.advance().Value
+			p.advance() // consume ':'
+		}
+	}
+
+	// model name on same line
+	if llmLine >= 1 && llmLine <= len(p.lines) {
+		line := strings.TrimSpace(p.lines[llmLine-1])
+		if colonIdx := strings.LastIndex(line, ":"); colonIdx >= 0 {
+			node.LLMModel = strings.TrimSpace(line[colonIdx+1:])
+		}
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type == lexer.TokenIndent {
+		p.advance()
+		for !p.isEOF() {
+			if p.current().Type == lexer.TokenDedent {
+				p.advance()
+				break
+			}
+			if p.current().Type == lexer.TokenNewline {
+				p.advance()
+				continue
+			}
+			tok := p.current()
+			if tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword {
+				keyLine := tok.Line
+				key := tok.Value
+				p.advance()
+				if p.current().Type == lexer.TokenColon {
+					p.advance()
+				}
+				if keyLine >= 1 && keyLine <= len(p.lines) {
+					rawLine := strings.TrimSpace(p.lines[keyLine-1])
+					val := ""
+					if colonIdx := strings.Index(rawLine, ":"); colonIdx >= 0 {
+						val = strings.TrimSpace(rawLine[colonIdx+1:])
+					}
+					switch key {
+					case "history":
+						node.LLMHistorySQL = val
+					case "system":
+						node.LLMSystem = val
+					}
+				}
+			}
+			p.skipToEndOfLine()
+			p.skipNewlines()
 		}
 	}
 
