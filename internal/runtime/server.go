@@ -133,7 +133,11 @@ func (s *Server) Start() error {
 			if info, err := os.Stat(absStatic); err == nil && info.IsDir() {
 				fileServer := http.FileServer(http.Dir(absStatic))
 				mux.Handle("/_static/", http.StripPrefix("/_static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Set("Cache-Control", "public, max-age=3600")
+					if os.Getenv("KILNX_DEV") == "1" {
+						w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+					} else {
+						w.Header().Set("Cache-Control", "public, max-age=3600")
+					}
 					fileServer.ServeHTTP(w, r)
 				})))
 				fmt.Printf("Serving static files from %s at /_static/\n", staticDir)
