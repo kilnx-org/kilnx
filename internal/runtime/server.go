@@ -25,7 +25,7 @@ var interpolateRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][
 
 type Server struct {
 	app               *parser.App
-	db                *database.DB
+	db                database.Executor
 	sessions          *SessionStore
 	jobQueue          *JobQueue
 	rateLimiter       *RateLimiter
@@ -39,7 +39,7 @@ type Server struct {
 	scheduleStop      chan struct{}
 }
 
-func NewServer(app *parser.App, db *database.DB, port int) *Server {
+func NewServer(app *parser.App, db database.Executor, port int) *Server {
 	secret := ""
 	if app.Config != nil {
 		secret = app.Config.Secret
@@ -57,8 +57,8 @@ func NewServer(app *parser.App, db *database.DB, port int) *Server {
 	s.rateLimiter = NewRateLimiter(app.RateLimits)
 	s.logger = NewLogger(app.LogConfig)
 	// Wire slow query logging from database to logger
-	if db != nil {
-		db.OnSlowQuery = s.logger.LogSlowQuery
+	if rawDB, ok := db.(*database.DB); ok && rawDB != nil {
+		rawDB.OnSlowQuery = s.logger.LogSlowQuery
 	}
 	defaultLang := "en"
 	detectLang := true // detect by default when translations exist
@@ -115,7 +115,12 @@ func (s *Server) Start() error {
 	if s.app.Config != nil && s.app.Config.UploadsDir != "" {
 		uploadsDir = s.app.Config.UploadsDir
 	}
-	mux.Handle("/_uploads/", http.StripPrefix("/_uploads/", http.FileServer(http.Dir(uploadsDir))))
+	uploadsFS := http.FileServer(http.Dir(uploadsDir))
+	mux.Handle("/_uploads/", http.StripPrefix("/_uploads/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Disposition", "attachment")
+		uploadsFS.ServeHTTP(w, r)
+	})))
 
 	// Serve static files directory (validated to prevent path traversal)
 	staticDir := "static"

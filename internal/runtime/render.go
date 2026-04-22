@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"math"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -911,9 +912,19 @@ func renderMarkdown(text string) string {
 	strikeRe := regexp.MustCompile(`~([^~]+)~`)
 	text = strikeRe.ReplaceAllString(text, "<del>$1</del>")
 
-	// Links: [text](url)
+	// Links: [text](url) — sanitize scheme to prevent javascript: XSS
 	linkRe := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
-	text = linkRe.ReplaceAllString(text, `<a href="$2" target="_blank" rel="noopener">$1</a>`)
+	text = linkRe.ReplaceAllStringFunc(text, func(m string) string {
+		parts := linkRe.FindStringSubmatch(m)
+		if len(parts) < 3 {
+			return m
+		}
+		label, rawURL := parts[1], parts[2]
+		if !isAllowedURLScheme(rawURL) {
+			return label
+		}
+		return fmt.Sprintf(`<a href="%s" target="_blank" rel="noopener">%s</a>`, rawURL, label)
+	})
 
 	// @mentions
 	mentionRe := regexp.MustCompile(`@([a-zA-Z0-9_]+)`)
@@ -926,6 +937,24 @@ func renderMarkdown(text string) string {
 	text = strings.ReplaceAll(text, "\n", "<br>")
 
 	return text
+}
+
+// allowedURLSchemes is the whitelist of safe URL schemes for links.
+var allowedURLSchemes = map[string]bool{
+	"http": true, "https": true, "mailto": true, "tel": true,
+}
+
+// isAllowedURLScheme returns true if the URL uses an allowed scheme.
+func isAllowedURLScheme(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	if u.Scheme == "" {
+		// Allow schemeless relative URLs (e.g. /path or #anchor)
+		return true
+	}
+	return allowedURLSchemes[strings.ToLower(u.Scheme)]
 }
 
 // linkify converts bare URLs in text to clickable <a> tags.

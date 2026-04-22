@@ -39,6 +39,15 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+// sanitizeEmailAddress removes control characters that could be used for
+// header injection (CRLF) or null-byte attacks.
+func sanitizeEmailAddress(addr string) string {
+	addr = strings.ReplaceAll(addr, "\r", "")
+	addr = strings.ReplaceAll(addr, "\n", "")
+	addr = strings.ReplaceAll(addr, "\x00", "")
+	return strings.TrimSpace(addr)
+}
+
 // LoadEmailTemplate loads a template file and interpolates {key} placeholders
 func LoadEmailTemplate(templateName string, params map[string]string) string {
 	// Try to load from templates/ directory
@@ -76,6 +85,8 @@ func SendEmailWithTemplate(to, subject, body, templateName string, params map[st
 func SendEmail(to, subject, body string) error {
 	cfg := loadEmailConfig()
 
+	to = sanitizeEmailAddress(to)
+	cfg.From = sanitizeEmailAddress(cfg.From)
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n%s",
 		cfg.From, to, subject, body)
 
@@ -95,15 +106,41 @@ func SendEmail(to, subject, body string) error {
 	return nil
 }
 
+// isPathWithinAllowedDirs checks whether the given path is inside one of the
+// allowed directories (current working dir, uploads/, templates/).
+func isPathWithinAllowedDirs(path string) bool {
+	absPath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	allowed := []string{cwd, filepath.Join(cwd, "uploads"), filepath.Join(cwd, "templates")}
+	for _, dir := range allowed {
+		if dir != "" && (strings.HasPrefix(absPath, dir+string(filepath.Separator)) || absPath == dir) {
+			return true
+		}
+	}
+	return false
+}
+
 // SendEmailWithAttachment sends an email with a file attachment using MIME multipart
 func SendEmailWithAttachment(to, subject, body, attachPath string) error {
 	cfg := loadEmailConfig()
+
+	if !isPathWithinAllowedDirs(attachPath) {
+		return fmt.Errorf("attachment path %q is outside allowed directories", attachPath)
+	}
 
 	randBytes := make([]byte, 16)
 	crand.Read(randBytes)
 	boundary := "KilnxBoundary" + hex.EncodeToString(randBytes)
 
 	var msg strings.Builder
+	to = sanitizeEmailAddress(to)
+	cfg.From = sanitizeEmailAddress(cfg.From)
 	msg.WriteString(fmt.Sprintf("From: %s\r\n", cfg.From))
 	msg.WriteString(fmt.Sprintf("To: %s\r\n", to))
 	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
