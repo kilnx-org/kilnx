@@ -2117,7 +2117,7 @@ func (p *parserState) parseSchedule() Schedule {
 			if schedLine >= 1 && schedLine <= len(p.lines) {
 				line := p.lines[schedLine-1]
 				idx := strings.Index(strings.ToLower(line), "every ")
-				if idx >= 0 {
+				if idx >= 0 && idx <= len(line) {
 					sched.Cron = strings.TrimSpace(line[idx:])
 				}
 			}
@@ -2411,7 +2411,7 @@ func (p *parserState) parseWebhook() Webhook {
 				if eventLine >= 1 && eventLine <= len(p.lines) {
 					line := p.lines[eventLine-1]
 					idx := strings.Index(strings.ToLower(line), "event ")
-					if idx >= 0 {
+					if idx >= 0 && idx+len("event ") <= len(line) {
 						event.Name = strings.TrimSpace(line[idx+len("event "):])
 					}
 				}
@@ -3120,7 +3120,7 @@ func (p *parserState) extractRequiresText(lineNum int) string {
 	rawLine := p.lines[lineNum-1]
 	lower := strings.ToLower(rawLine)
 	idx := strings.Index(lower, "requires")
-	if idx < 0 {
+	if idx < 0 || idx+len("requires") > len(rawLine) {
 		return ""
 	}
 	rest := rawLine[idx+len("requires"):]
