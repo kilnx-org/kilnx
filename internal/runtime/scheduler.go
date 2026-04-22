@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kilnx-org/kilnx/internal/database"
@@ -163,6 +164,7 @@ func nextCronOccurrence(expr string) time.Time {
 type JobQueue struct {
 	server *Server
 	jobs   map[string]parser.Job
+	mu     sync.RWMutex
 }
 
 func NewJobQueue(server *Server) *JobQueue {
@@ -182,8 +184,11 @@ func NewJobQueue(server *Server) *JobQueue {
 func (jq *JobQueue) Start() {
 	jq.recoverOrphanedJobs()
 	go jq.pollQueue()
-	if len(jq.jobs) > 0 {
-		fmt.Printf("Job queue ready (%d job type(s))\n", len(jq.jobs))
+	jq.mu.RLock()
+	n := len(jq.jobs)
+	jq.mu.RUnlock()
+	if n > 0 {
+		fmt.Printf("Job queue ready (%d job type(s))\n", n)
 	}
 }
 
@@ -212,6 +217,8 @@ func (jq *JobQueue) recoverOrphanedJobs() {
 // RefreshJobQueue updates the job definitions from the current app (for hot-reload)
 func (s *Server) RefreshJobQueue() {
 	app := s.getApp()
+	s.jobQueue.mu.Lock()
+	defer s.jobQueue.mu.Unlock()
 	for _, job := range app.Jobs {
 		s.jobQueue.jobs[job.Name] = job
 	}
@@ -219,7 +226,9 @@ func (s *Server) RefreshJobQueue() {
 
 // Enqueue persists a job to the _kilnx_jobs table
 func (jq *JobQueue) Enqueue(name string, params map[string]string) error {
+	jq.mu.RLock()
 	job, ok := jq.jobs[name]
+	jq.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("unknown job: %s", name)
 	}
@@ -277,7 +286,9 @@ func (jq *JobQueue) processNextJob() {
 	jobID := row["id"]
 	jobName := row["name"]
 
+	jq.mu.RLock()
 	job, ok := jq.jobs[jobName]
+	jq.mu.RUnlock()
 	if !ok {
 		db.ExecWithParams(
 			`UPDATE _kilnx_jobs SET state = 'discarded', last_error = 'unknown job type' WHERE id = :id`,
