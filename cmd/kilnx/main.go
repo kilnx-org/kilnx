@@ -184,6 +184,9 @@ func cmdRun(filename string) error {
 		}
 	}
 
+	// Dev mode: disable static asset caching for hot-reload
+	os.Setenv("KILNX_DEV", "1")
+
 	return runtime.WatchAndServe(filename, db, port)
 }
 
