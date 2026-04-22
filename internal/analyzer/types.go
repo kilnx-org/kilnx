@@ -665,10 +665,6 @@ func extractSelectAliases(tokens []sqlToken) map[string]bool {
 	return aliases
 }
 
-func checkTableColumnRefs(app *parser.App, schema *Schema) []Diagnostic {
-	return nil
-}
-
 // customFieldRefRe matches {queryName.custom.fieldName} in HTML content.
 var customFieldRefRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\.custom\.([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 
