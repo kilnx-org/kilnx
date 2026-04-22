@@ -9,8 +9,8 @@ import (
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
-// templateInterpolationRe matches {queryName.field} patterns in HTML content.
-var templateInterpolationRe = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\.([a-zA-Z_][a-zA-Z0-9_]*)\}`)
+// templateInterpolationRe matches {queryName.field}, {field}, {^field}, {^^field}, etc. patterns in HTML content.
+var templateInterpolationRe = regexp.MustCompile(`\{(\^*[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}`)
 
 // ColumnInfo holds the inferred type for a single database column.
 type ColumnInfo struct {
@@ -505,6 +505,115 @@ var reservedInterpolations = map[string]bool{
 
 // checkTemplateInterpolations validates {queryName.field} references inside
 // HTML content of pages, fragments, and layouts against the schema.
+// findMatchingEnd finds the body, else body, and position after {{end}} for a block,
+// accounting for nested {{each}}/{{if}} blocks.
+func findMatchingEnd(content string) (body, elseBody string, endPos int) {
+	depth := 1
+	pos := 0
+	bodyEnd := -1
+	elseStart := -1
+
+	for pos < len(content) {
+		nextTag := strings.Index(content[pos:], "{{")
+		if nextTag < 0 {
+			return "", "", -1
+		}
+		nextTag += pos
+
+		closeTag := strings.Index(content[nextTag:], "}}")
+		if closeTag < 0 {
+			return "", "", -1
+		}
+		closeTag += nextTag + 2
+
+		tagInner := strings.TrimSpace(content[nextTag+2 : closeTag-2])
+
+		if strings.HasPrefix(tagInner, "each ") || strings.HasPrefix(tagInner, "if ") {
+			depth++
+		} else if tagInner == "end" {
+			depth--
+			if depth == 0 {
+				if elseStart >= 0 {
+					body = content[:bodyEnd]
+					elseBody = content[elseStart:nextTag]
+				} else {
+					body = content[:nextTag]
+				}
+				return body, elseBody, closeTag
+			}
+		} else if tagInner == "else" && depth == 1 {
+			bodyEnd = nextTag
+			elseStart = closeTag
+		}
+
+		pos = closeTag
+	}
+
+	return "", "", -1
+}
+
+// eachBlock represents a single {{each queryName}}...{{end}} span in HTML.
+type eachBlock struct {
+	start     int
+	end       int
+	queryName string
+}
+
+// findEachBlocks returns all {{each}} blocks in the given text, including nested ones.
+func findEachBlocks(text string) []eachBlock {
+	var blocks []eachBlock
+	remaining := text
+	offset := 0
+	for {
+		idx := strings.Index(remaining, "{{each ")
+		if idx < 0 {
+			break
+		}
+		tagEnd := strings.Index(remaining[idx:], "}}")
+		if tagEnd < 0 {
+			break
+		}
+		tagEnd += idx + 2
+		queryName := strings.TrimSpace(remaining[idx+7 : tagEnd-2])
+		bodyStart := tagEnd
+		body, _, endPos := findMatchingEnd(remaining[bodyStart:])
+		if endPos < 0 {
+			break
+		}
+		absStart := offset + idx
+		absEnd := offset + bodyStart + endPos
+		blocks = append(blocks, eachBlock{
+			start:     absStart,
+			end:       absEnd,
+			queryName: queryName,
+		})
+		if body != "" {
+			nested := findEachBlocks(body)
+			for i := range nested {
+				nested[i].start += absStart + (tagEnd - idx)
+				nested[i].end += absStart + (tagEnd - idx)
+			}
+			blocks = append(blocks, nested...)
+		}
+		remaining = remaining[bodyStart+endPos:]
+		offset += bodyStart + endPos
+	}
+	return blocks
+}
+
+// countEachEnclosing returns the names of {{each}} blocks that enclose the given position.
+func countEachEnclosing(pos int, blocks []eachBlock) []string {
+	var names []string
+	for _, b := range blocks {
+		if pos >= b.start && pos < b.end {
+			names = append(names, b.queryName)
+		}
+	}
+	return names
+}
+
+// checkTemplateInterpolations validates {queryName.field}, {^field}, and bare {field}
+// references inside HTML content of pages, fragments, and layouts against the schema.
 func checkTemplateInterpolations(app *parser.App, schema *Schema) []Diagnostic {
 	qMap := queryModelMap(app.Pages, app.Fragments, app.APIs)
 
@@ -560,10 +669,64 @@ func checkTemplateInterpolations(app *parser.App, schema *Schema) []Diagnostic {
 			if html == "" {
 				continue
 			}
-			matches := templateInterpolationRe.FindAllStringSubmatch(html, -1)
+			blocks := findEachBlocks(html)
+			matches := templateInterpolationRe.FindAllStringSubmatchIndex(html, -1)
 			for _, m := range matches {
-				queryName := m[1]
-				fieldName := m[2]
+				expr := html[m[2]:m[3]]
+				pos := m[0]
+
+				// Parent-scope reference: {^field}, {^^field}, etc.
+				if strings.HasPrefix(expr, "^") {
+					depth := 0
+					for depth < len(expr) && expr[depth] == '^' {
+						depth++
+					}
+					field := expr[depth:]
+					eachNames := countEachEnclosing(pos, blocks)
+					eachDepth := len(eachNames)
+					if depth >= eachDepth {
+						diags = append(diags, Diagnostic{
+							Level:   "error",
+							Message: fmt.Sprintf("template reference '{%s}': parent scope level %d exceeds available {{each}} nesting depth %d", expr, depth, eachDepth),
+							Context: context,
+						})
+						continue
+					}
+					// The target query is the one at the appropriate nesting level
+					targetQuery := eachNames[eachDepth-depth-1]
+					// Validate the field exists in the target query
+					modelName := ""
+					if mn, ok := localQueries[targetQuery]; ok {
+						modelName = mn
+					} else if mn, ok := qMap[targetQuery]; ok {
+						modelName = mn
+					}
+					if aliases, ok := localAliases[targetQuery]; ok && (aliases[field] || aliases["*"]) {
+						continue
+					}
+					if modelName != "" && modelName != "_fetch" {
+						if info, ok := schema.Tables[modelName]; ok {
+							if _, colExists := info.Columns[field]; !colExists {
+								diags = append(diags, Diagnostic{
+									Level:   "error",
+									Message: fmt.Sprintf("template reference '{%s}': field '%s' does not exist in query '%s' (model '%s')", expr, field, targetQuery, modelName),
+									Context: context,
+								})
+							}
+						}
+					}
+					continue
+				}
+
+				// Bare field: {field} — not statically validated (may be SQL alias, row field, etc.)
+				if !strings.Contains(expr, ".") {
+					continue
+				}
+
+				// queryName.field or queryName.count
+				parts := strings.SplitN(expr, ".", 2)
+				queryName := parts[0]
+				fieldName := parts[1]
 
 				if reservedInterpolations[queryName] {
 					continue
@@ -583,7 +746,7 @@ func checkTemplateInterpolations(app *parser.App, schema *Schema) []Diagnostic {
 				if modelName == "" {
 					diags = append(diags, Diagnostic{
 						Level:   "error",
-						Message: fmt.Sprintf("template reference '{%s.%s}' uses unknown query '%s'", queryName, fieldName, queryName),
+						Message: fmt.Sprintf("template reference '{%s}' uses unknown query '%s'", expr, queryName),
 						Context: context,
 					})
 					continue
@@ -601,7 +764,7 @@ func checkTemplateInterpolations(app *parser.App, schema *Schema) []Diagnostic {
 				if _, colExists := info.Columns[fieldName]; !colExists {
 					diags = append(diags, Diagnostic{
 						Level:   "error",
-						Message: fmt.Sprintf("template reference '{%s.%s}': field '%s' does not exist in model '%s'", queryName, fieldName, fieldName, modelName),
+						Message: fmt.Sprintf("template reference '{%s}': field '%s' does not exist in model '%s'", expr, fieldName, modelName),
 						Context: context,
 					})
 				}
@@ -622,10 +785,24 @@ func checkTemplateInterpolations(app *parser.App, schema *Schema) []Diagnostic {
 		if l.HTMLContent == "" {
 			continue
 		}
-		matches := templateInterpolationRe.FindAllStringSubmatch(l.HTMLContent, -1)
+		matches := templateInterpolationRe.FindAllStringSubmatchIndex(l.HTMLContent, -1)
 		for _, m := range matches {
-			queryName := m[1]
-			fieldName := m[2]
+			expr := l.HTMLContent[m[2]:m[3]]
+			if strings.HasPrefix(expr, "^") {
+				// Parent scope in layout makes no sense (no {{each}})
+				diags = append(diags, Diagnostic{
+					Level:   "error",
+					Message: fmt.Sprintf("template reference '{%s}': parent scope syntax is not valid in layouts", expr),
+					Context: fmt.Sprintf("layout %s", l.Name),
+				})
+				continue
+			}
+			if !strings.Contains(expr, ".") {
+				continue
+			}
+			parts := strings.SplitN(expr, ".", 2)
+			queryName := parts[0]
+			fieldName := parts[1]
 
 			if reservedInterpolations[queryName] {
 				continue
@@ -637,7 +814,7 @@ func checkTemplateInterpolations(app *parser.App, schema *Schema) []Diagnostic {
 			if _, ok := qMap[queryName]; !ok {
 				diags = append(diags, Diagnostic{
 					Level:   "error",
-					Message: fmt.Sprintf("template reference '{%s.%s}' uses unknown query '%s'", queryName, fieldName, queryName),
+					Message: fmt.Sprintf("template reference '{%s}' uses unknown query '%s'", expr, queryName),
 					Context: fmt.Sprintf("layout %s", l.Name),
 				})
 			}

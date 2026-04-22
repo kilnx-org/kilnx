@@ -403,6 +403,67 @@ func TestRenderHTML_NestedEachBlocks(t *testing.T) {
 	}
 }
 
+func TestRenderHTML_NestedEachParentScope(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["companies"] = []database.Row{{"id": "1", "name": "Acme"}, {"id": "2", "name": "Corp"}}
+	ctx.queries["people"] = []database.Row{{"id": "10", "name": "Alice"}, {"id": "11", "name": "Bob"}}
+
+	result := renderHTML(`{{each companies}}<div id="c{id}"><h2>{name}</h2>{{each people}}<li data-cid="{^id}" data-pid="{id}">{name}</li>{{end}}</div>{{end}}`, ctx)
+	if !strings.Contains(result, `<div id="c1">`) {
+		t.Errorf("expected outer id c1, got: %s", result)
+	}
+	if !strings.Contains(result, `<li data-cid="1" data-pid="10">`) {
+		t.Errorf("expected parent scope ^id=1 and inner id=10, got: %s", result)
+	}
+	if !strings.Contains(result, `<li data-cid="2" data-pid="11">`) {
+		t.Errorf("expected parent scope ^id=2 and inner id=11, got: %s", result)
+	}
+	if strings.Contains(result, "{^id}") {
+		t.Errorf("unresolved parent scope ref leaked: %s", result)
+	}
+}
+
+func TestRenderHTML_NestedEachParentScopeMultiLevel(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["a"] = []database.Row{{"name": "A1"}}
+	ctx.queries["b"] = []database.Row{{"name": "B1"}}
+	ctx.queries["c"] = []database.Row{{"name": "C1"}}
+
+	result := renderHTML(`{{each a}}<a>{name}</a>{{each b}}<b>{name}</b>{{each c}}<c>{name}|{^^name}|{^name}</c>{{end}}{{end}}{{end}}`, ctx)
+	expected := "<c>C1|A1|B1</c>"
+	if !strings.Contains(result, expected) {
+		t.Errorf("expected multi-level parent scope %s, got: %s", expected, result)
+	}
+}
+
+func TestRenderHTML_NestedEachParentScopeNotFound(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["outer"] = []database.Row{{"id": "1"}}
+	ctx.queries["inner"] = []database.Row{{"id": "10"}}
+
+	result := renderHTML(`{{each outer}}<o>{id}</o>{{each inner}}<i>{^id}</i><x>{^nonexistent}</x>{{end}}{{end}}`, ctx)
+	if !strings.Contains(result, "<o>1</o>") {
+		t.Errorf("expected outer id, got: %s", result)
+	}
+	if !strings.Contains(result, "<i>1</i>") {
+		t.Errorf("expected parent scope ^id=1, got: %s", result)
+	}
+	if !strings.Contains(result, "{^nonexistent}") {
+		t.Errorf("expected unresolved parent ref to stay literal, got: %s", result)
+	}
+}
+
+func TestRenderHTML_NestedEachParentScopeWithFilter(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["companies"] = []database.Row{{"id": "1", "name": "Acme"}}
+	ctx.queries["people"] = []database.Row{{"id": "10", "name": "Alice"}}
+
+	result := renderHTML(`{{each companies}}{{each people}}<span>{^name | upcase} {name | upcase}</span>{{end}}{{end}}`, ctx)
+	if !strings.Contains(result, "<span>ACME ALICE</span>") {
+		t.Errorf("expected filtered parent scope ACME ALICE, got: %s", result)
+	}
+}
+
 func TestRenderHTML_IfWithNotEquals(t *testing.T) {
 	ctx := newTestContext()
 	ctx.queries["user"] = []database.Row{{"role": "admin"}}

@@ -104,6 +104,21 @@ page /dashboard requires auth
     {{end}}
 ```
 
+Nested loops can reference outer scope fields with `{^field}`:
+
+```kilnx
+page /user/:id
+  query u: select id, name from user where id = :id
+  query posts: select id, title from post where user_id = :id
+  html
+    {{each u}}
+    <h1>{name}</h1>
+    {{each posts}}
+      <a href="/user/{^id}/posts/{id}/delete">delete {title}</a>
+    {{end}}
+    {{end}}
+```
+
 ## Actions
 
 POST/PUT/DELETE mutations with validation, branching, and redirects.
