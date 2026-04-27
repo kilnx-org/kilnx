@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/parser` |
-| **Source last touched** | `a1b78ce` (2026-05-19) |
+| **Source last touched** | `3df67e5` (2026-05-19) |
 | **Doc last touched** | `4479336` (2026-05-08) |
 
 

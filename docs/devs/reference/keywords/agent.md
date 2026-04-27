@@ -40,7 +40,7 @@ Inside a `job` or `schedule`, the agent runs on the worker rather than an HTTP h
 
 | | |
 |---|---|
-| **Spec last touched** | `a1b78ce` (2026-05-19) |
+| **Spec last touched** | `3df67e5` (2026-05-19) |
 | **Source last touched** | `d050f4c` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go`, `internal/runtime/scheduler.go`, `internal/runtime/server.go` |
 

@@ -31,7 +31,7 @@ Free-form text. May contain `:param` substitutions resolved against the surround
 
 | | |
 |---|---|
-| **Spec last touched** | `a1b78ce` (2026-05-19) |
+| **Spec last touched** | `3df67e5` (2026-05-19) |
 | **Source last touched** | `173d8b6` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go`, `internal/runtime/llm_agent.go` |
 

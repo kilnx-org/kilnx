@@ -31,7 +31,7 @@ Maps to `claude --resume <id>`. The id is a UUIDv4 string previously returned by
 
 | | |
 |---|---|
-| **Spec last touched** | `a1b78ce` (2026-05-19) |
+| **Spec last touched** | `3df67e5` (2026-05-19) |
 | **Source last touched** | `d461e57` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go` |
 
