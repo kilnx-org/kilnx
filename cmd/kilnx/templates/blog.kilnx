@@ -1,0 +1,77 @@
+config
+  port: 3000
+
+model user
+  email: email required unique
+  password: password required
+  name: text required
+
+model post
+  user_id: reference user
+  title: text required
+  content: richtext
+  created_at: timestamp auto
+
+auth
+  identity: email
+  password: password
+
+permissions
+  default: auth
+
+page / requires auth
+  query posts: SELECT p.id, p.title, p.content, p.created_at, u.name as author
+                 FROM post p JOIN user u ON p.user_id = u.id
+                 ORDER BY p.created_at DESC
+  html
+    <h1>{{PROJECT_NAME}}</h1>
+    <a href="/new">New post</a>
+    <hr>
+    {{each posts}}
+      <article>
+        <h2><a href="/posts/{id}">{title}</a></h2>
+        <p>By {author} on {created_at|date:"Jan 02, 2006"}</p>
+        <p>{content|truncate:200}</p>
+      </article>
+    {{end}}
+
+page /posts/:id
+  query post: SELECT p.*, u.name as author FROM post p JOIN user u ON p.user_id = u.id WHERE p.id = :id
+  html
+    <h1>{post.title}</h1>
+    <p>By {post.author} on {post.created_at|date:"Jan 02, 2006"}</p>
+    <div>{post.content|raw}</div>
+    <a href="/">Back</a>
+
+page /new requires auth
+  html
+    <h1>New post</h1>
+    <form action="/posts" method="POST">
+      <input name="title" placeholder="Title" required>
+      <textarea name="content" placeholder="Content"></textarea>
+      <button type="submit">Publish</button>
+    </form>
+
+action /posts method POST requires auth
+  validate post
+    title: required min 3
+    content: required
+  query: INSERT INTO post (user_id, title, content) VALUES (:current_user.id, :title, :content)
+  on success
+    redirect /
+
+test "create and list post"
+  step "register"
+    POST /register
+      email: "writer@example.com"
+      password: "secret123"
+      name: "Writer"
+    assert status 302
+  step "create post"
+    POST /posts
+      title: "Hello Kilnx"
+      content: "My first post."
+    assert status 302
+  step "list posts"
+    GET /
+    assert body contains "Hello Kilnx"

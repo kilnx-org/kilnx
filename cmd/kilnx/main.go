@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,9 @@ import (
 	"github.com/kilnx-org/kilnx/internal/parser"
 	"github.com/kilnx-org/kilnx/internal/runtime"
 )
+
+//go:embed templates/*.kilnx
+var templatesFS embed.FS
 
 var version = "dev"
 
@@ -87,6 +91,16 @@ func main() {
 		lsp.Serve()
 	case "mcp":
 		mcp.Serve()
+	case "init":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: kilnx init <template> <directory>")
+			fmt.Println("Templates: blog, api")
+			os.Exit(1)
+		}
+		if err := cmdInit(os.Args[2], os.Args[3]); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Printf("kilnx %s\n", version)
 	default:
@@ -94,6 +108,42 @@ func main() {
 		printUsage()
 		os.Exit(1)
 	}
+}
+
+func cmdInit(template, dir string) error {
+	valid := map[string]bool{"blog": true, "api": true}
+	if !valid[template] {
+		return fmt.Errorf("unknown template %q. Available: blog, api", template)
+	}
+
+	data, err := templatesFS.ReadFile("templates/" + template + ".kilnx")
+	if err != nil {
+		return fmt.Errorf("reading template: %w", err)
+	}
+
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("creating directory: %w", err)
+	}
+
+	projectName := filepath.Base(dir)
+	content := strings.ReplaceAll(string(data), "{{PROJECT_NAME}}", projectName)
+
+	outPath := filepath.Join(dir, "app.kilnx")
+	if _, err := os.Stat(outPath); err == nil {
+		return fmt.Errorf("%s already exists", outPath)
+	}
+
+	if err := os.WriteFile(outPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("writing file: %w", err)
+	}
+
+	fmt.Printf("Created %s template in %s/\n", template, dir)
+	fmt.Printf("  %s\n", outPath)
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Printf("  cd %s\n", dir)
+	fmt.Println("  kilnx run app.kilnx")
+	return nil
 }
 
 func cmdCheck(filename, dbURL string) error {
@@ -175,6 +225,17 @@ func cmdRun(filename string) error {
 
 	// Auto-migrate if models exist
 	if len(app.Models) > 0 {
+		// Warn about orphan tables in dev mode, but don't block startup
+		if risks, err := db.DetectDataLossRisk(app.Models); err == nil && len(risks) > 0 {
+			fmt.Fprintln(os.Stderr, "kilnx warn: orphan tables with data detected:")
+			for _, r := range risks {
+				if r.Suggestion != "" {
+					fmt.Fprintf(os.Stderr, "  - '%s' (%d rows)  suggestion: %s\n", r.TableName, r.RowCount, r.Suggestion)
+				} else {
+					fmt.Fprintf(os.Stderr, "  - '%s' (%d rows)\n", r.TableName, r.RowCount)
+				}
+			}
+		}
 		stmts, err := db.Migrate(app.Models, app.CustomManifests)
 		if err != nil {
 			return err
@@ -193,12 +254,15 @@ func cmdRun(filename string) error {
 func cmdMigrate(filename string, flags []string) error {
 	dryRun := false
 	status := false
+	allowDataLoss := false
 	for _, f := range flags {
 		switch f {
 		case "--dry-run":
 			dryRun = true
 		case "--status":
 			status = true
+		case "--allow-dataloss":
+			allowDataLoss = true
 		}
 	}
 
@@ -227,6 +291,32 @@ func cmdMigrate(filename string, flags []string) error {
 
 	if err := db.MigrateInternal(); err != nil {
 		return err
+	}
+
+	// Detect tables with data that no longer map to any model
+	risks, err := db.DetectDataLossRisk(app.Models)
+	if err != nil {
+		return fmt.Errorf("checking data-loss risk: %w", err)
+	}
+	if len(risks) > 0 {
+		fmt.Println("WARNING: The following tables contain data but are no longer declared in your .kilnx file:")
+		for _, r := range risks {
+			if r.Suggestion != "" {
+				fmt.Printf("  - '%s' (%d rows)  suggestion: %s\n", r.TableName, r.RowCount, r.Suggestion)
+			} else {
+				fmt.Printf("  - '%s' (%d rows)\n", r.TableName, r.RowCount)
+			}
+		}
+		if !allowDataLoss {
+			fmt.Println()
+			fmt.Println("Migration blocked to prevent leaving data behind.")
+			fmt.Println("Use 'kilnx migrate <file.kilnx> --allow-dataloss' to proceed anyway,")
+			fmt.Println("or add a 'model <new> renames <old>' directive to preserve the data.")
+			return fmt.Errorf("migration blocked: potential data loss detected")
+		}
+		fmt.Println()
+		fmt.Println("Proceeding because --allow-dataloss was passed.")
+		fmt.Println()
 	}
 
 	if status {
@@ -533,12 +623,14 @@ func printUsage() {
 	fmt.Println("Usage: kilnx <command> [arguments]")
 	fmt.Println()
 	fmt.Println("Commands:")
+	fmt.Println("  init <template> <dir>   Create a new project from a template")
 	fmt.Println("  run <file.kilnx>        Start the server (auto-migrates)")
 	fmt.Println("  check <file.kilnx>      Run static analysis")
 	fmt.Println("  build <file.kilnx> [-o] Compile to standalone binary")
 	fmt.Println("  migrate <file.kilnx>    Apply database migrations")
 	fmt.Println("          --dry-run       Show SQL without applying")
 	fmt.Println("          --status        Show migration history and pending changes")
+	fmt.Println("          --allow-dataloss  Skip data-loss protection check")
 	fmt.Println("  test <file.kilnx>       Run declarative tests")
 	fmt.Println("  lsp                     Start Language Server Protocol server")
 	fmt.Println("  mcp                     Start Model Context Protocol server")

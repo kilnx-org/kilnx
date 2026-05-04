@@ -33,6 +33,13 @@ func (PostgresDialect) TableExistsSQL() string {
 		WHERE table_schema = 'public' AND table_name = $1`
 }
 
+func (PostgresDialect) ListTablesSQL() string {
+	return `SELECT table_name FROM information_schema.tables
+		WHERE table_schema = 'public'
+		  AND table_name NOT LIKE '\_kilnx\_%' ESCAPE '\'
+		  AND table_name NOT LIKE '\_%\_field\_defs' ESCAPE '\'`
+}
+
 func (PostgresDialect) ColumnsSQL(table string) string {
 	return fmt.Sprintf(
 		`SELECT column_name FROM information_schema.columns

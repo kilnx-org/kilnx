@@ -32,6 +32,13 @@ func (SqliteDialect) TableExistsSQL() string {
 	return "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?"
 }
 
+func (SqliteDialect) ListTablesSQL() string {
+	return `SELECT name FROM sqlite_master
+		WHERE type='table'
+		  AND name NOT LIKE '\_kilnx\_%' ESCAPE '\'
+		  AND name NOT LIKE '\_%\_field\_defs' ESCAPE '\'`
+}
+
 func (SqliteDialect) ColumnsSQL(table string) string {
 	return fmt.Sprintf(`SELECT name FROM pragma_table_info("%s")`, table)
 }
