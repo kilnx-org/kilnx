@@ -128,10 +128,32 @@ func (db *DB) PlanMigration(models []parser.Model, manifests ...map[string]*pars
 			return stmts, err
 		}
 
+		renamed := false
+		if model.Renames != "" {
+			if !isValidIdentifier(model.Renames) {
+				return stmts, fmt.Errorf("invalid old model name: %q", model.Renames)
+			}
+			oldExists, err := db.tableExists(model.Renames)
+			if err != nil {
+				return stmts, err
+			}
+			if oldExists && !exists {
+				stmts = append(stmts, fmt.Sprintf(`ALTER TABLE "%s" RENAME TO "%s"`, model.Renames, model.Name))
+				// Plan ALTERs against the old table name because the rename hasn't executed yet.
+				alterStmts, err := db.planExistingTable(model.Renames, model.Name, model, cm)
+				if err != nil {
+					return stmts, err
+				}
+				stmts = append(stmts, alterStmts...)
+				exists = true
+				renamed = true
+			}
+		}
+
 		if !exists {
 			stmts = append(stmts, db.generateCreateTable(model, cm))
-		} else {
-			alterStmts, err := db.planExistingTable(model, cm)
+		} else if !renamed {
+			alterStmts, err := db.planExistingTable(model.Name, model.Name, model, cm)
 			if err != nil {
 				return stmts, err
 			}
@@ -358,11 +380,85 @@ func (db *DB) tableExists(name string) (bool, error) {
 	return count > 0, err
 }
 
-// planExistingTable returns ALTER TABLE statements needed without executing them
-func (db *DB) planExistingTable(model parser.Model, cm map[string]*parser.CustomFieldManifest) ([]string, error) {
+// DataLossRisk describes a table in the database that is no longer represented
+// by any model in the current schema. If it contains rows, the migration may
+// leave data behind.
+type DataLossRisk struct {
+	TableName   string
+	RowCount    int
+	Suggestion  string // e.g. "model <new> renames <old>"
+}
+
+// DetectDataLossRisk inspects the database for tables that do not correspond
+// to any model in the provided slice and contain data. It returns a slice of
+// risks and any error encountered during introspection.
+func (db *DB) DetectDataLossRisk(models []parser.Model) ([]DataLossRisk, error) {
+	modelNames := make(map[string]bool, len(models))
+	for _, m := range models {
+		modelNames[m.Name] = true
+		if m.Renames != "" {
+			modelNames[m.Renames] = true
+		}
+	}
+
+	rows, err := db.conn.Query(db.dialect.ListTablesSQL())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var risks []DataLossRisk
+	for rows.Next() {
+		var tableName string
+		if err := rows.Scan(&tableName); err != nil {
+			return nil, err
+		}
+		if modelNames[tableName] {
+			continue
+		}
+
+		var count int
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM \"%s\"", tableName)
+		if err := db.conn.QueryRow(countQuery).Scan(&count); err != nil {
+			// Skip tables we can't inspect (e.g. views masquerading as tables)
+			continue
+		}
+		if count == 0 {
+			continue
+		}
+
+		// Suggest a rename if a model name looks like a plural/singular variant
+		var suggestion string
+		for _, m := range models {
+			if m.Renames == "" && strings.EqualFold(m.Name, tableName) {
+				continue
+			}
+			if m.Renames == "" && (strings.EqualFold(m.Name+"s", tableName) ||
+				strings.EqualFold(tableName+"s", m.Name) ||
+				strings.EqualFold(m.Name, tableName+"es") ||
+				strings.EqualFold(tableName, m.Name+"es")) {
+				suggestion = fmt.Sprintf("model %s renames %s", m.Name, tableName)
+				break
+			}
+		}
+
+		risks = append(risks, DataLossRisk{
+			TableName:  tableName,
+			RowCount:   count,
+			Suggestion: suggestion,
+		})
+	}
+	return risks, rows.Err()
+}
+
+// planExistingTable returns ALTER TABLE statements needed without executing them.
+// queryTable is the name to inspect for existing columns (may differ from ddlTable
+// when a rename has been planned but not yet executed).
+// ddlTable is the name used in the generated ALTER TABLE statements.
+func (db *DB) planExistingTable(queryTable, ddlTable string, model parser.Model, cm map[string]*parser.CustomFieldManifest) ([]string, error) {
 	var stmts []string
 
-	existing, err := db.getColumns(model.Name)
+	existing, err := db.getColumns(queryTable)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +476,7 @@ func (db *DB) planExistingTable(model parser.Model, cm map[string]*parser.Custom
 		defaultClause := db.dialect.FieldToDefault(field)
 
 		stmt := fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"%s\" %s%s",
-			model.Name, colName, sqlType, defaultClause)
+			ddlTable, colName, sqlType, defaultClause)
 		stmts = append(stmts, stmt)
 	}
 
@@ -390,7 +486,7 @@ func (db *DB) planExistingTable(model parser.Model, cm map[string]*parser.Custom
 			if db.dialect.DriverName() == "pgx" {
 				colType = "JSONB"
 			}
-			stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"custom\" %s", model.Name, colType))
+			stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"custom\" %s", ddlTable, colType))
 		}
 		// column-mode custom fields become real columns
 		if manifest, ok := cm[model.Name]; ok {
@@ -405,7 +501,7 @@ func (db *DB) planExistingTable(model parser.Model, cm map[string]*parser.Custom
 					continue
 				}
 				sqlType := customKindToSQL(f.Kind, db.dialect.DriverName() == "pgx")
-				stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"%s\" %s", model.Name, f.Name, sqlType))
+				stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"%s\" %s", ddlTable, f.Name, sqlType))
 			}
 		}
 	}
