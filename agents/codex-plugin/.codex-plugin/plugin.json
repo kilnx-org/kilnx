@@ -1,0 +1,42 @@
+{
+  "name": "kilnx",
+  "version": "0.1.0",
+  "description": "Write, read, debug, and refactor Kilnx code. Kilnx is a declarative backend language that compiles .kilnx source files to a single standalone Go binary.",
+  "author": {
+    "name": "Kilnx Org",
+    "url": "https://github.com/kilnx-org"
+  },
+  "homepage": "https://kilnx.org",
+  "repository": "https://github.com/kilnx-org/kilnx",
+  "license": "MIT",
+  "keywords": [
+    "kilnx",
+    "backend",
+    "htmx",
+    "sql",
+    "declarative",
+    "go"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Kilnx",
+    "shortDescription": "Declarative backend language with database, auth, pages, and htmx",
+    "longDescription": "Kilnx covers database models, auth, pages, actions, fragments, SSE, WebSockets, jobs, schedules, webhooks, tests, i18n, LLM integration, and PDF generation in ~30 keywords. It compiles to a standalone Go binary with zero runtime dependencies.",
+    "developerName": "Kilnx Org",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://kilnx.org",
+    "privacyPolicyURL": "https://github.com/kilnx-org/kilnx",
+    "termsOfServiceURL": "https://github.com/kilnx-org/kilnx",
+    "defaultPrompt": "Write or refactor a Kilnx backend app with database models, auth, pages, actions, and htmx",
+    "brandColor": "#0A84FF",
+    "composerIcon": "./assets/kilnx-small.svg",
+    "logo": "./assets/app-icon.png",
+    "screenshots": []
+  }
+}

@@ -11,3 +11,12 @@ docs/pages/
 docs/content/reference/grammar.md
 docs/content/principles.md
 docs/content/changelog.md
+
+# Kimi / agent cache
+.kimi/
+.omx/
+
+# Test coverage
+coverage.out
+*.cover
+*.cov

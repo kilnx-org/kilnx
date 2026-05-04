@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "kilnx": {
+      "command": "/usr/local/bin/kilnx",
+      "args": ["mcp"]
+    }
+  }
+}

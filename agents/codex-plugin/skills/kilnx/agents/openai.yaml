@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kilnx"
+  short_description: "Write and refactor Kilnx backend code"
+  default_prompt: "Use the Kilnx skill to write, read, debug, or refactor .kilnx files. Kilnx is a declarative backend language with ~30 keywords that compiles to a standalone Go binary. Follow the golden rules in the skill: SQL inline, HTML default output, htmx for interactivity, zero external dependencies, and declarative first. When in doubt about syntax or behavior, read the Go compiler source at /home/ahlert/Dev/kilnx-org/kilnx/ rather than guessing."
