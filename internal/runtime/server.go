@@ -24,19 +24,20 @@ var staticFS embed.FS
 var interpolateRe = regexp.MustCompile(`\{(\^*[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}`)
 
 type Server struct {
-	app               *parser.App
-	db                database.Executor
-	sessions          *SessionStore
-	jobQueue          *JobQueue
-	rateLimiter       *RateLimiter
-	logger            *Logger
-	i18n              *I18n
-	tenants           TenantMap // models with a `tenant: <model>` directive
-	manifestCache     sync.Map  // resolved path -> *parser.CustomFieldManifest (dynamic manifests)
-	superuserIdentity string    // identity of the platform operator; bypasses all role checks
-	mu                sync.RWMutex
-	port              int
-	scheduleStop      chan struct{}
+	app                *parser.App
+	db                 database.Executor
+	sessions           *SessionStore
+	jobQueue           *JobQueue
+	rateLimiter        *RateLimiter
+	logger             *Logger
+	i18n               *I18n
+	tenants            TenantMap // models with a `tenant: <model>` directive
+	manifestCache      sync.Map  // resolved path -> *parser.CustomFieldManifest (dynamic manifests)
+	superuserIdentity  string    // identity of the platform operator; bypasses all role checks
+	fragmentComponents map[string]*parser.Page // component name -> fragment (for inline rendering)
+	mu                 sync.RWMutex
+	port               int
+	scheduleStop       chan struct{}
 }
 
 func NewServer(app *parser.App, db database.Executor, port int) *Server {
@@ -48,7 +49,16 @@ func NewServer(app *parser.App, db database.Executor, port int) *Server {
 	if app.Auth != nil {
 		superuser = app.Auth.Superuser
 	}
-	s := &Server{app: app, db: db, sessions: NewSessionStore(secret), port: port, tenants: BuildTenantMap(app), superuserIdentity: superuser}
+	// Build component fragment index
+	fragmentComponents := make(map[string]*parser.Page)
+	for i := range app.Fragments {
+		frag := &app.Fragments[i]
+		if frag.FragmentArgs != nil {
+			fragmentComponents[frag.Path] = frag
+		}
+	}
+
+	s := &Server{app: app, db: db, sessions: NewSessionStore(secret), port: port, tenants: BuildTenantMap(app), superuserIdentity: superuser, fragmentComponents: fragmentComponents}
 	// Attach DB to session store for persistence
 	if db != nil {
 		s.sessions.SetDB(db)
@@ -94,6 +104,13 @@ func (s *Server) getApp() *parser.App {
 }
 
 func (s *Server) Start() error {
+	mux := s.buildHandler()
+	addr := fmt.Sprintf(":%d", s.port)
+	fmt.Printf("kilnx serving on http://localhost%s\n", addr)
+	return http.ListenAndServe(addr, s.logger.LoggingMiddleware(mux))
+}
+
+func (s *Server) buildHandler() http.Handler {
 	mux := http.NewServeMux()
 
 	// Serve embedded static files
@@ -284,6 +301,9 @@ func (s *Server) Start() error {
 
 		// Match fragments (partial HTML, no page wrapper)
 		for _, frag := range app.Fragments {
+			if frag.FragmentArgs != nil {
+				continue // component fragments are not HTTP endpoints
+			}
 			if matchPath(frag.Path, r.URL.Path) {
 				if !s.requireAuth(w, r, frag) {
 					return
@@ -314,9 +334,7 @@ func (s *Server) Start() error {
 		w.Write([]byte(render404(r.URL.Path, app.Pages)))
 	})
 
-	addr := fmt.Sprintf(":%d", s.port)
-	fmt.Printf("kilnx serving on http://localhost%s\n", addr)
-	return http.ListenAndServe(addr, s.logger.LoggingMiddleware(mux))
+	return mux
 }
 
 // PaginateInfo holds pagination state for a query
@@ -330,27 +348,32 @@ type PaginateInfo struct {
 
 // renderContext holds query results available during template rendering
 type renderContext struct {
-	queries           map[string][]database.Row
-	paginate          map[string]PaginateInfo
-	currentUser       *Session
-	queryParams       map[string]string                      // URL query parameters (?key=value)
-	querySourceModels map[string]string                      // query name -> primary model name (set by analyzer)
-	customManifests   map[string]*parser.CustomFieldManifest // model name -> manifest (for list-page rebinding)
-	eachStack         []database.Row                         // stack of active {{each}} rows for parent-scope resolution
-	eachModels        []string                               // parallel stack of source model names for each entry in eachStack ("" if unknown)
-	models            []parser.Model                         // all models, for resolving computed fields
+	queries            map[string][]database.Row
+	paginate           map[string]PaginateInfo
+	currentUser        *Session
+	queryParams        map[string]string                      // URL query parameters (?key=value)
+	querySourceModels  map[string]string                      // query name -> primary model name (set by analyzer)
+	customManifests    map[string]*parser.CustomFieldManifest // model name -> manifest (for list-page rebinding)
+	eachStack          []database.Row                         // stack of active {{each}} rows for parent-scope resolution
+	eachModels         []string                               // parallel stack of source model names for each entry in eachStack ("" if unknown)
+	models             []parser.Model                         // all models, for resolving computed fields
+	currentRow         database.Row                           // active row when inside {{each}} block
+	fragmentArgs       map[string]string                      // active component argument bindings
+	fragmentDepth      int                                    // recursion guard for component fragments
+	fragmentComponents map[string]*parser.Page                // component name -> fragment (for inline rendering)
 }
 
 func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Request) string {
 	app := s.getApp()
 	ctx := &renderContext{
-		queries:           make(map[string][]database.Row),
-		paginate:          make(map[string]PaginateInfo),
-		currentUser:       s.getSession(r),
-		queryParams:       make(map[string]string),
-		querySourceModels: make(map[string]string),
-		customManifests:   app.CustomManifests,
-		models:            app.Models,
+		fragmentComponents: s.fragmentComponents,
+		queries:            make(map[string][]database.Row),
+		paginate:           make(map[string]PaginateInfo),
+		currentUser:        s.getSession(r),
+		queryParams:        make(map[string]string),
+		querySourceModels:  make(map[string]string),
+		customManifests:    app.CustomManifests,
+		models:             app.Models,
 	}
 
 	pathParams := matchPathParams(p.Path, r.URL.Path)
@@ -524,6 +547,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 				var layoutCtx *renderContext
 				if len(layout.Queries) > 0 && s.db != nil {
 					layoutCtx = &renderContext{
+				fragmentComponents: s.fragmentComponents,
 						queries:  make(map[string][]database.Row),
 						paginate: make(map[string]PaginateInfo),
 						models:   app.Models,
@@ -565,6 +589,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 				// Propagate current_user to layout context
 				if layoutCtx == nil {
 					layoutCtx = &renderContext{
+				fragmentComponents: s.fragmentComponents,
 						queries:  make(map[string][]database.Row),
 						paginate: make(map[string]PaginateInfo),
 						models:   app.Models,
@@ -715,6 +740,7 @@ func render404(path string, pages []parser.Page) string {
 func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 	app := s.getApp()
 	ctx := &renderContext{
+				fragmentComponents: s.fragmentComponents,
 		queries:           make(map[string][]database.Row),
 		paginate:          make(map[string]PaginateInfo),
 		currentUser:       s.getSession(r),
@@ -829,6 +855,7 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]string) string {
 	app := s.getApp()
 	ctx := &renderContext{
+				fragmentComponents: s.fragmentComponents,
 		queries:           make(map[string][]database.Row),
 		paginate:          make(map[string]PaginateInfo),
 		querySourceModels: make(map[string]string),
@@ -1211,6 +1238,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				formRow[k] = v
 			}
 			htmlCtx := &renderContext{
+				fragmentComponents: s.fragmentComponents,
 				queries:           map[string][]database.Row{"_form": {formRow}},
 				paginate:          make(map[string]PaginateInfo),
 				currentUser:       s.getSession(r),
@@ -1238,6 +1266,9 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				rendered := false
 				// First: check for exact fragment match
 				for _, frag := range app.Fragments {
+					if frag.FragmentArgs != nil {
+						continue
+					}
 					fragParts := strings.Split(frag.Path, "/")
 					pathParts := strings.Split(path, "/")
 					if len(fragParts) == len(pathParts) {
@@ -1263,6 +1294,9 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				for _, frag := range app.Fragments {
 					if rendered {
 						break
+					}
+					if frag.FragmentArgs != nil {
+						continue
 					}
 					// Check if fragment path starts with same prefix as redirect
 					fragParts := strings.Split(frag.Path, "/")
@@ -1337,6 +1371,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				rows = expandCustomFields(rows)
 				respondApp := s.getApp()
 				ctx := &renderContext{
+				fragmentComponents: s.fragmentComponents,
 					queries:           map[string][]database.Row{"_result": rows},
 					querySourceModels: make(map[string]string),
 					customManifests:   respondApp.CustomManifests,
@@ -1349,6 +1384,9 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				// Try to find and render the matching fragment
 				if node.RespondTarget != "" {
 					for _, frag := range app.Fragments {
+						if frag.FragmentArgs != nil {
+							continue
+						}
 						fragName := strings.TrimPrefix(frag.Path, "/")
 						if fragName == node.RespondTarget {
 							fragParams := make(map[string]string)

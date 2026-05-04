@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -132,6 +133,7 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkCustomFieldRefs(app, schema)...)
 	diags = append(diags, checkSQLCustomFieldRefs(app, schema)...)
 	diags = append(diags, checkCustomManifestRefs(app)...)
+	diags = append(diags, checkFragmentComponents(app)...)
 
 	return diags
 }
@@ -1300,4 +1302,108 @@ func extractSelectColumns(tokens []sqlToken) []columnRef {
 	}
 
 	return cols
+}
+
+// checkFragmentComponents validates component fragment call sites in NodeHTML bodies.
+// It checks that every {{name arg=expr}} references a known component, provides all
+// required arguments, and does not pass unknown arguments.
+func checkFragmentComponents(app *parser.App) []Diagnostic {
+	var diags []Diagnostic
+
+	// Build component index
+	components := make(map[string]*parser.Page)
+	for i := range app.Fragments {
+		frag := &app.Fragments[i]
+		if frag.FragmentArgs != nil {
+			components[frag.Path] = frag
+		}
+	}
+
+	// Regex to find {{name arg=expr}} calls (args optional)
+	callRe := regexp.MustCompile(`\{\{(\w+)(?:\s+([^}]+))?\}\}`)
+
+	// Scan all NodeHTML bodies across pages, fragments, actions, apis
+	var scanNodes func([]parser.Node, string)
+	scanNodes = func(nodes []parser.Node, ctx string) {
+		for _, node := range nodes {
+			if node.Type == parser.NodeHTML {
+				for _, match := range callRe.FindAllStringSubmatch(node.HTMLContent, -1) {
+					name := match[1]
+					argStr := ""
+						if len(match) > 2 {
+							argStr = match[2]
+						}
+					frag, ok := components[name]
+					if !ok {
+						diags = append(diags, Diagnostic{
+							Level:   "error",
+							Message: fmt.Sprintf("unknown component fragment '%s'", name),
+							Context: ctx,
+						})
+						continue
+					}
+
+					// Parse provided args
+					provided := make(map[string]bool)
+					for _, pair := range strings.Split(argStr, " ") {
+						pair = strings.TrimSpace(pair)
+						if pair == "" {
+							continue
+						}
+						eqIdx := strings.Index(pair, "=")
+						if eqIdx < 0 {
+							continue
+						}
+						key := strings.TrimSpace(pair[:eqIdx])
+						provided[key] = true
+					}
+
+					// Check required args
+					for _, arg := range frag.FragmentArgs {
+						if arg.DefaultValue == "" && !provided[arg.Name] {
+							diags = append(diags, Diagnostic{
+								Level:   "error",
+								Message: fmt.Sprintf("missing required argument '%s' for component '%s'", arg.Name, name),
+								Context: ctx,
+							})
+						}
+					}
+
+					// Check unknown args
+					for key := range provided {
+						found := false
+						for _, arg := range frag.FragmentArgs {
+							if arg.Name == key {
+								found = true
+								break
+							}
+						}
+						if !found {
+							diags = append(diags, Diagnostic{
+								Level:   "error",
+								Message: fmt.Sprintf("unknown argument '%s' for component '%s'", key, name),
+								Context: ctx,
+							})
+						}
+					}
+				}
+			}
+			scanNodes(node.Children, ctx)
+		}
+	}
+
+	for _, p := range app.Pages {
+		scanNodes(p.Body, "page "+p.Path)
+	}
+	for _, f := range app.Fragments {
+		scanNodes(f.Body, "fragment "+f.Path)
+	}
+	for _, a := range app.Actions {
+		scanNodes(a.Body, "action "+a.Path)
+	}
+	for _, a := range app.APIs {
+		scanNodes(a.Body, "api "+a.Path)
+	}
+
+	return diags
 }

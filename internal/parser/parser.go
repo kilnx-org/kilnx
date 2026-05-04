@@ -263,6 +263,11 @@ type Field struct {
 	ComputedExpr string   // expression for computed field (e.g. "quantity * unit_price")
 }
 
+type FragmentArg struct {
+	Name         string
+	DefaultValue string // empty = required
+}
+
 type Page struct {
 	Path            string
 	Layout          string
@@ -272,6 +277,7 @@ type Page struct {
 	RequiresClauses []RequiresClause // full clause list; supersedes RequiresRole when non-nil
 	Method          string
 	Body            []Node
+	FragmentArgs    []FragmentArg // for component fragments (e.g. fragment badge(status)); nil for path-based
 }
 
 type NodeType int
@@ -1537,13 +1543,54 @@ func (p *parserState) parseFragment() (Page, error) {
 	// consume "fragment"
 	p.advance()
 
-	// expect path
-	if p.current().Type != lexer.TokenPath {
-		return page, fmt.Errorf("line %d: expected path after 'fragment'", p.current().Line)
+	// Two forms:
+	//   fragment /path              -> path-based htmx endpoint (existing)
+	//   fragment name(args)         -> component fragment (new)
+	if p.current().Type == lexer.TokenPath {
+		page.Path = p.advance().Value
+	} else if p.current().Type == lexer.TokenIdentifier {
+		// Component fragment: name(arg1, arg2="default")
+		nameTok := p.current()
+		page.Path = nameTok.Value // use as identifier name (not a real path)
+		p.advance()
+		if p.current().Type != lexer.TokenParenOpen {
+			return page, fmt.Errorf("line %d: expected '(' after component fragment name '%s'", nameTok.Line, nameTok.Value)
+		}
+		p.advance() // consume '('
+		for !p.isEOF() && p.current().Type != lexer.TokenParenClose {
+			if p.current().Type == lexer.TokenComma {
+				p.advance()
+				continue
+			}
+			if p.current().Type != lexer.TokenIdentifier {
+				return page, fmt.Errorf("line %d: expected argument name in fragment component", p.current().Line)
+			}
+			argName := p.advance().Value
+			arg := FragmentArg{Name: argName}
+			// Check for default value: arg="value"
+			if p.current().Type == lexer.TokenAssign {
+				p.advance() // consume '='
+				if p.current().Type == lexer.TokenString {
+					arg.DefaultValue = p.advance().Value
+				} else if p.current().Type == lexer.TokenNumber {
+					arg.DefaultValue = p.advance().Value
+				} else if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+					arg.DefaultValue = p.advance().Value
+				} else {
+					return page, fmt.Errorf("line %d: expected default value after '='", p.current().Line)
+				}
+			}
+			page.FragmentArgs = append(page.FragmentArgs, arg)
+		}
+		if p.isEOF() || p.current().Type != lexer.TokenParenClose {
+			return page, fmt.Errorf("line %d: unclosed argument list in fragment component", nameTok.Line)
+		}
+		p.advance() // consume ')'
+	} else {
+		return page, fmt.Errorf("line %d: expected path or component name after 'fragment'", p.current().Line)
 	}
-	page.Path = p.advance().Value
 
-	// parse optional modifiers
+	// parse optional modifiers (only for path-based fragments)
 	for !p.isEOF() && p.current().Type != lexer.TokenNewline {
 		tok := p.current()
 		if (tok.Type == lexer.TokenKeyword || tok.Type == lexer.TokenIdentifier) && tok.Value == "requires" {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kilnx-org/kilnx/internal/database"
+	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
 // Template directives:
@@ -328,6 +329,9 @@ func renderHTML(content string, ctx *renderContext) string {
 	// Step 4: Process {{if expr}}...{{else}}...{{end}} blocks
 	result = expandIfBlocks(result, ctx, nil)
 
+	// Step 4.5: Process {{fragmentName arg=expr}} component calls
+	result = expandFragmentCalls(result, ctx)
+
 	// Step 5: Run standard interpolation (with escaping)
 	result = interpolateEscaped(result, ctx)
 
@@ -427,6 +431,7 @@ func expandEachBlocks(content string, ctx *renderContext, nonce string) string {
 				ctx.eachStack = append(ctx.eachStack, row)
 				// Track source model on a parallel stack for computed-field resolution
 				ctx.eachModels = append(ctx.eachModels, ctx.querySourceModels[queryName])
+				ctx.currentRow = row
 				// Rebind q.custom per row so {{each q.custom}} works on list pages (#66)
 				if sourceModel, ok := ctx.querySourceModels[queryName]; ok {
 					if manifest, ok := ctx.customManifests[sourceModel]; ok {
@@ -439,12 +444,15 @@ func expandEachBlocks(content string, ctx *renderContext, nonce string) string {
 				expanded = expandEachBlocks(expanded, ctx, nonce)
 				// Process {{if}} blocks with current row context
 				expanded = expandIfBlocks(expanded, ctx, row)
+				// Process fragment component calls with current row context
+				expanded = expandFragmentCalls(expanded, ctx)
 				// Interpolate row fields
 				expanded = interpolateRow(expanded, row, ctx)
 				result.WriteString(expanded)
 				// Pop row from eachStack
 				ctx.eachStack = ctx.eachStack[:len(ctx.eachStack)-1]
 				ctx.eachModels = ctx.eachModels[:len(ctx.eachModels)-1]
+				ctx.currentRow = nil
 			}
 		}
 
@@ -781,6 +789,13 @@ func resolveValue(expr string, ctx *renderContext, currentRow database.Row) stri
 		return "{" + expr + "}"
 	}
 
+	// Check fragment component arguments first
+	if ctx.fragmentArgs != nil {
+		if val, ok := ctx.fragmentArgs[expr]; ok {
+			return val
+		}
+	}
+
 	allParts := strings.Split(expr, ".")
 
 	// paginate.queryName.field (3 parts)
@@ -1010,4 +1025,105 @@ var urlRe = regexp.MustCompile(`(^|[\s(])(https?://[^\s<>")\]]+)`)
 
 func linkify(text string) string {
 	return urlRe.ReplaceAllString(text, `$1<a href="$2" target="_blank" rel="noopener">$2</a>`)
+}
+
+// fragmentCallRe matches {{name key=expr key2=expr}} (args optional)
+var fragmentCallRe = regexp.MustCompile(`\{\{(\w+)(?:\s+([^}]+))?\}\}`)
+
+// expandFragmentCalls processes {{componentName arg=expr}} blocks inside HTML content.
+// It looks up the component fragment, binds arguments, and renders the body inline.
+func expandFragmentCalls(content string, ctx *renderContext) string {
+	if ctx.fragmentComponents == nil || len(ctx.fragmentComponents) == 0 {
+		return content
+	}
+	if ctx.fragmentDepth >= 2 {
+		// Recursion guard: don't expand beyond depth 2
+		return content
+	}
+
+	return fragmentCallRe.ReplaceAllStringFunc(content, func(match string) string {
+		parts := fragmentCallRe.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+		name := parts[1]
+		argStr := ""
+		if len(parts) > 2 {
+			argStr = parts[2]
+		}
+
+		frag, ok := ctx.fragmentComponents[name]
+		if !ok {
+			return match // unknown component, leave for analyzer to catch
+		}
+
+		// Parse arguments: key=expr key2=expr
+		argMap := make(map[string]string)
+		for _, pair := range strings.Split(argStr, " ") {
+			pair = strings.TrimSpace(pair)
+			if pair == "" {
+				continue
+			}
+			eqIdx := strings.Index(pair, "=")
+			if eqIdx < 0 {
+				continue // malformed, skip
+			}
+			key := strings.TrimSpace(pair[:eqIdx])
+			expr := strings.TrimSpace(pair[eqIdx+1:])
+			var val string
+			if strings.HasPrefix(expr, `"`) && strings.HasSuffix(expr, `"`) {
+				// String literal: "value"
+				val = expr[1 : len(expr)-1]
+			} else if strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`) {
+				// String literal: 'value'
+				val = expr[1 : len(expr)-1]
+			} else {
+				// Try to resolve as variable/query/field reference
+				resolved := resolveValue(expr, ctx, ctx.currentRow)
+				if resolved == "{"+expr+"}" {
+					// Not resolved — treat as literal string
+					val = expr
+				} else {
+					val = resolved
+				}
+			}
+			argMap[key] = val
+		}
+
+		// Apply defaults for missing args
+		for _, arg := range frag.FragmentArgs {
+			if _, ok := argMap[arg.Name]; !ok && arg.DefaultValue != "" {
+				argMap[arg.Name] = arg.DefaultValue
+			}
+		}
+
+		// Find the HTML body of the component
+		var fragHTML string
+		for _, node := range frag.Body {
+			if node.Type == parser.NodeHTML {
+				fragHTML = node.HTMLContent
+				break
+			}
+		}
+		if fragHTML == "" {
+			return "" // no HTML body
+		}
+
+		// Create child context with bound args and incremented depth
+		childCtx := &renderContext{
+			queries:            ctx.queries,
+			paginate:           ctx.paginate,
+			currentUser:        ctx.currentUser,
+			queryParams:        ctx.queryParams,
+			querySourceModels:  ctx.querySourceModels,
+			customManifests:    ctx.customManifests,
+			eachStack:          ctx.eachStack,
+			fragmentArgs:       argMap,
+			fragmentDepth:      ctx.fragmentDepth + 1,
+			fragmentComponents: ctx.fragmentComponents,
+		}
+
+		rendered := renderHTML(fragHTML, childCtx)
+		return rendered
+	})
 }
