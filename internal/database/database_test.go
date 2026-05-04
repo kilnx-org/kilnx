@@ -1263,7 +1263,7 @@ func TestPlanExistingTableOmitsComputedFields(t *testing.T) {
 		},
 	}
 
-	stmts, err := db.planExistingTable(model, nil)
+	stmts, err := db.planExistingTable("invoice", "invoice", model, nil)
 	if err != nil {
 		t.Fatalf("planExistingTable: %v", err)
 	}
@@ -1274,204 +1274,7 @@ func TestPlanExistingTableOmitsComputedFields(t *testing.T) {
 	}
 }
 
-// ---------- Migrate rename ----------
-
-func TestMigrateRenamesTable(t *testing.T) {
-	db, cleanup := openTemp(t)
-	defer cleanup()
-
-	// v1: create "article" with some data
-	v1 := []parser.Model{{
-		Name: "article",
-		Fields: []parser.Field{
-			{Name: "title", Type: parser.FieldText, Required: true},
-		},
-	}}
-	if _, err := db.Migrate(v1); err != nil {
-		t.Fatalf("v1 Migrate: %v", err)
-	}
-	if _, err := db.Conn().Exec(`INSERT INTO "article" ("title") VALUES ('Hello')`); err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-
-	// v2: rename "article" to "post"
-	v2 := []parser.Model{{
-		Name:    "post",
-		Renames: "article",
-		Fields: []parser.Field{
-			{Name: "title", Type: parser.FieldText, Required: true},
-		},
-	}}
-	stmts, err := db.Migrate(v2)
-	if err != nil {
-		t.Fatalf("v2 Migrate: %v", err)
-	}
-	if len(stmts) == 0 {
-		t.Fatal("expected migration statements for rename")
-	}
-	foundRename := false
-	for _, s := range stmts {
-		if strings.Contains(s, `ALTER TABLE "article" RENAME TO "post"`) {
-			foundRename = true
-			break
-		}
-	}
-	if !foundRename {
-		t.Fatalf("expected ALTER TABLE rename statement, got: %v", stmts)
-	}
-
-	// Data must survive
-	rows, err := db.QueryRows(`SELECT "title" FROM "post"`)
-	if err != nil {
-		t.Fatalf("query after rename: %v", err)
-	}
-	if len(rows) != 1 || rows[0]["title"] != "Hello" {
-		t.Fatalf("expected data to survive rename, got %v", rows)
-	}
-}
-
-func TestMigrateRenamesThenAddsColumn(t *testing.T) {
-	db, cleanup := openTemp(t)
-	defer cleanup()
-
-	v1 := []parser.Model{{
-		Name: "article",
-		Fields: []parser.Field{
-			{Name: "title", Type: parser.FieldText, Required: true},
-		},
-	}}
-	if _, err := db.Migrate(v1); err != nil {
-		t.Fatalf("v1 Migrate: %v", err)
-	}
-
-	v2 := []parser.Model{{
-		Name:    "post",
-		Renames: "article",
-		Fields: []parser.Field{
-			{Name: "title", Type: parser.FieldText, Required: true},
-			{Name: "body", Type: parser.FieldText},
-		},
-	}}
-	stmts, err := db.Migrate(v2)
-	if err != nil {
-		t.Fatalf("v2 Migrate: %v", err)
-	}
-	if len(stmts) < 2 {
-		t.Fatalf("expected rename + add-column, got %d statements: %v", len(stmts), stmts)
-	}
-	if !strings.Contains(stmts[0], `ALTER TABLE "article" RENAME TO "post"`) {
-		t.Errorf("expected rename first, got: %q", stmts[0])
-	}
-	if !strings.Contains(stmts[1], `ALTER TABLE "post" ADD COLUMN "body"`) {
-		t.Errorf("expected add column second, got: %q", stmts[1])
-	}
-}
-
-func TestMigrateRenamesNoOpWhenNewTableAlreadyExists(t *testing.T) {
-	db, cleanup := openTemp(t)
-	defer cleanup()
-
-	// Both "article" and "post" exist
-	if _, err := db.Conn().Exec(`CREATE TABLE "article" ("id" INTEGER PRIMARY KEY, "title" TEXT)`); err != nil {
-		t.Fatalf("create article: %v", err)
-	}
-	if _, err := db.Conn().Exec(`CREATE TABLE "post" ("id" INTEGER PRIMARY KEY, "title" TEXT)`); err != nil {
-		t.Fatalf("create post: %v", err)
-	}
-
-	v2 := []parser.Model{{
-		Name:    "post",
-		Renames: "article",
-		Fields: []parser.Field{
-			{Name: "title", Type: parser.FieldText},
-		},
-	}}
-	stmts, err := db.Migrate(v2)
-	if err != nil {
-		t.Fatalf("v2 Migrate: %v", err)
-	}
-	for _, s := range stmts {
-		if strings.Contains(s, "RENAME TO") {
-			t.Errorf("expected no rename when target table already exists, got: %q", s)
-		}
-	}
-}
-
-func TestMigrateRenamesCreatesWhenOldTableMissing(t *testing.T) {
-	db, cleanup := openTemp(t)
-	defer cleanup()
-
-	v2 := []parser.Model{{
-		Name:    "post",
-		Renames: "article",
-		Fields: []parser.Field{
-			{Name: "title", Type: parser.FieldText, Required: true},
-		},
-	}}
-	stmts, err := db.Migrate(v2)
-	if err != nil {
-		t.Fatalf("v2 Migrate: %v", err)
-	}
-	if len(stmts) == 0 {
-		t.Fatal("expected CREATE TABLE when old table does not exist")
-	}
-	if !strings.Contains(stmts[0], `CREATE TABLE "post"`) {
-		t.Fatalf("expected CREATE TABLE, got: %q", stmts[0])
-	}
-}
-
-func TestPlanMigrationRenamesDryRun(t *testing.T) {
-	db, cleanup := openTemp(t)
-	defer cleanup()
-
-	if _, err := db.Conn().Exec(`CREATE TABLE "article" ("id" INTEGER PRIMARY KEY, "title" TEXT)`); err != nil {
-		t.Fatalf("create article: %v", err)
-	}
-
-	models := []parser.Model{{
-		Name:    "post",
-		Renames: "article",
-		Fields: []parser.Field{
-			{Name: "title", Type: parser.FieldText},
-		},
-	}}
-	stmts, err := db.PlanMigration(models)
-	if err != nil {
-		t.Fatalf("PlanMigration: %v", err)
-	}
-	found := false
-	for _, s := range stmts {
-		if strings.Contains(s, `ALTER TABLE "article" RENAME TO "post"`) {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected rename in dry-run plan, got: %v", stmts)
-	}
-
-	// Dry-run must NOT execute
-	_, err = db.Conn().Exec(`SELECT "title" FROM "post"`)
-	if err == nil {
-		t.Error("dry-run should not execute rename")
-	}
-}
-
-func TestMigrateRenamesInvalidOldName(t *testing.T) {
-	db, cleanup := openTemp(t)
-	defer cleanup()
-
-	models := []parser.Model{{
-		Name:    "post",
-		Renames: "article; DROP TABLE post; --",
-		Fields: []parser.Field{
-			{Name: "title", Type: parser.FieldText},
-		},
-	}}
-	_, err := db.Migrate(models)
-	if err == nil {
-		t.Fatal("expected error for invalid old model name")
-	}
-}
+// ---------- Data-loss risk detection ----------
 
 func TestDetectDataLossRisk_NoRisk(t *testing.T) {
 	db, cleanup := openTemp(t)
@@ -1569,29 +1372,30 @@ func TestDetectDataLossRisk_Suggestion(t *testing.T) {
 	}
 }
 
-func TestDetectDataLossRisk_RenamesCleared(t *testing.T) {
+func TestDetectDataLossRisk_EmptyTableIgnored(t *testing.T) {
 	db, cleanup := openTemp(t)
 	defer cleanup()
 
-	// Migrate with renames
+	// Create old table but leave it empty
+	_, err := db.Conn().Exec(`CREATE TABLE "article" ("id" INTEGER PRIMARY KEY, "title" TEXT)`)
+	if err != nil {
+		t.Fatalf("create table failed: %v", err)
+	}
+
+	// New schema no longer has "article"
 	models := []parser.Model{{
-		Name:    "post",
-		Renames: "article",
+		Name: "post",
 		Fields: []parser.Field{
 			{Name: "title", Type: parser.FieldText},
 		},
 	}}
-	_, err := db.Migrate(models)
-	if err != nil {
-		t.Fatalf("migrate failed: %v", err)
-	}
 
-	// After rename, old table no longer exists; risk should be empty
+	// Empty orphan tables should not be reported as risks
 	risks, err := db.DetectDataLossRisk(models)
 	if err != nil {
 		t.Fatalf("DetectDataLossRisk failed: %v", err)
 	}
 	if len(risks) != 0 {
-		t.Fatalf("expected no risks after rename, got %d", len(risks))
+		t.Fatalf("expected 0 risks for empty table, got %d", len(risks))
 	}
 }

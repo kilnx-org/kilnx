@@ -7,7 +7,7 @@ model user
   name: text required
 
 model post
-  user_id: reference user
+  user: user
   title: text required
   content: richtext
   created_at: timestamp auto
@@ -36,7 +36,7 @@ page / requires auth
     {{end}}
 
 page /posts/:id
-  query post: SELECT p.*, u.name as author FROM post p JOIN user u ON p.user_id = u.id WHERE p.id = :id
+  query post: SELECT p.id, p.title, p.content, p.created_at, u.name as author FROM post p JOIN user u ON p.user_id = u.id WHERE p.id = :id
   html
     <h1>{post.title}</h1>
     <p>By {post.author} on {post.created_at|date:"Jan 02, 2006"}</p>
@@ -50,6 +50,41 @@ page /new requires auth
       <input name="title" placeholder="Title" required>
       <textarea name="content" placeholder="Content"></textarea>
       <button type="submit">Publish</button>
+    </form>
+
+page /login
+  html
+    <h1>Login</h1>
+    <form action="/login" method="POST">
+      <input name="email" type="email" placeholder="Email" required>
+      <input name="password" type="password" placeholder="Password" required>
+      <button type="submit">Login</button>
+    </form>
+
+page /register
+  html
+    <h1>Register</h1>
+    <form action="/register" method="POST">
+      <input name="email" type="email" placeholder="Email" required>
+      <input name="password" type="password" placeholder="Password" required>
+      <input name="name" placeholder="Name" required>
+      <button type="submit">Register</button>
+    </form>
+
+page /forgot-password
+  html
+    <h1>Forgot Password</h1>
+    <form action="/forgot-password" method="POST">
+      <input name="email" type="email" placeholder="Email" required>
+      <button type="submit">Send Reset Link</button>
+    </form>
+
+page /reset-password
+  html
+    <h1>Reset Password</h1>
+    <form action="/reset-password" method="POST">
+      <input name="password" type="password" placeholder="New Password" required>
+      <button type="submit">Reset</button>
     </form>
 
 action /posts method POST requires auth
