@@ -1,0 +1,68 @@
+config
+  port: 3000
+
+model user
+  email: email required unique
+  password: password required
+  name: text required
+  api_token: text unique
+
+model item
+  user_id: reference user
+  name: text required
+  done: bool default false
+  created_at: timestamp auto
+
+auth
+  identity: email
+  password: password
+
+permissions
+  default: auth
+
+api /items requires auth
+  query items: SELECT id, name, done, created_at FROM item WHERE user_id = :current_user.id ORDER BY created_at DESC
+  return items
+
+api /items method POST requires auth
+  validate item
+    name: required min 1
+  query: INSERT INTO item (user_id, name) VALUES (:current_user.id, :name)
+  on success
+    return {"id": :last_insert_id, "name": :name, "done": false}
+
+api /items/:id method PUT requires auth
+  query: UPDATE item SET done = :done WHERE id = :id AND user_id = :current_user.id
+  on success
+    return {"updated": true}
+
+api /items/:id method DELETE requires auth
+  query: DELETE FROM item WHERE id = :id AND user_id = :current_user.id
+  on success
+    return {"deleted": true}
+
+test "CRUD item"
+  step "register"
+    POST /register
+      email: "api@example.com"
+      password: "secret123"
+      name: "API User"
+    assert status 302
+  step "create item"
+    POST /items
+      name: "Buy milk"
+    assert status 200
+    assert json path "$.name" equals "Buy milk"
+  step "list items"
+    GET /items
+    assert status 200
+    assert json path "$[0].name" equals "Buy milk"
+  step "update item"
+    PUT /items/1
+      done: true
+    assert status 200
+    assert json path "$.updated" equals true
+  step "delete item"
+    DELETE /items/1
+    assert status 200
+    assert json path "$.deleted" equals true
