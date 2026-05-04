@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +33,38 @@ func TestCheckPasswordWrongPassword(t *testing.T) {
 	hash, _ := HashPassword("correct")
 	if CheckPassword("wrong", hash) {
 		t.Error("CheckPassword should return false for wrong password")
+	}
+}
+
+func TestSessionSignAndVerify_NoSecret(t *testing.T) {
+	ss := &SessionStore{sessions: make(map[string]*Session), secret: ""}
+	id := "session-abc"
+	if got := ss.signSessionID(id); got != id {
+		t.Errorf("signSessionID with empty secret should return id unchanged, got %q", got)
+	}
+}
+
+func TestSessionSignAndVerify_WithSecret(t *testing.T) {
+	ss := NewSessionStore("my-secret")
+	id := "session-abc"
+	signed := ss.signSessionID(id)
+	if signed == id {
+		t.Error("signSessionID should produce signed value when secret is set")
+	}
+	gotID, valid := ss.verifySessionID(signed)
+	if !valid {
+		t.Error("verifySessionID should return true for valid signature")
+	}
+	if gotID != id {
+		t.Errorf("verifySessionID id = %q, want %q", gotID, id)
+	}
+}
+
+func TestSessionVerify_InvalidSignature(t *testing.T) {
+	ss := NewSessionStore("my-secret")
+	_, valid := ss.verifySessionID("tampered.value")
+	if valid {
+		t.Error("verifySessionID should return false for tampered cookie")
 	}
 }
 
@@ -544,5 +578,566 @@ func TestValidateInlineRules_EmptyValueSkipsMinMax(t *testing.T) {
 	errs := validateInlineRules(validations, map[string]string{"optional": ""})
 	if len(errs) != 0 {
 		t.Errorf("empty value should skip min/max, got %v", errs)
+	}
+}
+
+// --- Additional validateFormData tests for uncovered field types ---
+
+func TestValidateFormData_URLValidation(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "bookmark",
+			Fields: []parser.Field{
+				{Name: "link", Type: parser.FieldURL},
+			},
+		}},
+	}
+	errs := validateFormData("bookmark", app, map[string]string{"link": "not-a-url"})
+	if len(errs) == 0 {
+		t.Fatal("expected error for invalid URL")
+	}
+	errs = validateFormData("bookmark", app, map[string]string{"link": "https://example.com"})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid URL, got %v", errs)
+	}
+}
+
+func TestValidateFormData_DateValidation(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "event",
+			Fields: []parser.Field{
+				{Name: "date", Type: parser.FieldDate},
+			},
+		}},
+	}
+	errs := validateFormData("event", app, map[string]string{"date": "bad-date"})
+	if len(errs) == 0 {
+		t.Fatal("expected error for invalid date")
+	}
+	errs = validateFormData("event", app, map[string]string{"date": "2024-01-15"})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid date, got %v", errs)
+	}
+}
+
+func TestValidateFormData_DecimalValidation(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "product",
+			Fields: []parser.Field{
+				{Name: "price", Type: parser.FieldDecimal},
+			},
+		}},
+	}
+	errs := validateFormData("product", app, map[string]string{"price": "abc"})
+	if len(errs) == 0 {
+		t.Fatal("expected error for invalid decimal")
+	}
+	errs = validateFormData("product", app, map[string]string{"price": "19.99"})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid decimal, got %v", errs)
+	}
+}
+
+func TestValidateFormData_BigIntValidation(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "counter",
+			Fields: []parser.Field{
+				{Name: "count", Type: parser.FieldBigInt},
+			},
+		}},
+	}
+	errs := validateFormData("counter", app, map[string]string{"count": "not-a-number"})
+	if len(errs) == 0 {
+		t.Fatal("expected error for invalid big int")
+	}
+	errs = validateFormData("counter", app, map[string]string{"count": "9223372036854775807"})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid big int, got %v", errs)
+	}
+}
+
+func TestValidateFormData_JSONValidation(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "config",
+			Fields: []parser.Field{
+				{Name: "settings", Type: parser.FieldJSON},
+			},
+		}},
+	}
+	errs := validateFormData("config", app, map[string]string{"settings": "not-json"})
+	if len(errs) == 0 {
+		t.Fatal("expected error for invalid JSON")
+	}
+	errs = validateFormData("config", app, map[string]string{"settings": `{"key":"value"}`})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid JSON, got %v", errs)
+	}
+}
+
+func TestValidateFormData_TagsValidation(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "item",
+			Fields: []parser.Field{
+				{Name: "tags", Type: parser.FieldTags, Options: []string{"red", "blue", "green"}},
+			},
+		}},
+	}
+	errs := validateFormData("item", app, map[string]string{"tags": "red, yellow"})
+	if len(errs) == 0 {
+		t.Fatal("expected error for invalid tag")
+	}
+	errs = validateFormData("item", app, map[string]string{"tags": "red, blue"})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid tags, got %v", errs)
+	}
+}
+
+func TestValidateFormData_OptionValidation(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name: "status",
+			Fields: []parser.Field{
+				{Name: "state", Type: parser.FieldOption, Options: []string{"active", "inactive"}},
+			},
+		}},
+	}
+	errs := validateFormData("status", app, map[string]string{"state": "unknown"})
+	if len(errs) == 0 {
+		t.Fatal("expected error for invalid option")
+	}
+	errs = validateFormData("status", app, map[string]string{"state": "active"})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors for valid option, got %v", errs)
+	}
+}
+
+func TestValidateFormData_CustomFields(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name:       "deal",
+			CustomFieldsFile: "deal.json",
+			Fields: []parser.Field{
+				{Name: "title", Type: parser.FieldText, Required: true},
+			},
+		}},
+		CustomManifests: map[string]*parser.CustomFieldManifest{
+			"deal": {
+				ModelName: "deal",
+				Fields: []parser.CustomFieldDef{
+					{Name: "revenue", Kind: parser.CustomFieldKindNumber, Required: true},
+					{Name: "region", Kind: parser.CustomFieldKindOption, Options: []string{"N", "S"}},
+				},
+			},
+		},
+	}
+	// Missing required custom field
+	errs := validateFormData("deal", app, map[string]string{"title": "Deal A", "custom": `{"region":"N"}`})
+	if len(errs) == 0 {
+		t.Fatal("expected error for missing required custom field")
+	}
+	// Valid custom fields
+	errs = validateFormData("deal", app, map[string]string{"title": "Deal A", "custom": `{"revenue":"1000","region":"N"}`})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidateFormData_CustomFieldsAllTypes(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name:             "contact",
+			CustomFieldsFile: "contact.json",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText, Required: true},
+			},
+		}},
+		CustomManifests: map[string]*parser.CustomFieldManifest{
+			"contact": {
+				ModelName: "contact",
+				Fields: []parser.CustomFieldDef{
+					{Name: "birthdate", Kind: parser.CustomFieldKindDate},
+					{Name: "email2", Kind: parser.CustomFieldKindEmail},
+					{Name: "phone2", Kind: parser.CustomFieldKindPhone},
+					{Name: "active", Kind: parser.CustomFieldKindBool},
+					{Name: "ref", Kind: parser.CustomFieldKindReference},
+					{Name: "status", Kind: parser.CustomFieldKindOption, Options: []string{"a", "b"}},
+				},
+			},
+		},
+	}
+
+	cases := []struct {
+		name   string
+		data   map[string]string
+		wantOk bool
+	}{
+		{"invalid date", map[string]string{"name": "X", "custom": `{"birthdate":"bad"}`}, false},
+		{"valid date", map[string]string{"name": "X", "custom": `{"birthdate":"2024-01-15"}`}, true},
+		{"invalid email", map[string]string{"name": "X", "custom": `{"email2":"bad"}`}, false},
+		{"valid email", map[string]string{"name": "X", "custom": `{"email2":"a@b.c"}`}, true},
+		{"invalid phone", map[string]string{"name": "X", "custom": `{"phone2":"123"}`}, false},
+		{"valid phone", map[string]string{"name": "X", "custom": `{"phone2":"+1-555-123-4567"}`}, true},
+		{"invalid bool", map[string]string{"name": "X", "custom": `{"active":"maybe"}`}, false},
+		{"valid bool", map[string]string{"name": "X", "custom": `{"active":"true"}`}, true},
+		{"invalid ref", map[string]string{"name": "X", "custom": `{"ref":"abc"}`}, false},
+		{"valid ref", map[string]string{"name": "X", "custom": `{"ref":"42"}`}, true},
+		{"invalid option", map[string]string{"name": "X", "custom": `{"status":"c"}`}, false},
+		{"valid option", map[string]string{"name": "X", "custom": `{"status":"a"}`}, true},
+		{"invalid json", map[string]string{"name": "X", "custom": `{"bad`}, false},
+		{"unknown field", map[string]string{"name": "X", "custom": `{"unknown":"v"}`}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := validateFormData("contact", app, tc.data)
+			if tc.wantOk && len(errs) != 0 {
+				t.Errorf("expected no errors, got %v", errs)
+			}
+			if !tc.wantOk && len(errs) == 0 {
+				t.Errorf("expected errors, got none")
+			}
+		})
+	}
+}
+
+// ---------- loadFromDB ----------
+
+func TestLoadFromDB_Success(t *testing.T) {
+	mock := newMockExecutor()
+	mock.queryRowsResults[`SELECT token, user_id, identity, role, data, expires_at FROM _kilnx_sessions WHERE expires_at > datetime('now')`] = []database.Row{
+		{"token": "abc123", "user_id": "1", "identity": "user@test.com", "role": "viewer", "data": `{"name":"User"}`, "expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339)},
+	}
+	ss := NewSessionStore("test-secret")
+	ss.SetDB(mock)
+	ss.loadFromDB()
+
+	sess := ss.Get("abc123")
+	if sess == nil {
+		t.Fatal("expected session to be loaded")
+	}
+	if sess.UserID != "1" {
+		t.Errorf("expected user_id 1, got %q", sess.UserID)
+	}
+	if sess.Data["name"] != "User" {
+		t.Errorf("expected data name=User, got %v", sess.Data)
+	}
+}
+
+func TestLoadFromDB_NoDB(t *testing.T) {
+	ss := NewSessionStore("test-secret")
+	ss.loadFromDB() // Should not panic
+	if len(ss.sessions) != 0 {
+		t.Error("expected no sessions when db is nil")
+	}
+}
+
+func TestLoadFromDB_InvalidDataJSON(t *testing.T) {
+	mock := newMockExecutor()
+	mock.queryRowsResults[`SELECT token, user_id, identity, role, data, expires_at FROM _kilnx_sessions WHERE expires_at > datetime('now')`] = []database.Row{
+		{"token": "badjson", "user_id": "2", "identity": "u@test.com", "role": "admin", "data": "not-json", "expires_at": time.Now().Add(1 * time.Hour).Format(time.RFC3339)},
+	}
+	ss := NewSessionStore("test-secret")
+	ss.SetDB(mock)
+	ss.loadFromDB()
+
+	sess := ss.Get("badjson")
+	if sess == nil {
+		t.Fatal("expected session to be loaded even with bad JSON")
+	}
+	if sess.Role != "admin" {
+		t.Errorf("expected role admin, got %q", sess.Role)
+	}
+}
+
+func TestLoadFromDB_ExpiredSessionSkipped(t *testing.T) {
+	mock := newMockExecutor()
+	mock.queryRowsResults[`SELECT token, user_id, identity, role, data, expires_at FROM _kilnx_sessions WHERE expires_at > datetime('now')`] = []database.Row{
+		// This row simulates a session with unparseable expiry (expired)
+		{"token": "expired", "user_id": "3", "identity": "old@test.com", "role": "viewer", "data": `{}`, "expires_at": "invalid-date"},
+	}
+	ss := NewSessionStore("test-secret")
+	ss.SetDB(mock)
+	ss.loadFromDB()
+
+	if ss.Get("expired") != nil {
+		t.Error("expected expired session to be skipped")
+	}
+}
+
+func TestLoadFromDB_AlternateDateFormat(t *testing.T) {
+	mock := newMockExecutor()
+	// Use a far-future date to avoid timezone comparison issues
+	mock.queryRowsResults[`SELECT token, user_id, identity, role, data, expires_at FROM _kilnx_sessions WHERE expires_at > datetime('now')`] = []database.Row{
+		{"token": "altfmt", "user_id": "4", "identity": "alt@test.com", "role": "viewer", "data": `{}`, "expires_at": "2030-01-01 00:00:00"},
+	}
+	ss := NewSessionStore("test-secret")
+	ss.SetDB(mock)
+
+	if ss.Get("altfmt") == nil {
+		t.Error("expected session with alternate date format to be loaded")
+	}
+}
+
+// ---------- requireAuth ----------
+
+func TestRequireAuth_NoAuthRequired(t *testing.T) {
+	s := newTestServer(nil)
+	req := httptest.NewRequest("GET", "/public", nil)
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/public", Auth: false}
+	if !s.requireAuth(rec, req, page) {
+		t.Error("expected true when auth is not required")
+	}
+}
+
+func TestRequireAuth_NoAuthConfig(t *testing.T) {
+	s := newTestServer(nil)
+	s.app.Auth = nil
+	req := httptest.NewRequest("GET", "/protected", nil)
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/protected", Auth: true}
+	if !s.requireAuth(rec, req, page) {
+		t.Error("expected true when auth config is nil")
+	}
+}
+
+func TestRequireAuth_NotLoggedIn(t *testing.T) {
+	s := newTestServer(nil)
+	req := httptest.NewRequest("GET", "/protected", nil)
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/protected", Auth: true}
+	if s.requireAuth(rec, req, page) {
+		t.Error("expected false when not logged in")
+	}
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("code = %d, want 303", rec.Code)
+	}
+}
+
+func TestRequireAuth_NotLoggedInHTMX(t *testing.T) {
+	s := newTestServer(nil)
+	req := httptest.NewRequest("GET", "/protected", nil)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/protected", Auth: true}
+	if s.requireAuth(rec, req, page) {
+		t.Error("expected false when not logged in")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("code = %d, want 401", rec.Code)
+	}
+	if rec.Header().Get("HX-Redirect") == "" {
+		t.Error("expected HX-Redirect header")
+	}
+}
+
+func TestRequireAuth_LoggedIn(t *testing.T) {
+	s := newTestServer(nil)
+	sessionID := s.sessions.Create(database.Row{"id": "1", "email": "user@test.com", "role": "viewer"}, "email")
+	cookieValue := s.sessions.signSessionID(sessionID)
+	req := httptest.NewRequest("GET", "/protected", nil)
+	req.AddCookie(&http.Cookie{Name: "_kilnx_session", Value: cookieValue})
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/protected", Auth: true}
+	if !s.requireAuth(rec, req, page) {
+		t.Error("expected true when logged in")
+	}
+}
+
+func TestRequireAuth_RequiresRole(t *testing.T) {
+	s := newTestServer(nil)
+	sessionID := s.sessions.Create(database.Row{"id": "1", "email": "user@test.com", "role": "viewer"}, "email")
+	cookieValue := s.sessions.signSessionID(sessionID)
+	req := httptest.NewRequest("GET", "/admin", nil)
+	req.AddCookie(&http.Cookie{Name: "_kilnx_session", Value: cookieValue})
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/admin", Auth: true, RequiresRole: "admin"}
+	if s.requireAuth(rec, req, page) {
+		t.Error("expected false when role does not match")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("code = %d, want 403", rec.Code)
+	}
+}
+
+func TestRequireAuth_RequiresRoleMatch(t *testing.T) {
+	s := newTestServer(nil)
+	sessionID := s.sessions.Create(database.Row{"id": "1", "email": "admin@test.com", "role": "admin"}, "email")
+	cookieValue := s.sessions.signSessionID(sessionID)
+	req := httptest.NewRequest("GET", "/admin", nil)
+	req.AddCookie(&http.Cookie{Name: "_kilnx_session", Value: cookieValue})
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/admin", Auth: true, RequiresRole: "admin"}
+	if !s.requireAuth(rec, req, page) {
+		t.Error("expected true when role matches")
+	}
+}
+
+func TestRequireAuth_RequiresRoleAuth(t *testing.T) {
+	s := newTestServer(nil)
+	sessionID := s.sessions.Create(database.Row{"id": "1", "email": "user@test.com", "role": "viewer"}, "email")
+	cookieValue := s.sessions.signSessionID(sessionID)
+	req := httptest.NewRequest("GET", "/protected", nil)
+	req.AddCookie(&http.Cookie{Name: "_kilnx_session", Value: cookieValue})
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/protected", Auth: true, RequiresRole: "auth"}
+	if !s.requireAuth(rec, req, page) {
+		t.Error("expected true when requires_role is auth")
+	}
+}
+
+// ---------- requireAPIAuth ----------
+
+func TestRequireAPIAuth_NoAuthRequired(t *testing.T) {
+	s := newTestServer(nil)
+	req := httptest.NewRequest("GET", "/api/public", nil)
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/api/public", Auth: false}
+	if !s.requireAPIAuth(rec, req, page) {
+		t.Error("expected true when auth is not required")
+	}
+}
+
+func TestRequireAPIAuth_NoAuthConfig(t *testing.T) {
+	s := newTestServer(nil)
+	s.app.Auth = nil
+	req := httptest.NewRequest("GET", "/api/protected", nil)
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/api/protected", Auth: true}
+	if !s.requireAPIAuth(rec, req, page) {
+		t.Error("expected true when auth config is nil")
+	}
+}
+
+func TestRequireAPIAuth_NotLoggedIn(t *testing.T) {
+	s := newTestServer(nil)
+	req := httptest.NewRequest("GET", "/api/protected", nil)
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/api/protected", Auth: true}
+	if s.requireAPIAuth(rec, req, page) {
+		t.Error("expected false when not logged in")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("code = %d, want 401", rec.Code)
+	}
+}
+
+func TestRequireAPIAuth_LoggedIn(t *testing.T) {
+	s := newTestServer(nil)
+	sessionID := s.sessions.Create(database.Row{"id": "1", "email": "user@test.com", "role": "viewer"}, "email")
+	cookieValue := s.sessions.signSessionID(sessionID)
+	req := httptest.NewRequest("GET", "/api/protected", nil)
+	req.AddCookie(&http.Cookie{Name: "_kilnx_session", Value: cookieValue})
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/api/protected", Auth: true}
+	if !s.requireAPIAuth(rec, req, page) {
+		t.Error("expected true when logged in")
+	}
+}
+
+func TestRequireAPIAuth_RequiresRole(t *testing.T) {
+	s := newTestServer(nil)
+	sessionID := s.sessions.Create(database.Row{"id": "1", "email": "user@test.com", "role": "viewer"}, "email")
+	cookieValue := s.sessions.signSessionID(sessionID)
+	req := httptest.NewRequest("GET", "/api/admin", nil)
+	req.AddCookie(&http.Cookie{Name: "_kilnx_session", Value: cookieValue})
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/api/admin", Auth: true, RequiresRole: "admin"}
+	if s.requireAPIAuth(rec, req, page) {
+		t.Error("expected false when role does not match")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("code = %d, want 403", rec.Code)
+	}
+}
+
+func TestRequireAPIAuth_RequiresRoleMatch(t *testing.T) {
+	s := newTestServer(nil)
+	sessionID := s.sessions.Create(database.Row{"id": "1", "email": "admin@test.com", "role": "admin"}, "email")
+	cookieValue := s.sessions.signSessionID(sessionID)
+	req := httptest.NewRequest("GET", "/api/admin", nil)
+	req.AddCookie(&http.Cookie{Name: "_kilnx_session", Value: cookieValue})
+	rec := httptest.NewRecorder()
+	page := parser.Page{Path: "/api/admin", Auth: true, RequiresRole: "admin"}
+	if !s.requireAPIAuth(rec, req, page) {
+		t.Error("expected true when role matches")
+	}
+}
+
+// ---------- hasPermission ----------
+
+func TestHasPermission_AllRule(t *testing.T) {
+	s := newTestServer(nil)
+	perms := []parser.Permission{
+		{Role: "admin", Rules: []string{"all"}},
+	}
+	if !s.hasPermission("admin", "editor", perms) {
+		t.Error("admin with 'all' rule should have any permission")
+	}
+}
+
+func TestHasPermission_Hierarchy(t *testing.T) {
+	s := newTestServer(nil)
+	if !s.hasPermission("admin", "viewer", nil) {
+		t.Error("admin should have viewer permission via hierarchy")
+	}
+	if !s.hasPermission("editor", "viewer", nil) {
+		t.Error("editor should have viewer permission via hierarchy")
+	}
+	if s.hasPermission("viewer", "editor", nil) {
+		t.Error("viewer should not have editor permission")
+	}
+}
+
+func TestHasPermission_UnknownRole(t *testing.T) {
+	s := newTestServer(nil)
+	if !s.hasPermission("custom", "custom", nil) {
+		t.Error("same unknown role should match")
+	}
+	if s.hasPermission("custom", "other", nil) {
+		t.Error("different unknown roles should not match")
+	}
+}
+
+func TestHasPermission_MixedHierarchyAndUnknown(t *testing.T) {
+	s := newTestServer(nil)
+	// When requiredRole is unknown and different from userRole, no match
+	if s.hasPermission("admin", "unknown", nil) {
+		t.Error("admin should not match unknown role via hierarchy")
+	}
+	if s.hasPermission("unknown", "admin", nil) {
+		t.Error("unknown role should not outrank admin")
+	}
+}
+
+func TestDelete_WithDB(t *testing.T) {
+	mock := newMockExecutor()
+	ss := NewSessionStore("test-secret")
+	ss.SetDB(mock)
+
+	sessionID := ss.Create(database.Row{"id": "1", "email": "user@test.com"}, "email")
+	if ss.Get(sessionID) == nil {
+		t.Fatal("expected session to exist")
+	}
+
+	ss.Delete(sessionID)
+	if ss.Get(sessionID) != nil {
+		t.Error("expected session to be deleted")
+	}
+	// Verify DB delete was called
+	found := false
+	for _, call := range mock.execCalled {
+		if call.SQL == `DELETE FROM _kilnx_sessions WHERE token = :token` {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected DB delete to be called")
 	}
 }

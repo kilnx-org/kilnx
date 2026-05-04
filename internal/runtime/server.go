@@ -380,7 +380,8 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		if node.Type != parser.NodeQuery || s.db == nil {
 			continue
 		}
-		sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
+		sql := expandQueryConditionals(node.SQL, pathParams)
+		sql, tErr := RewriteTenantSQL(sql, s.tenants, pathParams)
 		if tErr != nil {
 			s.logger.LogSecurity("tenant guard rejected page query", tErr)
 			continue
@@ -537,7 +538,8 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 						if name == "" {
 							name = "_last"
 						}
-						sql, tErr := RewriteTenantSQL(q.SQL, s.tenants, layoutParams)
+						sql := expandQueryConditionals(q.SQL, layoutParams)
+						sql, tErr := RewriteTenantSQL(sql, s.tenants, layoutParams)
 						if tErr != nil {
 							s.logger.LogSecurity("tenant guard rejected layout query", tErr)
 							continue
@@ -746,7 +748,8 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 		switch node.Type {
 		case parser.NodeQuery:
 			if s.db != nil {
-				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
+				sql := expandQueryConditionals(node.SQL, pathParams)
+				sql, tErr := RewriteTenantSQL(sql, s.tenants, pathParams)
 				if tErr != nil {
 					s.logger.LogSecurity("tenant guard rejected fragment query", tErr)
 					continue
@@ -832,7 +835,8 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 		switch node.Type {
 		case parser.NodeQuery:
 			if s.db != nil {
-				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, params)
+				sql := expandQueryConditionals(node.SQL, params)
+				sql, tErr := RewriteTenantSQL(sql, s.tenants, params)
 				if tErr != nil {
 					s.logger.LogSecurity("tenant guard rejected fragment query", tErr)
 					body.WriteString("<p style=\"color:red\">Query rejected</p>")
@@ -961,7 +965,8 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 
 		case parser.NodeQuery:
 			if tx != nil {
-				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, formData)
+				sql := expandQueryConditionals(node.SQL, formData)
+				sql, tErr := RewriteTenantSQL(sql, s.tenants, formData)
 				if tErr != nil {
 					s.logger.LogSecurity("tenant guard rejected action query", tErr)
 					lastQueryOk = false
@@ -1049,7 +1054,8 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			recipient := resolveEmailRecipient(node.EmailTo, formData)
 			// Resolve recipient from SQL query if specified
 			if toQuery, ok := node.Props["to_query"]; ok && toQuery != "" && s.db != nil {
-				scopedToQuery, tErr := RewriteTenantSQL(toQuery, s.tenants, formData)
+				scopedToQuery := expandQueryConditionals(toQuery, formData)
+				scopedToQuery, tErr := RewriteTenantSQL(scopedToQuery, s.tenants, formData)
 				if tErr != nil {
 					s.logger.LogSecurity("tenant guard rejected email recipient query", tErr)
 					continue
@@ -1109,7 +1115,8 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				// Re-run the named query to get full rows for the PDF
 				for _, prevNode := range action.Body {
 					if prevNode.Type == parser.NodeQuery && prevNode.Name == dataName {
-						prevSQL, tErr := RewriteTenantSQL(prevNode.SQL, s.tenants, formData)
+						prevSQL := expandQueryConditionals(prevNode.SQL, formData)
+						prevSQL, tErr := RewriteTenantSQL(prevSQL, s.tenants, formData)
 						if tErr != nil {
 							s.logger.LogSecurity("tenant guard rejected PDF data query", tErr)
 							continue
@@ -1305,7 +1312,8 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			}
 
 			if node.QuerySQL != "" && tx != nil {
-				respondSQL, tErr := RewriteTenantSQL(node.QuerySQL, s.tenants, formData)
+				respondSQL := expandQueryConditionals(node.QuerySQL, formData)
+				respondSQL, tErr := RewriteTenantSQL(respondSQL, s.tenants, formData)
 				if tErr != nil {
 					s.logger.LogSecurity("tenant guard rejected respond query", tErr)
 					http.Error(w, "Forbidden", http.StatusForbidden)
@@ -1421,7 +1429,8 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 		case parser.NodeSendEmail:
 			recipient := resolveEmailRecipient(node.EmailTo, formData)
 			if toQuery, ok := node.Props["to_query"]; ok && toQuery != "" && s.db != nil {
-				scopedToQuery, tErr := RewriteTenantSQL(toQuery, s.tenants, formData)
+				scopedToQuery := expandQueryConditionals(toQuery, formData)
+				scopedToQuery, tErr := RewriteTenantSQL(scopedToQuery, s.tenants, formData)
 				if tErr != nil {
 					s.logger.LogSecurity("tenant guard rejected email recipient query", tErr)
 					continue
@@ -1451,7 +1460,8 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 			}(recipient, subject, emailBody, templateName, paramsCopy)
 		case parser.NodeQuery:
 			if s.db != nil {
-				sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, formData)
+				sql := expandQueryConditionals(node.SQL, formData)
+				sql, tErr := RewriteTenantSQL(sql, s.tenants, formData)
 				if tErr != nil {
 					s.logger.LogSecurity("tenant guard rejected on-branch query", tErr)
 					continue

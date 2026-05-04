@@ -4,6 +4,7 @@ import (
 	"html"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
@@ -751,5 +752,640 @@ func TestEachCustomRebindPerRow(t *testing.T) {
 	}
 	if !strings.Contains(result, "Deal B:200") {
 		t.Errorf("expected Deal B:200 in output, got: %s", result)
+	}
+}
+
+// --- goDateFormat tests ---
+
+func TestGoDateFormat_YMD(t *testing.T) {
+	got := goDateFormat("%Y-%m-%d")
+	if got != "2006-01-02" {
+		t.Errorf("expected 2006-01-02, got %q", got)
+	}
+}
+
+func TestGoDateFormat_HMS(t *testing.T) {
+	got := goDateFormat("%H:%M:%S")
+	if got != "15:04:05" {
+		t.Errorf("expected 15:04:05, got %q", got)
+	}
+
+}
+
+func TestGoDateFormat_Full(t *testing.T) {
+	got := goDateFormat("%B %d, %Y at %I:%M %p")
+	if got != "January 02, 2006 at 03:04 PM" {
+		t.Errorf("expected full format, got %q", got)
+	}
+}
+
+// --- timeAgo tests ---
+
+func TestTimeAgo_JustNow(t *testing.T) {
+	got := timeAgo(time.Now().Add(-5 * time.Second))
+	if got != "just now" {
+		t.Errorf("expected just now, got %q", got)
+	}
+}
+
+func TestTimeAgo_Minutes(t *testing.T) {
+	got := timeAgo(time.Now().Add(-5 * time.Minute))
+	if got != "5 minutes ago" {
+		t.Errorf("expected 5 minutes ago, got %q", got)
+	}
+}
+
+func TestTimeAgo_OneMinute(t *testing.T) {
+	got := timeAgo(time.Now().Add(-1 * time.Minute))
+	if got != "1 minute ago" {
+		t.Errorf("expected 1 minute ago, got %q", got)
+	}
+}
+
+func TestTimeAgo_Hours(t *testing.T) {
+	got := timeAgo(time.Now().Add(-3 * time.Hour))
+	if got != "3 hours ago" {
+		t.Errorf("expected 3 hours ago, got %q", got)
+	}
+}
+
+func TestTimeAgo_OneHour(t *testing.T) {
+	got := timeAgo(time.Now().Add(-1 * time.Hour))
+	if got != "1 hour ago" {
+		t.Errorf("expected 1 hour ago, got %q", got)
+	}
+}
+
+func TestTimeAgo_Days(t *testing.T) {
+	got := timeAgo(time.Now().Add(-5 * 24 * time.Hour))
+	if got != "5 days ago" {
+		t.Errorf("expected 5 days ago, got %q", got)
+	}
+}
+
+func TestTimeAgo_OneDay(t *testing.T) {
+	got := timeAgo(time.Now().Add(-24 * time.Hour))
+	if got != "1 day ago" {
+		t.Errorf("expected 1 day ago, got %q", got)
+	}
+}
+
+func TestTimeAgo_Months(t *testing.T) {
+	got := timeAgo(time.Now().Add(-100 * 24 * time.Hour))
+	if got != "3 months ago" {
+		t.Errorf("expected 3 months ago, got %q", got)
+	}
+}
+
+func TestTimeAgo_OneMonth(t *testing.T) {
+	got := timeAgo(time.Now().Add(-45 * 24 * time.Hour))
+	if got != "1 month ago" {
+		t.Errorf("expected 1 month ago, got %q", got)
+	}
+}
+
+// --- formatNumber tests ---
+
+func TestFormatNumber_Integer(t *testing.T) {
+	got := formatNumber(1234567, 0)
+	if got != "1,234,567" {
+		t.Errorf("expected 1,234,567, got %q", got)
+	}
+}
+
+func TestFormatNumber_WithDecimals(t *testing.T) {
+	got := formatNumber(1234.567, 2)
+	if got != "1,234.57" {
+		t.Errorf("expected 1,234.57, got %q", got)
+	}
+}
+
+func TestFormatNumber_Negative(t *testing.T) {
+	got := formatNumber(-1234.5, 1)
+	if got != "-1,234.5" {
+		t.Errorf("expected -1,234.5, got %q", got)
+	}
+}
+
+func TestFormatNumber_Small(t *testing.T) {
+	got := formatNumber(42, 0)
+	if got != "42" {
+		t.Errorf("expected 42, got %q", got)
+	}
+}
+
+func TestFormatNumber_Zero(t *testing.T) {
+	got := formatNumber(0, 0)
+	if got != "0" {
+		t.Errorf("expected 0, got %q", got)
+	}
+}
+
+func TestFormatNumber_ZeroDecimals(t *testing.T) {
+	got := formatNumber(0, 2)
+	if got != "0.00" {
+		t.Errorf("expected 0.00, got %q", got)
+	}
+}
+
+// --- evaluateCondition / evaluateSingleCondition tests ---
+
+func TestEvaluateCondition_TruthyCheck(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"name": "Alice"}}
+	if !evaluateCondition("user.name", ctx, nil) {
+		t.Error("expected truthy for non-empty value")
+	}
+}
+
+func TestEvaluateCondition_TruthyCheckEmpty(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"name": ""}}
+	if evaluateCondition("user.name", ctx, nil) {
+		t.Error("expected falsy for empty value")
+	}
+}
+
+func TestEvaluateCondition_TruthyCheckZero(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"score": "0"}}
+	if evaluateCondition("user.score", ctx, nil) {
+		t.Error("expected falsy for zero value")
+	}
+}
+
+func TestEvaluateCondition_Equals(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"role": "admin"}}
+	if !evaluateCondition(`user.role == "admin"`, ctx, nil) {
+		t.Error("expected true for equal values")
+	}
+	if evaluateCondition(`user.role == "viewer"`, ctx, nil) {
+		t.Error("expected false for non-equal values")
+	}
+}
+
+func TestEvaluateCondition_NotEquals(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"role": "admin"}}
+	if !evaluateCondition(`user.role != "viewer"`, ctx, nil) {
+		t.Error("expected true for not-equal values")
+	}
+}
+
+func TestEvaluateCondition_GreaterThan(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["items"] = []database.Row{{"score": "5"}}
+	if !evaluateCondition("items.score > 3", ctx, nil) {
+		t.Error("expected true for 5 > 3")
+	}
+	if evaluateCondition("items.score > 10", ctx, nil) {
+		t.Error("expected false for 5 > 10")
+	}
+}
+
+func TestEvaluateCondition_LessThan(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["items"] = []database.Row{{"count": "5"}}
+	if !evaluateCondition("items.count < 10", ctx, nil) {
+		t.Error("expected true for 5 < 10")
+	}
+}
+
+func TestEvaluateCondition_And(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"role": "admin", "active": "1"}}
+	if !evaluateCondition(`user.role == "admin" and user.active`, ctx, nil) {
+		t.Error("expected true for both conditions")
+	}
+	if evaluateCondition(`user.role == "admin" and user.active == "0"`, ctx, nil) {
+		t.Error("expected false for second condition false")
+	}
+}
+
+func TestEvaluateCondition_Or(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"role": "editor"}}
+	if !evaluateCondition(`user.role == "admin" or user.role == "editor"`, ctx, nil) {
+		t.Error("expected true for one condition true")
+	}
+	if evaluateCondition(`user.role == "admin" or user.role == "viewer"`, ctx, nil) {
+		t.Error("expected false for both conditions false")
+	}
+}
+
+func TestEvaluateCondition_UnresolvedVariable(t *testing.T) {
+	ctx := newTestContext()
+	if evaluateCondition("missing.field", ctx, nil) {
+		t.Error("expected false for unresolved variable")
+	}
+}
+
+func TestEvaluateCondition_VariableComparison(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["a"] = []database.Row{{"val": "5"}}
+	ctx.queries["b"] = []database.Row{{"val": "5"}}
+	if !evaluateCondition("a.val == b.val", ctx, nil) {
+		t.Error("expected true when comparing resolved variables")
+	}
+}
+
+// --- splitCondition tests ---
+
+func TestSplitCondition_Equals(t *testing.T) {
+	left, op, right := splitCondition(`user.role == "admin"`)
+	if left != `user.role` || op != "==" || right != `"admin"` {
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+func TestSplitCondition_NotEquals(t *testing.T) {
+	left, op, right := splitCondition(`user.role != "viewer"`)
+	if left != `user.role` || op != "!=" || right != `"viewer"` {
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+func TestSplitCondition_GreaterThan(t *testing.T) {
+	left, op, right := splitCondition("items.count > 3")
+	if left != "items.count" || op != ">" || right != "3" {
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+func TestSplitCondition_LessThan(t *testing.T) {
+	left, op, right := splitCondition("items.count < 10")
+	if left != "items.count" || op != "<" || right != "10" {
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+func TestSplitCondition_GreaterThanOrEqual(t *testing.T) {
+	left, op, right := splitCondition("score >= 50")
+	if left != "score" || op != ">=" || right != "50" {
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+func TestSplitCondition_LessThanOrEqual(t *testing.T) {
+	left, op, right := splitCondition("score <= 100")
+	if left != "score" || op != "<=" || right != "100" {
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+func TestSplitCondition_OperatorInQuotes(t *testing.T) {
+	left, op, right := splitCondition(`label == "a>=b"`)
+	if left != `label` || op != "==" || right != `"a>=b"` {
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+func TestSplitCondition_NoOperator(t *testing.T) {
+	left, op, right := splitCondition("user.name")
+	if left != "user.name" || op != "" || right != "" {
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+func TestSplitCondition_SingleQuote(t *testing.T) {
+	left, op, right := splitCondition(`name == 'Alice'`)
+	if left != "name" || op != "==" || right != `'Alice'` {
+		// Note: single quotes are not stripped by splitCondition
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+// --- stripQuotes tests ---
+
+func TestStripQuotes_Double(t *testing.T) {
+	got := stripQuotes(`"hello"`)
+	if got != "hello" {
+		t.Errorf("expected hello, got %q", got)
+	}
+}
+
+func TestStripQuotes_Single(t *testing.T) {
+	got := stripQuotes(`'hello'`)
+	if got != "hello" {
+		t.Errorf("expected hello, got %q", got)
+	}
+}
+
+func TestStripQuotes_NoQuotes(t *testing.T) {
+	got := stripQuotes("hello")
+	if got != "hello" {
+		t.Errorf("expected hello, got %q", got)
+	}
+}
+
+func TestStripQuotes_Empty(t *testing.T) {
+	got := stripQuotes(``)
+	if got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestStripQuotes_SingleChar(t *testing.T) {
+	got := stripQuotes(`a`)
+	if got != "a" {
+		t.Errorf("expected a, got %q", got)
+	}
+}
+
+
+func TestSplitCondition_MixedQuotes(t *testing.T) {
+	left, op, right := splitCondition(`name == "Alice"`)
+	if left != `name` || op != "==" || right != `"Alice"` {
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+func TestSplitCondition_EscapedQuote(t *testing.T) {
+	// Backslash-escaped quotes should not confuse the scanner
+	left, op, right := splitCondition(`label == "a\"b"`)
+	if left != `label` || op != "==" || right != `"a\"b"` {
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+func TestSplitCondition_SingleQuoteNested(t *testing.T) {
+	left, op, right := splitCondition(`name == 'O\'Brien'`)
+	if left != `name` || op != "==" || right != `'O\'Brien'` {
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+func TestSplitCondition_OperatorAfterQuote(t *testing.T) {
+	left, op, right := splitCondition(`status >= 'active'`)
+	if left != `status` || op != ">=" || right != `'active'` {
+		t.Errorf("unexpected split: %q %q %q", left, op, right)
+	}
+}
+
+
+func TestEvaluateCondition_GreaterThanOrEqual(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["users"] = []database.Row{{"score": "10"}}
+	if !evaluateCondition("users.score >= 5", ctx, nil) {
+		t.Error("expected true for 10 >= 5")
+	}
+	if evaluateCondition("users.score >= 15", ctx, nil) {
+		t.Error("expected false for 10 >= 15")
+	}
+}
+
+func TestEvaluateCondition_LessThanOrEqual(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["users"] = []database.Row{{"score": "10"}}
+	if !evaluateCondition("users.score <= 15", ctx, nil) {
+		t.Error("expected true for 10 <= 15")
+	}
+	if evaluateCondition("users.score <= 5", ctx, nil) {
+		t.Error("expected false for 10 <= 5")
+	}
+}
+
+func TestEvaluateCondition_NestedIf(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"role": "admin"}}
+	template := `{{if user.role == "admin"}}admin{{if user.role == "super"}}super{{end}}content{{end}}`
+	got := renderHTML(template, ctx)
+	if got != "admincontent" {
+		t.Errorf("expected 'admincontent', got %q", got)
+	}
+}
+
+func TestEvaluateCondition_IfElse(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"role": "viewer"}}
+	template := `{{if user.role == "admin"}}admin{{else}}viewer{{end}}`
+	got := renderHTML(template, ctx)
+	if got != "viewer" {
+		t.Errorf("expected 'viewer', got %q", got)
+	}
+}
+
+func TestRenderHTML_DefaultFilter(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"name": "", "bio": "<nil>"}}
+	result := renderHTML(`{user.name | default:"Anonymous"}`, ctx)
+	if result != "Anonymous" {
+		t.Errorf("expected 'Anonymous', got %s", result)
+	}
+	result2 := renderHTML(`{user.bio | default:"No bio"}`, ctx)
+	if result2 != "No bio" {
+		t.Errorf("expected 'No bio' for <nil>, got %s", result2)
+	}
+}
+
+func TestRenderHTML_CapitalizeFilter(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["user"] = []database.Row{{"name": "alice"}}
+	result := renderHTML(`{user.name | capitalize}`, ctx)
+	if result != "Alice" {
+		t.Errorf("expected 'Alice', got %s", result)
+	}
+}
+
+func TestRenderHTML_TruncateFilter(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["post"] = []database.Row{{"body": "This is a very long text that should be truncated"}}
+	result := renderHTML(`{post.body | truncate:10}`, ctx)
+	if !strings.Contains(result, "...") {
+		t.Errorf("expected truncation with ..., got %s", result)
+	}
+}
+
+func TestRenderHTML_DateFilter(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["event"] = []database.Row{{"created": "2024-03-15T10:30:00Z"}}
+	result := renderHTML(`{event.created | date:"%Y-%m-%d"}`, ctx)
+	if !strings.Contains(result, "2024-03-15") {
+		t.Errorf("expected formatted date, got %s", result)
+	}
+}
+
+func TestRenderHTML_TimeAgoFilter(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["post"] = []database.Row{{"created": time.Now().Add(-2 * time.Hour).Format(time.RFC3339)}}
+	result := renderHTML(`{post.created | timeago}`, ctx)
+	if !strings.Contains(result, "hour") {
+		t.Errorf("expected time ago with hour, got %s", result)
+	}
+}
+
+func TestRenderHTML_CurrencyFilter(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["order"] = []database.Row{{"total": "99.99"}}
+	result := renderHTML(`{order.total | currency:"$"}`, ctx)
+	if !strings.Contains(result, "$99.99") {
+		t.Errorf("expected currency format, got %s", result)
+	}
+}
+
+func TestRenderHTML_NumberFilter(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["stats"] = []database.Row{{"value": "3.14159"}}
+	result := renderHTML(`{stats.value | number:2}`, ctx)
+	if !strings.Contains(result, "3.14") {
+		t.Errorf("expected number with 2 decimals, got %s", result)
+	}
+}
+
+func TestRenderHTML_PluralizeFilter(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["cart"] = []database.Row{{"qty": "1"}}
+	result := renderHTML(`{cart.qty | pluralize:"item,items"}`, ctx)
+	if result != "item" {
+		t.Errorf("expected singular 'item', got %s", result)
+	}
+	ctx.queries["cart2"] = []database.Row{{"qty": "5"}}
+	result2 := renderHTML(`{cart2.qty | pluralize:"item,items"}`, ctx)
+	if result2 != "items" {
+		t.Errorf("expected plural 'items', got %s", result2)
+	}
+}
+
+func TestRenderHTML_FilterInsideEach(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["users"] = []database.Row{{"name": "alice"}, {"name": "bob"}}
+	result := renderHTML(`{{each users}}<span>{name | upcase}</span>{{end}}`, ctx)
+	if !strings.Contains(result, "ALICE") || !strings.Contains(result, "BOB") {
+		t.Errorf("expected uppercase names, got %s", result)
+	}
+}
+
+func TestProcessRawInRow_Unresolved(t *testing.T) {
+	ctx := newTestContext()
+	row := database.Row{"name": "Alice"}
+	// {missing} should remain unchanged
+	result := processRawInRow(`<p>{missing | upcase}</p>`, row, ctx, "nonce1")
+	if !strings.Contains(result, "{missing | upcase}") {
+		t.Errorf("expected unresolved filter to remain, got %q", result)
+	}
+}
+
+func TestFindMatchingEnd_Malformed(t *testing.T) {
+	// Missing {{end}}
+	body, elseBody, endPos := findMatchingEnd(`content {{if true}}inner`)
+	if endPos != -1 {
+		t.Errorf("expected -1 for malformed, got %d", endPos)
+	}
+	if body != "" || elseBody != "" {
+		t.Error("expected empty body/elseBody for malformed")
+	}
+}
+
+func TestExpandIfBlocks_MalformedNoClose(t *testing.T) {
+	ctx := newTestContext()
+	result := expandIfBlocks(`{{if true`, ctx, nil)
+	if result != `{{if true` {
+		t.Errorf("expected unchanged malformed, got %q", result)
+	}
+}
+
+func TestExpandIfBlocks_MalformedNoEnd(t *testing.T) {
+	ctx := newTestContext()
+	result := expandIfBlocks(`{{if true}}content`, ctx, nil)
+	if result != `{{if true}}content` {
+		t.Errorf("expected unchanged malformed, got %q", result)
+	}
+}
+
+func TestEvaluateSingleCondition_UnresolvedLeft(t *testing.T) {
+	ctx := newTestContext()
+	if evaluateSingleCondition("missing.field == 'test'", ctx, nil) {
+		t.Error("expected false when left side unresolved")
+	}
+}
+
+func TestEvaluateSingleCondition_UnknownOp(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["a"] = []database.Row{{"val": "1"}}
+	if evaluateSingleCondition("a.val ~~ '1'", ctx, nil) {
+		t.Error("expected false for unknown operator")
+	}
+}
+
+func TestRenderHTML_UnresolvedFilter(t *testing.T) {
+	ctx := newTestContext()
+	result := renderHTML(`<p>{missing.field | upcase}</p>`, ctx)
+	if !strings.Contains(result, "{missing.field | upcase}") {
+		t.Errorf("expected unresolved filter to remain, got %q", result)
+	}
+}
+
+func TestExpandEachBlocks_MalformedNoClose(t *testing.T) {
+	ctx := newTestContext()
+	result := expandEachBlocks(`{{each users`, ctx, "nonce")
+	if result != `{{each users` {
+		t.Errorf("expected unchanged malformed, got %q", result)
+	}
+}
+
+func TestResolveValue_PaginateNotFound(t *testing.T) {
+	ctx := newTestContext()
+	result := resolveValue("paginate.missing.page", ctx, nil)
+	if result != "{paginate.missing.page}" {
+		t.Errorf("expected unresolved, got %q", result)
+	}
+}
+
+func TestResolveValue_ParamsNotFound(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queryParams = map[string]string{"other": "value"}
+	result := resolveValue("params.missing", ctx, nil)
+	if result != "" {
+		t.Errorf("expected empty string, got %q", result)
+	}
+}
+
+func TestIsInsideEachBlock_Malformed(t *testing.T) {
+	fn := isInsideEachBlock(`{{each users`)
+	// Should return false for any position since no valid each block
+	if fn(0) {
+		t.Error("expected false for malformed each block")
+	}
+}
+
+func TestProcessRawInRow_RawFilter(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["post"] = []database.Row{{"content": "<b>Bold</b>"}}
+	row := database.Row{"name": "Alice"}
+	result := processRawInRow(`<div>{post.content | raw}</div>`, row, ctx, "nonce2")
+	if !strings.Contains(result, "<b>Bold</b>") {
+		t.Errorf("expected raw HTML to be preserved, got %q", result)
+	}
+}
+
+func TestFindMatchingEnd_NoCloseTag(t *testing.T) {
+	body, elseBody, endPos := findMatchingEnd(`content {{if true}}inner`)
+	if endPos != -1 {
+		t.Errorf("expected -1 for no close tag, got %d", endPos)
+	}
+	if body != "" || elseBody != "" {
+		t.Error("expected empty body/elseBody")
+	}
+}
+
+func TestFindMatchingEnd_MissingCloseTagInside(t *testing.T) {
+	body, elseBody, endPos := findMatchingEnd(`content {{if true inner{{end}}`)
+	if endPos != -1 {
+		t.Errorf("expected -1 for missing close tag inside, got %d", endPos)
+	}
+	if body != "" || elseBody != "" {
+		t.Error("expected empty body/elseBody")
+	}
+}
+
+func TestFindMatchingEnd_LoopExhausted(t *testing.T) {
+	// No {{end}} at all
+	body, elseBody, endPos := findMatchingEnd(`content`)
+	if endPos != -1 {
+		t.Errorf("expected -1 when no end tag, got %d", endPos)
+	}
+	if body != "" || elseBody != "" {
+		t.Error("expected empty body/elseBody")
 	}
 }

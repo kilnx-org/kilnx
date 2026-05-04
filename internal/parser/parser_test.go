@@ -1313,3 +1313,43 @@ func TestParseIndexAndUniqueCoexist(t *testing.T) {
 		t.Errorf("expected 1 unique and 1 index, got %d/%d", len(m.UniqueConstraints), len(m.Indexes))
 	}
 }
+
+func TestComputedFieldExpression(t *testing.T) {
+	src := `model order
+  quantity: int
+  unit_price: float
+  total: computed quantity * unit_price
+`
+	app := parse(t, src)
+	if len(app.Models) != 1 {
+		t.Fatalf("expected 1 model, got %d", len(app.Models))
+	}
+	m := app.Models[0]
+	if len(m.Fields) != 3 {
+		t.Fatalf("expected 3 fields, got %d", len(m.Fields))
+	}
+	f := m.Fields[2]
+	if f.Name != "total" {
+		t.Errorf("expected field name 'total', got %q", f.Name)
+	}
+	if !f.Computed {
+		t.Errorf("expected computed=true")
+	}
+	if f.ComputedExpr != "quantity * unit_price" {
+		t.Errorf("expected computed expression 'quantity * unit_price', got %q", f.ComputedExpr)
+	}
+}
+
+func TestComputedFieldWithParentheses(t *testing.T) {
+	src := `model invoice
+  subtotal: float
+  tax_rate: float
+  total: computed (subtotal * tax_rate) + subtotal
+`
+	app := parse(t, src)
+	m := app.Models[0]
+	f := m.Fields[2]
+	if f.ComputedExpr != "(subtotal * tax_rate) + subtotal" {
+		t.Errorf("expected '(subtotal * tax_rate) + subtotal', got %q", f.ComputedExpr)
+	}
+}

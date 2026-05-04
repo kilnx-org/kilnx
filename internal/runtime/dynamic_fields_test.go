@@ -138,6 +138,34 @@ func TestMergeDBFieldDefs_TableMissing_GracefulDegrade(t *testing.T) {
 	}
 }
 
+func TestMergeDBFieldDefs_InvalidOptionsJSON(t *testing.T) {
+	s := newTestServerWithDB(t)
+	if err := s.db.ExecWithParams(`CREATE TABLE "_deal_field_defs" (
+		"id" INTEGER PRIMARY KEY,
+		"name" TEXT,
+		"kind" TEXT,
+		"label" TEXT,
+		"required" TEXT,
+		"options" TEXT,
+		"reference_model" TEXT,
+		"sort_order" INTEGER
+	)`, nil); err != nil {
+		t.Fatalf("failed to create table: %v", err)
+	}
+	if err := s.db.ExecWithParams(`INSERT INTO "_deal_field_defs" (name,kind,label,required,options,sort_order) VALUES ('size','option','Size','false','not-json',1)`, nil); err != nil {
+		t.Fatalf("failed to insert: %v", err)
+	}
+	base := &parser.CustomFieldManifest{ModelName: "deal"}
+	merged := s.mergeDBFieldDefs("deal", base)
+
+	if len(merged.Fields) != 1 {
+		t.Fatalf("expected 1 field, got %d", len(merged.Fields))
+	}
+	if len(merged.Fields[0].Options) != 0 {
+		t.Errorf("expected empty options when JSON is invalid, got %v", merged.Fields[0].Options)
+	}
+}
+
 func TestInvalidateDynamicManifestCache(t *testing.T) {
 	s := &Server{}
 	s.manifestCache.Store("__dynamic__:deal", &parser.CustomFieldManifest{ModelName: "deal"})
