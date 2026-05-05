@@ -68,6 +68,37 @@ func NewRateLimiter(rules []parser.RateLimit) *RateLimiter {
 	return rl
 }
 
+// CheckClause enforces a per-key counter for `requires limit N/period per scope`
+// clauses. Returns true if the request is within the limit. Uses the same
+// in-memory map as path-level rules, scoped under a "clause:" prefix.
+func (rl *RateLimiter) CheckClause(count int, period string, key string) bool {
+	if key == "" || count <= 0 {
+		return true
+	}
+	window := windowDuration(period)
+	if window == 0 {
+		return true
+	}
+
+	mapKey := "clause:" + period + ":" + key
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	entry, exists := rl.entries[mapKey]
+	if !exists || now.After(entry.expiresAt) {
+		rl.entries[mapKey] = &rateLimitEntry{
+			count:     1,
+			expiresAt: now.Add(window),
+		}
+		return true
+	}
+	if entry.count >= count {
+		return false
+	}
+	entry.count++
+	return true
+}
+
 // minWindow returns the shortest window duration across all rules
 func (rl *RateLimiter) minWindow() time.Duration {
 	min := time.Hour

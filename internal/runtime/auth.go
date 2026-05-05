@@ -385,34 +385,42 @@ func (s *Server) hasPermission(userRole, requiredRole string, perms []parser.Per
 }
 
 // evalRequiresClauses returns true when the session satisfies ALL clauses (AND semantics).
-// A superuser (matched by identity) bypasses all checks.
+//
+// Privilege checks (auth, role, expr, superuser) are bypassed for the configured
+// superuser identity. Availability and traffic controls (flag, rate-limit) are
+// always evaluated, since a disabled flag or exhausted endpoint is a signal that
+// no caller, including the operator, should reach the handler.
 func (s *Server) evalRequiresClauses(clauses []parser.RequiresClause, session *Session, r *http.Request) bool {
-	if s.superuserIdentity != "" && session != nil && session.Identity == s.superuserIdentity {
-		return true
-	}
+	isSuperuser := s.superuserIdentity != "" && session != nil && session.Identity == s.superuserIdentity
 	app := s.getApp()
 	for _, clause := range clauses {
 		switch clause.Kind {
-		case parser.RequiresClauseAuth:
-			// satisfied by session existing (already checked before calling this)
-		case parser.RequiresClauseRole:
-			if session.Role != clause.Value && !s.hasPermission(session.Role, clause.Value, app.Permissions) {
-				return false
-			}
-		case parser.RequiresClauseExpr:
-			if !evalAuthExpr(clause.Value, session) {
-				return false
-			}
-		case parser.RequiresClauseSuperuser:
-			if s.superuserIdentity == "" || session.Identity != s.superuserIdentity {
-				return false
-			}
 		case parser.RequiresClauseFlag:
 			if !s.resolveFlag(clause.Value) {
 				return false
 			}
 		case parser.RequiresClauseRateLimit:
 			if r != nil && !s.checkRateLimit(clause.LimitCount, clause.LimitPeriod, clause.LimitScope, r, session) {
+				return false
+			}
+		case parser.RequiresClauseAuth:
+			// satisfied by session existing (already checked before calling this)
+		case parser.RequiresClauseRole:
+			if isSuperuser {
+				continue
+			}
+			if session.Role != clause.Value && !s.hasPermission(session.Role, clause.Value, app.Permissions) {
+				return false
+			}
+		case parser.RequiresClauseExpr:
+			if isSuperuser {
+				continue
+			}
+			if !evalAuthExpr(clause.Value, session) {
+				return false
+			}
+		case parser.RequiresClauseSuperuser:
+			if s.superuserIdentity == "" || session.Identity != s.superuserIdentity {
 				return false
 			}
 		}
@@ -1004,94 +1012,54 @@ func (s *Server) resolveFlag(name string) bool {
 }
 
 // rateLimitKey returns the key for rate limiting based on scope.
-func rateLimitKey(scope string, r *http.Request, session *Session) string {
+// Returns empty string when the scope cannot be resolved (e.g. `per tenant`
+// on a single-tenant app); the caller treats empty as "no limit applied".
+func (s *Server) rateLimitKey(scope string, r *http.Request, session *Session) string {
 	switch scope {
 	case "user":
 		if session != nil {
-			return session.Identity
+			return "user:" + session.Identity
 		}
 		return ""
 	case "tenant":
 		if session != nil {
-			// Try to extract tenant from user row data
 			if tenantID, ok := session.Data["tenant_id"]; ok && tenantID != "" {
-				return tenantID
+				return "tenant:" + tenantID
 			}
 			if orgID, ok := session.Data["org_id"]; ok && orgID != "" {
-				return orgID
+				return "tenant:" + orgID
 			}
 		}
+		s.warnTenantScopeOnce()
 		return ""
 	case "ip":
-		return r.RemoteAddr
+		return "ip:" + clientIP(r)
 	default:
-		return r.RemoteAddr
+		return "ip:" + clientIP(r)
 	}
+}
+
+// warnTenantScopeOnce logs once that `per tenant` resolved to an empty key.
+// Surfaces a misconfiguration that would otherwise silently disable the limit.
+func (s *Server) warnTenantScopeOnce() {
+	s.tenantWarnOnce.Do(func() {
+		if s.logger != nil {
+			s.logger.LogSecurity("rate-limit clause uses `per tenant` but no tenant_id/org_id present on session; clause is a no-op", nil)
+		}
+	})
 }
 
 // checkRateLimit returns true if the request is within the rate limit.
-// It increments the counter in the _kilnx_rate_limits table.
+// Uses the in-memory RateLimiter (mutex-protected, race-safe) so the check
+// works identically on SQLite and PostgreSQL deployments. Single-instance only:
+// in a multi-process deployment each instance enforces its own counter.
 func (s *Server) checkRateLimit(count int, period string, scope string, r *http.Request, session *Session) bool {
-	if s.db == nil {
-		return true
-	}
-	key := rateLimitKey(scope, r, session)
+	key := s.rateLimitKey(scope, r, session)
 	if key == "" {
-		return true // no key to rate limit by
-	}
-
-	rawDB, ok := s.db.(*database.DB)
-	if !ok || rawDB == nil {
 		return true
 	}
-
-	window := rateLimitWindow(period)
-	if window == 0 {
+	if s.rateLimiter == nil {
 		return true
 	}
-
-	now := time.Now().Unix()
-	windowStart := now - window
-
-	// Clean old entries and count current window
-	_, _ = rawDB.Conn().Exec("DELETE FROM _kilnx_rate_limits WHERE window_start < ?", windowStart)
-
-	var currentCount int
-	err := rawDB.Conn().QueryRow(
-		"SELECT request_count FROM _kilnx_rate_limits WHERE scope_key = ? AND limit_period = ? AND window_start = ?",
-		key, period, windowStart,
-	).Scan(&currentCount)
-
-	if err != nil {
-		// No entry yet, create one
-		_, _ = rawDB.Conn().Exec(
-			"INSERT INTO _kilnx_rate_limits (scope_key, limit_period, window_start, request_count) VALUES (?, ?, ?, 1)",
-			key, period, windowStart,
-		)
-		return true
-	}
-
-	if currentCount >= count {
-		return false
-	}
-
-	_, _ = rawDB.Conn().Exec(
-		"UPDATE _kilnx_rate_limits SET request_count = request_count + 1 WHERE scope_key = ? AND limit_period = ? AND window_start = ?",
-		key, period, windowStart,
-	)
-	return true
-}
-
-func rateLimitWindow(period string) int64 {
-	switch strings.ToLower(period) {
-	case "second":
-		return 1
-	case "minute":
-		return 60
-	case "hour":
-		return 3600
-	case "day":
-		return 86400
-	}
-	return 0
+	return s.rateLimiter.CheckClause(count, period, key)
 }

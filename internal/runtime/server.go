@@ -36,6 +36,7 @@ type Server struct {
 	superuserIdentity  string                  // identity of the platform operator; bypasses all role checks
 	fragmentComponents map[string]*parser.Page // component name -> fragment (for inline rendering)
 	mu                 sync.RWMutex
+	tenantWarnOnce     sync.Once
 	port               int
 	scheduleStop       chan struct{}
 }
