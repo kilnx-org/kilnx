@@ -31,9 +31,9 @@ type Server struct {
 	rateLimiter        *RateLimiter
 	logger             *Logger
 	i18n               *I18n
-	tenants            TenantMap // models with a `tenant: <model>` directive
-	manifestCache      sync.Map  // resolved path -> *parser.CustomFieldManifest (dynamic manifests)
-	superuserIdentity  string    // identity of the platform operator; bypasses all role checks
+	tenants            TenantMap               // models with a `tenant: <model>` directive
+	manifestCache      sync.Map                // resolved path -> *parser.CustomFieldManifest (dynamic manifests)
+	superuserIdentity  string                  // identity of the platform operator; bypasses all role checks
 	fragmentComponents map[string]*parser.Page // component name -> fragment (for inline rendering)
 	mu                 sync.RWMutex
 	port               int
@@ -557,10 +557,10 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 				var layoutCtx *renderContext
 				if len(layout.Queries) > 0 && s.db != nil {
 					layoutCtx = &renderContext{
-				fragmentComponents: s.fragmentComponents,
-						queries:  make(map[string][]database.Row),
-						paginate: make(map[string]PaginateInfo),
-						models:   app.Models,
+						fragmentComponents: s.fragmentComponents,
+						queries:            make(map[string][]database.Row),
+						paginate:           make(map[string]PaginateInfo),
+						models:             app.Models,
 					}
 					// Build params from path and current_user (same as page queries)
 					layoutParams := make(map[string]string)
@@ -599,10 +599,10 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 				// Propagate current_user to layout context
 				if layoutCtx == nil {
 					layoutCtx = &renderContext{
-				fragmentComponents: s.fragmentComponents,
-						queries:  make(map[string][]database.Row),
-						paginate: make(map[string]PaginateInfo),
-						models:   app.Models,
+						fragmentComponents: s.fragmentComponents,
+						queries:            make(map[string][]database.Row),
+						paginate:           make(map[string]PaginateInfo),
+						models:             app.Models,
 					}
 				}
 				layoutCtx.currentUser = ctx.currentUser
@@ -750,14 +750,14 @@ func render404(path string, pages []parser.Page) string {
 func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 	app := s.getApp()
 	ctx := &renderContext{
-				fragmentComponents: s.fragmentComponents,
-		queries:           make(map[string][]database.Row),
-		paginate:          make(map[string]PaginateInfo),
-		currentUser:       s.getSession(r),
-		queryParams:       make(map[string]string),
-		querySourceModels: make(map[string]string),
-		customManifests:   app.CustomManifests,
-		models:            app.Models,
+		fragmentComponents: s.fragmentComponents,
+		queries:            make(map[string][]database.Row),
+		paginate:           make(map[string]PaginateInfo),
+		currentUser:        s.getSession(r),
+		queryParams:        make(map[string]string),
+		querySourceModels:  make(map[string]string),
+		customManifests:    app.CustomManifests,
+		models:             app.Models,
 	}
 
 	// Make current_user available in fragments
@@ -865,12 +865,12 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]string) string {
 	app := s.getApp()
 	ctx := &renderContext{
-				fragmentComponents: s.fragmentComponents,
-		queries:           make(map[string][]database.Row),
-		paginate:          make(map[string]PaginateInfo),
-		querySourceModels: make(map[string]string),
-		customManifests:   app.CustomManifests,
-		models:            app.Models,
+		fragmentComponents: s.fragmentComponents,
+		queries:            make(map[string][]database.Row),
+		paginate:           make(map[string]PaginateInfo),
+		querySourceModels:  make(map[string]string),
+		customManifests:    app.CustomManifests,
+		models:             app.Models,
 	}
 
 	var body strings.Builder
@@ -1249,13 +1249,13 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			}
 			htmlCtx := &renderContext{
 				fragmentComponents: s.fragmentComponents,
-				queries:           map[string][]database.Row{"_form": {formRow}},
-				paginate:          make(map[string]PaginateInfo),
-				currentUser:       s.getSession(r),
-				queryParams:       formData,
-				querySourceModels: make(map[string]string),
-				customManifests:   app.CustomManifests,
-				models:            app.Models,
+				queries:            map[string][]database.Row{"_form": {formRow}},
+				paginate:           make(map[string]PaginateInfo),
+				currentUser:        s.getSession(r),
+				queryParams:        formData,
+				querySourceModels:  make(map[string]string),
+				customManifests:    app.CustomManifests,
+				models:             app.Models,
 			}
 			htmlContent := renderHTML(node.HTMLContent, htmlCtx)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1381,11 +1381,11 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				rows = expandCustomFields(rows)
 				respondApp := s.getApp()
 				ctx := &renderContext{
-				fragmentComponents: s.fragmentComponents,
-					queries:           map[string][]database.Row{"_result": rows},
-					querySourceModels: make(map[string]string),
-					customManifests:   respondApp.CustomManifests,
-					models:            respondApp.Models,
+					fragmentComponents: s.fragmentComponents,
+					queries:            map[string][]database.Row{"_result": rows},
+					querySourceModels:  make(map[string]string),
+					customManifests:    respondApp.CustomManifests,
+					models:             respondApp.Models,
 				}
 				if node.RespondTarget != "" {
 					w.Header().Set("HX-Retarget", node.RespondTarget)

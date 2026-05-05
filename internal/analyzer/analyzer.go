@@ -1330,9 +1330,9 @@ func checkFragmentComponents(app *parser.App) []Diagnostic {
 				for _, match := range callRe.FindAllStringSubmatch(node.HTMLContent, -1) {
 					name := match[1]
 					argStr := ""
-						if len(match) > 2 {
-							argStr = match[2]
-						}
+					if len(match) > 2 {
+						argStr = match[2]
+					}
 					frag, ok := components[name]
 					if !ok {
 						diags = append(diags, Diagnostic{
