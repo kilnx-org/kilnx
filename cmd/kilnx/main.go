@@ -121,17 +121,17 @@ func cmdInit(template, dir string) error {
 		return fmt.Errorf("reading template: %w", err)
 	}
 
+	outPath := filepath.Join(dir, "app.kilnx")
+	if _, err := os.Stat(outPath); err == nil {
+		return fmt.Errorf("%s already exists", outPath)
+	}
+
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("creating directory: %w", err)
 	}
 
 	projectName := filepath.Base(dir)
 	content := strings.ReplaceAll(string(data), "{{PROJECT_NAME}}", projectName)
-
-	outPath := filepath.Join(dir, "app.kilnx")
-	if _, err := os.Stat(outPath); err == nil {
-		return fmt.Errorf("%s already exists", outPath)
-	}
 
 	if err := os.WriteFile(outPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("writing file: %w", err)
@@ -311,7 +311,7 @@ func cmdMigrate(filename string, flags []string) error {
 			fmt.Println()
 			fmt.Println("Migration blocked to prevent leaving data behind.")
 			fmt.Println("Use 'kilnx migrate <file.kilnx> --allow-dataloss' to proceed anyway,")
-			fmt.Println("or add a 'model <new> renames <old>' directive to preserve the data.")
+			fmt.Println("or run an ALTER TABLE ... RENAME TO ... statement to preserve the data before migrating.")
 			return fmt.Errorf("migration blocked: potential data loss detected")
 		}
 		fmt.Println()

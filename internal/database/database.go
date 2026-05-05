@@ -131,7 +131,7 @@ func (db *DB) PlanMigration(models []parser.Model, manifests ...map[string]*pars
 		if !exists {
 			stmts = append(stmts, db.generateCreateTable(model, cm))
 		} else {
-			alterStmts, err := db.planExistingTable(model.Name, model.Name, model, cm)
+			alterStmts, err := db.planExistingTable(model, cm)
 			if err != nil {
 				return stmts, err
 			}
@@ -364,7 +364,7 @@ func (db *DB) tableExists(name string) (bool, error) {
 type DataLossRisk struct {
 	TableName  string
 	RowCount   int
-	Suggestion string // e.g. "model <new> renames <old>"
+	Suggestion string // human-readable hint, e.g. an ALTER TABLE RENAME statement
 }
 
 // DetectDataLossRisk inspects the database for tables that do not correspond
@@ -393,9 +393,10 @@ func (db *DB) DetectDataLossRisk(models []parser.Model) ([]DataLossRisk, error) 
 		}
 
 		var count int
-		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM \"%s\"", tableName)
+		escaped := strings.ReplaceAll(tableName, `"`, `""`)
+		countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, escaped)
 		if err := db.conn.QueryRow(countQuery).Scan(&count); err != nil {
-			continue
+			return nil, fmt.Errorf("counting rows in %q: %w", tableName, err)
 		}
 		if count == 0 {
 			continue
@@ -410,7 +411,7 @@ func (db *DB) DetectDataLossRisk(models []parser.Model) ([]DataLossRisk, error) 
 				strings.EqualFold(tableName+"s", m.Name) ||
 				strings.EqualFold(m.Name, tableName+"es") ||
 				strings.EqualFold(tableName, m.Name+"es") {
-				suggestion = fmt.Sprintf("model %s renames %s", m.Name, tableName)
+				suggestion = fmt.Sprintf(`run "ALTER TABLE %s RENAME TO %s;" before migrating to keep the data`, tableName, m.Name)
 				break
 			}
 		}
@@ -424,16 +425,10 @@ func (db *DB) DetectDataLossRisk(models []parser.Model) ([]DataLossRisk, error) 
 	return risks, rows.Err()
 }
 
-// DataLossRisk describes a table in the database that is no longer represented
-// by any model in the current schema. If it contains rows, the migration may
-// leave data behind.
-// queryTable is the name to inspect for existing columns (may differ from ddlTable
-// when a rename has been planned but not yet executed).
-// ddlTable is the name used in the generated ALTER TABLE statements.
-func (db *DB) planExistingTable(queryTable, ddlTable string, model parser.Model, cm map[string]*parser.CustomFieldManifest) ([]string, error) {
+func (db *DB) planExistingTable(model parser.Model, cm map[string]*parser.CustomFieldManifest) ([]string, error) {
 	var stmts []string
 
-	existing, err := db.getColumns(queryTable)
+	existing, err := db.getColumns(model.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -454,7 +449,7 @@ func (db *DB) planExistingTable(queryTable, ddlTable string, model parser.Model,
 		defaultClause := db.dialect.FieldToDefault(field)
 
 		stmt := fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"%s\" %s%s",
-			ddlTable, colName, sqlType, defaultClause)
+			model.Name, colName, sqlType, defaultClause)
 		stmts = append(stmts, stmt)
 	}
 
@@ -464,7 +459,7 @@ func (db *DB) planExistingTable(queryTable, ddlTable string, model parser.Model,
 			if db.dialect.DriverName() == "pgx" {
 				colType = "JSONB"
 			}
-			stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"custom\" %s", ddlTable, colType))
+			stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"custom\" %s", model.Name, colType))
 		}
 		// column-mode custom fields become real columns
 		if manifest, ok := cm[model.Name]; ok {
@@ -479,7 +474,7 @@ func (db *DB) planExistingTable(queryTable, ddlTable string, model parser.Model,
 					continue
 				}
 				sqlType := customKindToSQL(f.Kind, db.dialect.DriverName() == "pgx")
-				stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"%s\" %s", ddlTable, f.Name, sqlType))
+				stmts = append(stmts, fmt.Sprintf("ALTER TABLE \"%s\" ADD COLUMN \"%s\" %s", model.Name, f.Name, sqlType))
 			}
 		}
 	}

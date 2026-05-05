@@ -1263,7 +1263,7 @@ func TestPlanExistingTableOmitsComputedFields(t *testing.T) {
 		},
 	}
 
-	stmts, err := db.planExistingTable("invoice", "invoice", model, nil)
+	stmts, err := db.planExistingTable(model, nil)
 	if err != nil {
 		t.Fatalf("planExistingTable: %v", err)
 	}
@@ -1366,9 +1366,59 @@ func TestDetectDataLossRisk_Suggestion(t *testing.T) {
 	if len(risks) != 1 {
 		t.Fatalf("expected 1 risk, got %d", len(risks))
 	}
-	expected := "model article renames articles"
+	expected := `run "ALTER TABLE articles RENAME TO article;" before migrating to keep the data`
 	if risks[0].Suggestion != expected {
 		t.Errorf("expected suggestion %q, got %q", expected, risks[0].Suggestion)
+	}
+}
+
+func TestDetectDataLossRisk_QuotedTableName(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	if _, err := db.Conn().Exec(`CREATE TABLE "weird""name" (id INTEGER PRIMARY KEY, x TEXT)`); err != nil {
+		t.Fatalf("create table failed: %v", err)
+	}
+	if _, err := db.Conn().Exec(`INSERT INTO "weird""name" (x) VALUES ('y')`); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	risks, err := db.DetectDataLossRisk(nil)
+	if err != nil {
+		t.Fatalf("DetectDataLossRisk failed: %v", err)
+	}
+	if len(risks) != 1 || risks[0].TableName != `weird"name` || risks[0].RowCount != 1 {
+		t.Fatalf("unexpected risks: %#v", risks)
+	}
+}
+
+func TestDetectDataLossRisk_SqliteInternalsFiltered(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	models := []parser.Model{{
+		Name:   "thing",
+		Fields: []parser.Field{{Name: "n", Type: parser.FieldText}},
+	}}
+	if _, err := db.Migrate(models); err != nil {
+		t.Fatalf("migrate failed: %v", err)
+	}
+	if _, err := db.Conn().Exec(`INSERT INTO thing (n) VALUES ('a')`); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+	// Create a sqlite_sequence row implicitly via AUTOINCREMENT? Skip; just ANALYZE
+	if _, err := db.Conn().Exec(`ANALYZE`); err != nil {
+		t.Fatalf("analyze failed: %v", err)
+	}
+
+	risks, err := db.DetectDataLossRisk(models)
+	if err != nil {
+		t.Fatalf("DetectDataLossRisk failed: %v", err)
+	}
+	for _, r := range risks {
+		if strings.HasPrefix(r.TableName, "sqlite_") {
+			t.Errorf("sqlite internal leaked into risks: %s", r.TableName)
+		}
 	}
 }
 

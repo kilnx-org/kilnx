@@ -1,5 +1,5 @@
 config
-  port: 3000
+  port: 8080
 
 model user
   email: email required unique
@@ -96,17 +96,14 @@ action /posts method POST requires auth
     redirect /
 
 test "create and list post"
-  step "register"
-    POST /register
-      email: "writer@example.com"
-      password: "secret123"
-      name: "Writer"
-    assert status 302
-  step "create post"
-    POST /posts
-      title: "Hello Kilnx"
-      content: "My first post."
-    assert status 302
-  step "list posts"
-    GET /
-    assert body contains "Hello Kilnx"
+  visit /register
+  fill email "writer@example.com"
+  fill password "secret123"
+  fill name "Writer"
+  submit
+  visit /new
+  fill title "Hello Kilnx"
+  fill content "My first post."
+  submit
+  visit /
+  expect page / contains "Hello Kilnx"

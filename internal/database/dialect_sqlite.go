@@ -37,7 +37,7 @@ func (SqliteDialect) ListTablesSQL() string {
 		WHERE type='table'
 		  AND name NOT LIKE '\_kilnx\_%' ESCAPE '\'
 		  AND name NOT LIKE '\_%\_field\_defs' ESCAPE '\'
-		  AND name != 'sqlite_sequence'`
+		  AND name NOT LIKE 'sqlite\_%' ESCAPE '\'`
 }
 
 func (SqliteDialect) ColumnsSQL(table string) string {
