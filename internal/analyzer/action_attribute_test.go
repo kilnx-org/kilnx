@@ -43,3 +43,41 @@ page /
 		}
 	}
 }
+
+// TestCheckActionAttributesIgnoresForm guards Issue 2/6: <form action="/login">
+// must not be flagged as an unknown action — analyzer only checks button/a/input.
+func TestCheckActionAttributesIgnoresForm(t *testing.T) {
+	src := `page /login
+  html
+    <form action="/login" method="POST"><button type="submit">Go</button></form>
+`
+	tokens := lexer.Tokenize(src)
+	app, _ := parser.Parse(tokens, src)
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Message == "action attribute references unknown route '/login'" {
+			t.Errorf("form action should not be flagged: %v", d)
+		}
+	}
+}
+
+// TestCheckActionAttributesPageRoute guards Issue 6: a button or link with
+// action="/page-path" pointing at a page route should not be flagged.
+func TestCheckActionAttributesPageRoute(t *testing.T) {
+	src := `page /login
+  html
+    Login
+
+page /home
+  html
+    <a action="/login">Sign in</a>
+`
+	tokens := lexer.Tokenize(src)
+	app, _ := parser.Parse(tokens, src)
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Message == "action attribute references unknown route '/login'" {
+			t.Errorf("page route should suppress diagnostic: %v", d)
+		}
+	}
+}
