@@ -23,7 +23,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request, stream par
 			return
 		}
 		if len(stream.RequiresClauses) > 0 {
-			if !s.evalRequiresClauses(stream.RequiresClauses, session) {
+			if !s.evalRequiresClauses(stream.RequiresClauses, session, r) {
 				http.Error(w, "Forbidden", http.StatusForbidden)
 				return
 			}

@@ -152,8 +152,8 @@ func TestPostgresDialectAutoIncrementPK(t *testing.T) {
 func TestPostgresDialectInternalTableDDL(t *testing.T) {
 	d := PostgresDialect{}
 	stmts := d.InternalTableDDL()
-	if len(stmts) != 4 {
-		t.Fatalf("expected 4 internal tables, got %d", len(stmts))
+	if len(stmts) != 6 {
+		t.Fatalf("expected 6 internal tables, got %d", len(stmts))
 	}
 	// Sessions table should use TIMESTAMP, not DATETIME
 	if !strings.Contains(stmts[0], "TIMESTAMP") {
@@ -162,6 +162,14 @@ func TestPostgresDialectInternalTableDDL(t *testing.T) {
 	// Migrations table should use BIGSERIAL, not AUTOINCREMENT
 	if !strings.Contains(stmts[2], "BIGSERIAL") {
 		t.Errorf("migrations DDL should use BIGSERIAL, got: %s", stmts[2])
+	}
+	// Flags table should exist
+	if !strings.Contains(stmts[4], "_kilnx_flags") {
+		t.Errorf("flags DDL missing, got: %s", stmts[4])
+	}
+	// Rate limits table should exist
+	if !strings.Contains(stmts[5], "_kilnx_rate_limits") {
+		t.Errorf("rate limits DDL missing, got: %s", stmts[5])
 	}
 }
 

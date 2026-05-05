@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ func newTestServer(db database.Executor) *Server {
 			Identity:     "email",
 			Password:     "password_hash",
 			LoginPath:    "/login",
+			LogoutPath:   "/logout",
 			RegisterPath: "/register",
 			ForgotPath:   "/forgot-password",
 			ResetPath:    "/reset-password",
@@ -33,12 +35,13 @@ func newTestServer(db database.Executor) *Server {
 		},
 	}
 	s := &Server{
-		app:      app,
-		db:       db,
-		sessions: NewSessionStore("test-secret"),
-		logger:   NewLogger(nil),
-		i18n:     NewI18n(nil, "en", false),
-		tenants:  nil,
+		app:         app,
+		db:          db,
+		sessions:    NewSessionStore("test-secret"),
+		logger:      NewLogger(nil),
+		i18n:        NewI18n(nil, "en", false),
+		tenants:     nil,
+		rateLimiter: NewRateLimiter(nil),
 	}
 	if db != nil {
 		s.sessions.SetDB(db)
@@ -801,6 +804,34 @@ func TestHandleActionNodes_FetchError(t *testing.T) {
 	// Should log error and continue
 }
 
+func TestHandleActionNodes_QueryTenantError(t *testing.T) {
+	mock := newMockExecutor()
+	s := newTestServer(mock)
+	s.tenants = TenantMap{"orders": "org"}
+	req := httptest.NewRequest("POST", "/action", nil)
+	rec := httptest.NewRecorder()
+	s.handleActionNodes(rec, req, []parser.Node{
+		{Type: parser.NodeQuery, SQL: `SELECT * FROM orders`},
+	}, map[string]string{}, s.getApp())
+	// Should log security and continue
+}
+
+func TestHandleActionNodes_EnqueueMissingParam(t *testing.T) {
+	mock := newMockExecutor()
+	s := newTestServer(mock)
+	app := s.getApp()
+	app.Jobs = []parser.Job{{Name: "notify"}}
+	s.jobQueue = NewJobQueue(s)
+	req := httptest.NewRequest("POST", "/action", nil)
+	rec := httptest.NewRecorder()
+	s.handleActionNodes(rec, req, []parser.Node{
+		{Type: parser.NodeEnqueue, JobName: "notify", JobParams: map[string]string{
+			"user_id": ":missing",
+		}},
+	}, map[string]string{}, s.getApp())
+	// Should fall through to literal value when param missing
+}
+
 // ---------- handleLogin ----------
 
 func TestHandleLogin_Success(t *testing.T) {
@@ -1075,6 +1106,27 @@ func TestHandleRegister_NoAuthConfig(t *testing.T) {
 	s.handleRegister(rec, req)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("code = %d, want 500", rec.Code)
+	}
+}
+
+func TestHandleRegister_DBError(t *testing.T) {
+	mock := newMockExecutor()
+	mock.execErr[`INSERT INTO "users" (name, "email", "password_hash") VALUES (:name, :identity, :password)`] = fmt.Errorf("disk full")
+	s := newTestServer(mock)
+	csrf := generateCSRFToken()
+
+	form := url.Values{"_csrf": {csrf}, "identity": {"new@example.com"}, "password": {"secret123"}, "confirm_password": {"secret123"}}
+	req := httptest.NewRequest("POST", "/register", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	s.handleRegister(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("code = %d, want 303", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.Contains(loc, "error=Could+not+create+account") {
+		t.Errorf("expected db error, got %q", loc)
 	}
 }
 
@@ -1666,10 +1718,11 @@ func TestHandleAction_OnForbiddenWithSession(t *testing.T) {
 }
 
 func TestHandleAction_SendEmailWithToQuery(t *testing.T) {
-	db, err := database.Open("file::memory:?cache=shared")
+	db, err := database.Open("/tmp/test_email.db")
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
+	defer os.Remove("/tmp/test_email.db")
 	defer db.Close()
 
 	if _, err := db.Conn().Exec("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)"); err != nil {
@@ -2217,6 +2270,44 @@ func TestHandleAction_LLMNodeDefaultName(t *testing.T) {
 	}
 }
 
+func TestHandleAction_LLMWithTx(t *testing.T) {
+	db, err := database.Open(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Conn().Exec("CREATE TABLE prompts (id INTEGER PRIMARY KEY, content TEXT)"); err != nil {
+		t.Fatalf("failed to create table: %v", err)
+	}
+	if _, err := db.Conn().Exec("INSERT INTO prompts (content) VALUES ('Say hi')"); err != nil {
+		t.Fatalf("failed to insert: %v", err)
+	}
+
+	s := newTestServer(db)
+	csrf := generateCSRFToken()
+	form := url.Values{"_csrf": {csrf}}
+	req := httptest.NewRequest("POST", "/action", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	action := parser.Page{
+		Path: "/action",
+		Body: []parser.Node{
+			{Type: parser.NodeQuery, SQL: `SELECT content FROM prompts`, Name: "prompt"},
+			{Type: parser.NodeLLM, SQL: "Say hello", Name: "response", Props: map[string]string{
+				"prompt_query": "prompt",
+			}},
+			{Type: parser.NodeRedirect, Value: "/done"},
+		},
+	}
+	s.handleAction(rec, req, action, s.getApp())
+	// LLM may fail without API key, but should not panic and tx path should be covered
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("code = %d, want 303", rec.Code)
+	}
+}
+
 func TestHandleAction_RespondWithQueryTenantReject(t *testing.T) {
 	db, err := database.Open(":memory:")
 	if err != nil {
@@ -2643,5 +2734,165 @@ func TestRenderPage_QueryError(t *testing.T) {
 	// Query error is logged but page continues rendering
 	if !strings.Contains(got, "hello") {
 		t.Errorf("expected hello in output, got %q", got)
+	}
+}
+
+func TestHandleAction_RedirectHXRequest(t *testing.T) {
+	s := newTestServer(nil)
+	csrf := generateCSRFToken()
+	form := url.Values{"_csrf": {csrf}}
+	req := httptest.NewRequest("POST", "/action", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+
+	action := parser.Page{
+		Path: "/action",
+		Body: []parser.Node{
+			{Type: parser.NodeRedirect, Value: "/success"},
+		},
+	}
+	s.handleAction(rec, req, action, s.getApp())
+	if rec.Code != http.StatusOK {
+		t.Errorf("code = %d, want 200 for htmx redirect", rec.Code)
+	}
+	hxRedirect := rec.Header().Get("HX-Redirect")
+	if hxRedirect != "/success" {
+		t.Errorf("hx-redirect = %q, want /success", hxRedirect)
+	}
+}
+
+func TestHandleAction_RespondQueryError(t *testing.T) {
+	mock := newMockExecutor()
+	mock.queryRowsErr[`SELECT name FROM users`] = fmt.Errorf("db error")
+	s := newTestServer(mock)
+	csrf := generateCSRFToken()
+	form := url.Values{"_csrf": {csrf}}
+	req := httptest.NewRequest("POST", "/action", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	action := parser.Page{
+		Path: "/action",
+		Body: []parser.Node{
+			{Type: parser.NodeRespond, QuerySQL: `SELECT name FROM users`, StatusCode: 200},
+		},
+	}
+	s.handleAction(rec, req, action, s.getApp())
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("code = %d, want 500", rec.Code)
+	}
+}
+
+func TestHandleAction_RedirectHXRequestFragmentMatch(t *testing.T) {
+	s := newTestServer(nil)
+	s.app.Fragments = []parser.Page{
+		{Path: "/channel/:id/messages", Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<div>messages</div>`},
+		}},
+	}
+	csrf := generateCSRFToken()
+	form := url.Values{"_csrf": {csrf}}
+	req := httptest.NewRequest("POST", "/action", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+
+	action := parser.Page{
+		Path: "/action",
+		Body: []parser.Node{
+			{Type: parser.NodeRedirect, Value: "/channel/6/messages"},
+		},
+	}
+	s.handleAction(rec, req, action, s.getApp())
+	if rec.Code != http.StatusOK {
+		t.Errorf("code = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "messages") {
+		t.Errorf("expected fragment content, got %q", rec.Body.String())
+	}
+}
+
+func TestHandleAction_RedirectHXRequestPrefixMatch(t *testing.T) {
+	s := newTestServer(nil)
+	s.app.Fragments = []parser.Page{
+		{Path: "/channel/:id/messages/list", Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<div>list</div>`},
+		}},
+	}
+	csrf := generateCSRFToken()
+	form := url.Values{"_csrf": {csrf}}
+	req := httptest.NewRequest("POST", "/action", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+
+	action := parser.Page{
+		Path: "/action",
+		Body: []parser.Node{
+			{Type: parser.NodeRedirect, Value: "/channel/6/messages"},
+		},
+	}
+	s.handleAction(rec, req, action, s.getApp())
+	if rec.Code != http.StatusOK {
+		t.Errorf("code = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "list") {
+		t.Errorf("expected fragment content, got %q", rec.Body.String())
+	}
+}
+
+func TestHandleAction_GeneratePDFDataQueryNotFound(t *testing.T) {
+	db, err := database.Open(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+	defer db.Close()
+
+	s := newTestServer(db)
+	csrf := generateCSRFToken()
+	form := url.Values{"_csrf": {csrf}}
+	req := httptest.NewRequest("POST", "/action", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	action := parser.Page{
+		Path: "/action",
+		Body: []parser.Node{
+			{Type: parser.NodeQuery, SQL: `SELECT name FROM users`, Name: "users"},
+			{Type: parser.NodeGeneratePDF, TemplateName: "Report", DataQueryName: "nonexistent"},
+			{Type: parser.NodeRedirect, Value: "/done"},
+		},
+	}
+	s.handleAction(rec, req, action, s.getApp())
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("code = %d, want 303", rec.Code)
+	}
+}
+
+func TestHandleResetPassword_WithSMTP(t *testing.T) {
+	t.Setenv("KILNX_SMTP_HOST", "invalid.smtp.host")
+	t.Setenv("KILNX_SMTP_FROM", "noreply@example.com")
+	t.Setenv("KILNX_SMTP_USER", "user")
+
+	db, err := database.Open(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+	defer db.Close()
+	db.Conn().Exec("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, password_hash TEXT)")
+	db.Conn().Exec("INSERT INTO users (email, password_hash) VALUES ('user@example.com', 'oldhash')")
+	db.Conn().Exec("CREATE TABLE _kilnx_password_resets (token TEXT, email TEXT, expires_at TEXT)")
+	db.Conn().Exec("INSERT INTO _kilnx_password_resets (token, email, expires_at) VALUES ('abc123', 'user@example.com', datetime('now', '+1 hour'))")
+
+	s := newTestServer(db)
+	csrf := generateCSRFToken()
+	form := url.Values{"_csrf": {csrf}, "password": {"newpass123"}, "confirm_password": {"newpass123"}}
+	req := httptest.NewRequest("POST", "/reset-password?token=abc123", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	s.handleResetPassword(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("code = %d, want 303", rec.Code)
 	}
 }

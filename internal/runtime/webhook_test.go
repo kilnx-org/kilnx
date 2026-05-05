@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
@@ -100,6 +101,45 @@ func TestFlattenMap_DefaultCase(t *testing.T) {
 	}
 }
 
+func TestHandleWebhook_MethodNotAllowed(t *testing.T) {
+	s := newTestServer(nil)
+	wh := parser.Webhook{Path: "/hooks/test"}
+	req := httptest.NewRequest(http.MethodGet, "/hooks/test", nil)
+	rr := httptest.NewRecorder()
+	s.handleWebhook(rr, req, wh)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 for GET, got %d", rr.Code)
+	}
+}
+
+func TestHandleWebhook_BodyTooLarge(t *testing.T) {
+	s := newTestServer(nil)
+	wh := parser.Webhook{Path: "/hooks/test"}
+	bigBody := strings.Repeat("x", 1<<20+1)
+	req := httptest.NewRequest(http.MethodPost, "/hooks/test", strings.NewReader(bigBody))
+	rr := httptest.NewRecorder()
+	s.handleWebhook(rr, req, wh)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for oversized body, got %d", rr.Code)
+	}
+}
+
+func TestHandleWebhook_MissingSignatureHeader(t *testing.T) {
+	t.Setenv("TEST_WEBHOOK_SECRET", "secret123")
+	s := newTestServer(nil)
+	wh := parser.Webhook{
+		Path:      "/hooks/test",
+		SecretEnv: "TEST_WEBHOOK_SECRET",
+		Events:    []parser.WebhookEvent{{Name: "*"}},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/hooks/test", strings.NewReader(`{"type":"test"}`))
+	rr := httptest.NewRecorder()
+	s.handleWebhook(rr, req, wh)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for missing signature header, got %d", rr.Code)
+	}
+}
+
 func TestHandleWebhook_SecretEnvEmpty(t *testing.T) {
 	s := newTestServer(nil)
 	wh := parser.Webhook{
@@ -115,6 +155,23 @@ func TestHandleWebhook_SecretEnvEmpty(t *testing.T) {
 	}
 }
 
+func TestHandleWebhook_InvalidSignature(t *testing.T) {
+	t.Setenv("TEST_WEBHOOK_SECRET", "secret123")
+	s := newTestServer(nil)
+	wh := parser.Webhook{
+		Path:      "/hooks/test",
+		SecretEnv: "TEST_WEBHOOK_SECRET",
+		Events:    []parser.WebhookEvent{{Name: "*"}},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/hooks/test", strings.NewReader(`{"type":"test"}`))
+	req.Header.Set("X-Signature-256", "sha256=bad")
+	rr := httptest.NewRecorder()
+	s.handleWebhook(rr, req, wh)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for invalid signature, got %d", rr.Code)
+	}
+}
+
 func TestHandleWebhook_InvalidJSON(t *testing.T) {
 	s := newTestServer(nil)
 	wh := parser.Webhook{
@@ -126,5 +183,35 @@ func TestHandleWebhook_InvalidJSON(t *testing.T) {
 	s.handleWebhook(rr, req, wh)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for invalid JSON, got %d", rr.Code)
+	}
+}
+
+func TestHandleWebhook_EventNotMatched(t *testing.T) {
+	s := newTestServer(nil)
+	wh := parser.Webhook{
+		Path:   "/hooks/test",
+		Events: []parser.WebhookEvent{{Name: "push"}},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/hooks/test", strings.NewReader(`{"type":"deploy"}`))
+	rr := httptest.NewRecorder()
+	s.handleWebhook(rr, req, wh)
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 when event not matched, got %d", rr.Code)
+	}
+}
+
+func TestHandleWebhook_ValidEvent(t *testing.T) {
+	mock := newMockExecutor()
+	mock.queryRowsWithParamsResults[`SELECT 1`] = []database.Row{{"1": "1"}}
+	s := newTestServer(mock)
+	wh := parser.Webhook{
+		Path:   "/hooks/test",
+		Events: []parser.WebhookEvent{{Name: "deploy", Body: []parser.Node{{Type: parser.NodeQuery, SQL: `SELECT 1`}}}},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/hooks/test", strings.NewReader(`{"type":"deploy"}`))
+	rr := httptest.NewRecorder()
+	s.handleWebhook(rr, req, wh)
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 for valid event, got %d", rr.Code)
 	}
 }

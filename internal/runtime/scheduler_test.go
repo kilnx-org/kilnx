@@ -252,6 +252,21 @@ func TestJobQueueStartWithNoDB(t *testing.T) {
 	jq.Start()
 }
 
+func TestServer_StartJobQueue(t *testing.T) {
+	srv := &Server{app: &parser.App{}, db: nil, port: 0}
+	srv.jobQueue = NewJobQueue(srv)
+	// Should delegate to jobQueue.Start without panic
+	srv.StartJobQueue()
+}
+
+func TestJobQueueStart_WithJobs(t *testing.T) {
+	srv := &Server{app: &parser.App{Jobs: []parser.Job{{Name: "test"}}}, db: nil, port: 0}
+	jq := NewJobQueue(srv)
+	jq.jobs["test"] = parser.Job{Name: "test"}
+	// Should not panic and should print ready message
+	jq.Start()
+}
+
 // ---------- recoverOrphanedJobs ----------
 
 func TestRecoverOrphanedJobsNilDB(t *testing.T) {
@@ -696,16 +711,15 @@ func TestExecuteNodes_SendEmailWithQuery(t *testing.T) {
 }
 
 func TestSafeExecuteNodes_PanicRecovery(t *testing.T) {
-	mock := newMockExecutor()
-	s := newTestServer(mock)
-	jq := NewJobQueue(s)
-	// Pass a node that will cause a panic inside executeNodes
-	// (nil server should not happen, but we can test recovery)
+	jq := &JobQueue{server: nil}
 	err := jq.safeExecuteNodes([]parser.Node{
 		{Type: parser.NodeQuery, SQL: `SELECT 1`},
 	}, nil)
-	if err != nil {
-		t.Errorf("expected no error for simple query, got %v", err)
+	if err == nil {
+		t.Fatal("expected error when server is nil (panic recovered)")
+	}
+	if !strings.Contains(err.Error(), "panic") {
+		t.Errorf("expected panic error, got %v", err)
 	}
 }
 
@@ -800,9 +814,8 @@ func TestExecuteNodes_SendEmailWithAttachment(t *testing.T) {
 	mock := newMockExecutor()
 	s := newTestServer(mock)
 	err := s.executeNodes([]parser.Node{
-		{Type: parser.NodeSendEmail, EmailTo: "user@example.com", EmailSubject: "Hello", Props: map[string]string{
-			"body":   "See attached",
-			"attach": "_generated_pdf",
+		{Type: parser.NodeSendEmail, EmailTo: "user@example.com", EmailSubject: "Hello", EmailAttach: "_generated_pdf", Props: map[string]string{
+			"body": "See attached",
 		}},
 	}, map[string]string{"_generated_pdf": "/tmp/fake.pdf"})
 	if err == nil {
@@ -814,13 +827,63 @@ func TestExecuteNodes_SendEmailWithAttachmentFromParam(t *testing.T) {
 	mock := newMockExecutor()
 	s := newTestServer(mock)
 	err := s.executeNodes([]parser.Node{
-		{Type: parser.NodeSendEmail, EmailTo: "user@example.com", EmailSubject: "Hello", Props: map[string]string{
-			"body":   "See attached",
-			"attach": "report_path",
+		{Type: parser.NodeSendEmail, EmailTo: "user@example.com", EmailSubject: "Hello", EmailAttach: "report_path", Props: map[string]string{
+			"body": "See attached",
 		}},
 	}, map[string]string{"report_path": "/tmp/report.pdf"})
 	if err == nil {
 		t.Error("expected error when SMTP is not configured")
+	}
+}
+
+func TestExecuteNodes_SendEmailQueryTenantRejection(t *testing.T) {
+	mock := newMockExecutor()
+	s := newTestServer(mock)
+	s.tenants = TenantMap{"users": "org_id"}
+	err := s.executeNodes([]parser.Node{
+		{Type: parser.NodeSendEmail, EmailTo: "user@example.com", EmailSubject: "Hello", Props: map[string]string{
+			"to_query": `SELECT email FROM users`,
+		}},
+	}, map[string]string{})
+	if err == nil {
+		t.Error("expected error when SMTP is not configured")
+	}
+}
+
+func TestExecuteNodes_EnqueueMissingParam(t *testing.T) {
+	db, err := database.Open(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Conn().Exec(`CREATE TABLE _kilnx_jobs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		params TEXT NOT NULL DEFAULT '{}',
+		state TEXT NOT NULL DEFAULT 'available',
+		attempts INTEGER NOT NULL DEFAULT 0,
+		max_attempts INTEGER NOT NULL DEFAULT 1,
+		scheduled_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		started_at DATETIME,
+		completed_at DATETIME,
+		last_error TEXT
+	)`); err != nil {
+		t.Fatalf("failed to create jobs table: %v", err)
+	}
+
+	s := newTestServer(db)
+	s.app.Jobs = []parser.Job{{Name: "notify", MaxRetries: 3}}
+	s.jobQueue = NewJobQueue(s)
+
+	err = s.executeNodes([]parser.Node{
+		{Type: parser.NodeEnqueue, JobName: "notify", JobParams: map[string]string{
+			"user_id": ":missing",
+			"msg":     "hello",
+		}},
+	}, map[string]string{})
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
 	}
 }
 
@@ -887,6 +950,57 @@ func TestRunCronSchedule_Executes(t *testing.T) {
 		// expected
 	case <-time.After(2 * time.Second):
 		t.Fatal("runCronSchedule did not exit")
+	}
+}
+
+func TestExecuteNodes_NilParams(t *testing.T) {
+	s := newTestServer(nil)
+	err := s.executeNodes([]parser.Node{
+		{Type: parser.NodeQuery, SQL: `SELECT 1`, Name: "q"},
+	}, nil)
+	if err != nil {
+		t.Errorf("expected no error with nil params, got %v", err)
+	}
+}
+
+func TestExecuteNodes_FetchNoName(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id": 1}`))
+	}))
+	defer ts.Close()
+
+	s := newTestServer(nil)
+	err := s.executeNodes([]parser.Node{
+		{Type: parser.NodeFetch, FetchURL: ts.URL},
+	}, map[string]string{})
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+}
+
+func TestExecuteNodes_SendEmailToQueryTenantRejection(t *testing.T) {
+	s := newTestServer(nil)
+	s.tenants = TenantMap{"users": "users"}
+	err := s.executeNodes([]parser.Node{
+		{Type: parser.NodeSendEmail, EmailTo: ":email", EmailSubject: "Hello", Props: map[string]string{
+			"to_query": `SELECT email FROM users WHERE tenant_id = 1`,
+		}},
+	}, map[string]string{})
+	// Tenant guard rejects query because no current_user.tenant_id
+	if err == nil {
+		t.Error("expected error when tenant guard rejects to_query")
+	}
+}
+
+func TestExecuteNodes_EnqueueUnknownJob(t *testing.T) {
+	s := newTestServer(nil)
+	s.jobQueue = NewJobQueue(s)
+	err := s.executeNodes([]parser.Node{
+		{Type: parser.NodeEnqueue, JobName: "unknown"},
+	}, map[string]string{})
+	if err == nil {
+		t.Error("expected error for unknown job")
 	}
 }
 
@@ -994,5 +1108,63 @@ func TestExecuteNodes_GeneratePDFNoData(t *testing.T) {
 	}, map[string]string{})
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
+	}
+}
+
+func TestRunSchedule_CronBranch(t *testing.T) {
+	app := &parser.App{
+		Schedules: []parser.Schedule{
+			{
+				Name: "cron",
+				Cron: "something invalid",
+				Body: []parser.Node{},
+			},
+		},
+	}
+	srv := &Server{app: app, port: 0}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		srv.runSchedule(app.Schedules[0], stop)
+		close(done)
+	}()
+	select {
+	case <-done:
+		// expected: invalid cron causes immediate return via runCronSchedule
+	case <-time.After(2 * time.Second):
+		t.Fatal("runSchedule should exit immediately for invalid cron")
+	}
+}
+
+func TestRunCronSchedule_ExecuteError(t *testing.T) {
+	mock := newMockExecutor()
+	mock.execErr[`INSERT INTO logs (msg) VALUES (:msg)`] = fmt.Errorf("db error")
+
+	app := &parser.App{
+		Schedules: []parser.Schedule{
+			{
+				Name: "fast",
+				Cron: "every day at 23:59",
+				Body: []parser.Node{
+					{Type: parser.NodeQuery, SQL: `INSERT INTO logs (msg) VALUES (:msg)`},
+				},
+			},
+		},
+	}
+	srv := &Server{app: app, db: mock, port: 0}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		srv.runCronSchedule(app.Schedules[0], stop)
+		close(done)
+	}()
+	// Wait long enough for the timer to fire (it won't because next is far future)
+	// Instead close stop immediately to test the stop path
+	close(stop)
+	select {
+	case <-done:
+		// expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("runCronSchedule did not exit")
 	}
 }

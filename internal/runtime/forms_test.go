@@ -118,3 +118,14 @@ func TestExtractFormData_CustomBrackets(t *testing.T) {
 		t.Errorf("expected region promoted to top level, got %q", data["region"])
 	}
 }
+
+func TestExtractFormData_MultipartParseError(t *testing.T) {
+	// invalid multipart body
+	req := httptest.NewRequest("POST", "/upload", strings.NewReader("not multipart"))
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=----fake")
+
+	data := extractFormData(req, nil)
+	if data == nil {
+		t.Error("expected empty map, not nil")
+	}
+}

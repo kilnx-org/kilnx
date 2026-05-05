@@ -193,3 +193,68 @@ func TestExpandTranslationsWithQuery(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestExpandTranslationsMissingParam(t *testing.T) {
+	i18n := NewI18n(map[string]map[string]string{
+		"en": {"greeting": "Hello {name} from {place}"},
+	}, "en", false)
+	ctx := &renderContext{
+		i18n:    i18n,
+		request: &http.Request{},
+	}
+	content := `{t.greeting name="World"}`
+	got := expandTranslations(content, ctx)
+	want := "Hello World from {place}"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestExpandTranslationsNoParams(t *testing.T) {
+	i18n := NewI18n(map[string]map[string]string{
+		"en": {"hello": "Hello"},
+	}, "en", false)
+	ctx := &renderContext{
+		i18n:    i18n,
+		request: &http.Request{},
+	}
+	content := `{t.hello}`
+	got := expandTranslations(content, ctx)
+	want := "Hello"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestExpandPluralizationTwo(t *testing.T) {
+	i18n := NewI18n(map[string]map[string]string{
+		"en": {"items": "{count|plural: two='a pair', other='{count} items'}"},
+	}, "en", false)
+	ctx := &renderContext{
+		i18n:    i18n,
+		request: &http.Request{},
+	}
+	content := `{t.items count=2}`
+	got := expandTranslations(content, ctx)
+	want := "a pair"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestExpandPluralizationNonNumeric(t *testing.T) {
+	i18n := NewI18n(map[string]map[string]string{
+		"en": {"items": "{count|plural:'item','items'}"},
+	}, "en", false)
+	ctx := &renderContext{
+		i18n:    i18n,
+		request: &http.Request{},
+	}
+	content := `{t.items count=xyz}`
+	got := expandTranslations(content, ctx)
+	// Non-numeric count parses as 0, which falls to plural form
+	want := "items"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

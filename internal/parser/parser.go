@@ -149,13 +149,18 @@ const (
 	RequiresClauseRole                                // named role, e.g. "admin"
 	RequiresClauseExpr                                // expression, e.g. "current_user.plan in ['cad','full']"
 	RequiresClauseSuperuser                           // "superuser" — platform operator
+	RequiresClauseFlag                                // flag "name"
+	RequiresClauseRateLimit                           // limit 10/hour per user
 )
 
 // RequiresClause is one predicate in a comma-separated requires list.
 // All clauses are ANDed: the user must satisfy every clause.
 type RequiresClause struct {
-	Kind  RequiresClauseKind
-	Value string // role name for Role; expression text for Expr; empty for Auth/Superuser
+	Kind        RequiresClauseKind
+	Value       string // role name for Role; expression text for Expr; flag name for Flag; empty for Auth/Superuser
+	LimitCount  int    // for RateLimit: max requests
+	LimitPeriod string // for RateLimit: "minute", "hour", "day"
+	LimitScope  string // for RateLimit: "ip", "user", "tenant"
 }
 
 type Model struct {
@@ -3322,7 +3327,8 @@ func splitClauseText(text string) []string {
 // parseOneClause classifies a single requires segment.
 func parseOneClause(s string) RequiresClause {
 	s = strings.TrimSpace(s)
-	switch strings.ToLower(s) {
+	lower := strings.ToLower(s)
+	switch lower {
 	case "", "auth":
 		return RequiresClause{Kind: RequiresClauseAuth}
 	case "superuser":
@@ -3331,7 +3337,40 @@ func parseOneClause(s string) RequiresClause {
 	if strings.HasPrefix(s, ":") {
 		return RequiresClause{Kind: RequiresClauseExpr, Value: strings.TrimPrefix(s, ":")}
 	}
+	// flag "name"
+	if strings.HasPrefix(lower, "flag ") {
+		flagName := strings.TrimSpace(s[5:])
+		flagName = strings.Trim(flagName, `"'`)
+		return RequiresClause{Kind: RequiresClauseFlag, Value: flagName}
+	}
+	// limit 10/hour per user
+	if strings.HasPrefix(lower, "limit ") {
+		return parseRateLimitClause(s[6:])
+	}
 	return RequiresClause{Kind: RequiresClauseRole, Value: s}
+}
+
+// parseRateLimitClause parses "10/hour per user" into a RequiresClause.
+func parseRateLimitClause(s string) RequiresClause {
+	s = strings.TrimSpace(s)
+	// Format: number/period [per scope]
+	parts := strings.Fields(s)
+	if len(parts) == 0 {
+		return RequiresClause{Kind: RequiresClauseRateLimit}
+	}
+	// Parse count/period
+	countPeriod := parts[0]
+	if slashIdx := strings.Index(countPeriod, "/"); slashIdx > 0 {
+		countStr := countPeriod[:slashIdx]
+		period := strings.ToLower(countPeriod[slashIdx+1:])
+		count, _ := strconv.Atoi(countStr)
+		scope := "ip" // default
+		if len(parts) >= 3 && strings.ToLower(parts[1]) == "per" {
+			scope = strings.ToLower(parts[2])
+		}
+		return RequiresClause{Kind: RequiresClauseRateLimit, LimitCount: count, LimitPeriod: period, LimitScope: scope}
+	}
+	return RequiresClause{Kind: RequiresClauseRateLimit}
 }
 
 // skipRequiresClauses advances the token stream past clause tokens, stopping

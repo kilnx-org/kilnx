@@ -90,3 +90,23 @@ func TestExpandQueryConditionalsNoConditionals(t *testing.T) {
 		t.Errorf("got %q, want %q", got, sql)
 	}
 }
+
+func TestExpandQueryConditionalsMalformedTag(t *testing.T) {
+	sql := "SELECT * FROM orders {{if params.status AND status = 1"
+	params := map[string]string{"status": "shipped"}
+	got := expandQueryConditionals(sql, params)
+	// Malformed tag (no }}) should be preserved as-is
+	if got != sql {
+		t.Errorf("got %q, want %q", got, sql)
+	}
+}
+
+func TestExpandQueryConditionalsMissingEnd(t *testing.T) {
+	sql := "SELECT * FROM orders {{if params.status}}AND status = 1"
+	params := map[string]string{"status": "shipped"}
+	got := expandQueryConditionals(sql, params)
+	// Missing {{end}} should be preserved as-is
+	if got != sql {
+		t.Errorf("got %q, want %q", got, sql)
+	}
+}

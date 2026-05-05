@@ -316,3 +316,58 @@ func TestExpandFragmentCallsWithQueryValue(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+func TestExpandFragmentCallsNilComponents(t *testing.T) {
+	ctx := &renderContext{}
+	content := `{{badge status=active}}`
+	got := expandFragmentCalls(content, ctx)
+	if got != content {
+		t.Errorf("expected unchanged when components nil, got %q", got)
+	}
+}
+
+func TestExpandFragmentCallsEmptyComponents(t *testing.T) {
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{},
+	}
+	content := `{{badge status=active}}`
+	got := expandFragmentCalls(content, ctx)
+	if got != content {
+		t.Errorf("expected unchanged when components empty, got %q", got)
+	}
+}
+
+func TestExpandFragmentCallsNoHTMLBody(t *testing.T) {
+	badge := &parser.Page{
+		Path:         "badge",
+		FragmentArgs: []parser.FragmentArg{{Name: "status"}},
+		Body:         []parser.Node{},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"badge": badge},
+	}
+	content := `{{badge status=active}}`
+	got := expandFragmentCalls(content, ctx)
+	if got != "" {
+		t.Errorf("expected empty when no HTML body, got %q", got)
+	}
+}
+
+func TestExpandFragmentCallsLiteralFallback(t *testing.T) {
+	badge := &parser.Page{
+		Path:         "badge",
+		FragmentArgs: []parser.FragmentArg{{Name: "status"}},
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<span>{status}</span>`},
+		},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"badge": badge},
+	}
+	content := `{{badge status=unresolved_var}}`
+	got := expandFragmentCalls(content, ctx)
+	want := `<span>unresolved_var</span>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

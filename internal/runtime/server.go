@@ -36,6 +36,7 @@ type Server struct {
 	superuserIdentity  string                  // identity of the platform operator; bypasses all role checks
 	fragmentComponents map[string]*parser.Page // component name -> fragment (for inline rendering)
 	mu                 sync.RWMutex
+	tenantWarnOnce     sync.Once
 	port               int
 	scheduleStop       chan struct{}
 }
@@ -1098,7 +1099,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				if sess == nil {
 					shouldExecute = true
 				} else if len(action.RequiresClauses) > 0 {
-					shouldExecute = !s.evalRequiresClauses(action.RequiresClauses, sess)
+					shouldExecute = !s.evalRequiresClauses(action.RequiresClauses, sess, r)
 				} else if action.RequiresRole != "" && action.RequiresRole != "auth" {
 					shouldExecute = sess.Role != action.RequiresRole &&
 						!s.hasPermission(sess.Role, action.RequiresRole, app.Permissions)

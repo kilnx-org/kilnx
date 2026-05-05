@@ -289,7 +289,7 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request, page parser
 	}
 
 	if len(page.RequiresClauses) > 0 {
-		if !s.evalRequiresClauses(page.RequiresClauses, session) {
+		if !s.evalRequiresClauses(page.RequiresClauses, session, r) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte(renderForbidden(app.Pages, session)))
@@ -332,7 +332,7 @@ func (s *Server) requireAPIAuth(w http.ResponseWriter, r *http.Request, page par
 	}
 
 	if len(page.RequiresClauses) > 0 {
-		if !s.evalRequiresClauses(page.RequiresClauses, session) {
+		if !s.evalRequiresClauses(page.RequiresClauses, session, r) {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte(`{"error":"forbidden"}`))
@@ -385,21 +385,37 @@ func (s *Server) hasPermission(userRole, requiredRole string, perms []parser.Per
 }
 
 // evalRequiresClauses returns true when the session satisfies ALL clauses (AND semantics).
-// A superuser (matched by identity) bypasses all checks.
-func (s *Server) evalRequiresClauses(clauses []parser.RequiresClause, session *Session) bool {
-	if s.superuserIdentity != "" && session != nil && session.Identity == s.superuserIdentity {
-		return true
-	}
+//
+// Privilege checks (auth, role, expr, superuser) are bypassed for the configured
+// superuser identity. Availability and traffic controls (flag, rate-limit) are
+// always evaluated, since a disabled flag or exhausted endpoint is a signal that
+// no caller, including the operator, should reach the handler.
+func (s *Server) evalRequiresClauses(clauses []parser.RequiresClause, session *Session, r *http.Request) bool {
+	isSuperuser := s.superuserIdentity != "" && session != nil && session.Identity == s.superuserIdentity
 	app := s.getApp()
 	for _, clause := range clauses {
 		switch clause.Kind {
+		case parser.RequiresClauseFlag:
+			if !s.resolveFlag(clause.Value) {
+				return false
+			}
+		case parser.RequiresClauseRateLimit:
+			if r != nil && !s.checkRateLimit(clause.LimitCount, clause.LimitPeriod, clause.LimitScope, r, session) {
+				return false
+			}
 		case parser.RequiresClauseAuth:
 			// satisfied by session existing (already checked before calling this)
 		case parser.RequiresClauseRole:
+			if isSuperuser {
+				continue
+			}
 			if session.Role != clause.Value && !s.hasPermission(session.Role, clause.Value, app.Permissions) {
 				return false
 			}
 		case parser.RequiresClauseExpr:
+			if isSuperuser {
+				continue
+			}
 			if !evalAuthExpr(clause.Value, session) {
 				return false
 			}
@@ -974,4 +990,76 @@ func sanitizeIdentifier(name string) string {
 		result = "_" + result
 	}
 	return result
+}
+
+// resolveFlag checks if a feature flag is enabled.
+// Priority: 1) env var FLAG_<NAME>, 2) DB table _kilnx_flags, 3) false
+func (s *Server) resolveFlag(name string) bool {
+	envName := "FLAG_" + strings.ToUpper(name)
+	if v := os.Getenv(envName); v != "" {
+		return v == "true" || v == "1" || v == "yes"
+	}
+	if s.db != nil {
+		if rawDB, ok := s.db.(*database.DB); ok && rawDB != nil {
+			var enabled bool
+			err := rawDB.Conn().QueryRow("SELECT enabled FROM _kilnx_flags WHERE name = ?", name).Scan(&enabled)
+			if err == nil {
+				return enabled
+			}
+		}
+	}
+	return false
+}
+
+// rateLimitKey returns the key for rate limiting based on scope.
+// Returns empty string when the scope cannot be resolved (e.g. `per tenant`
+// on a single-tenant app); the caller treats empty as "no limit applied".
+func (s *Server) rateLimitKey(scope string, r *http.Request, session *Session) string {
+	switch scope {
+	case "user":
+		if session != nil {
+			return "user:" + session.Identity
+		}
+		return ""
+	case "tenant":
+		if session != nil {
+			if tenantID, ok := session.Data["tenant_id"]; ok && tenantID != "" {
+				return "tenant:" + tenantID
+			}
+			if orgID, ok := session.Data["org_id"]; ok && orgID != "" {
+				return "tenant:" + orgID
+			}
+		}
+		s.warnTenantScopeOnce()
+		return ""
+	case "ip":
+		return "ip:" + clientIP(r)
+	default:
+		return "ip:" + clientIP(r)
+	}
+}
+
+// warnTenantScopeOnce logs once that `per tenant` resolved to an empty key.
+// Surfaces a misconfiguration that would otherwise silently disable the limit.
+func (s *Server) warnTenantScopeOnce() {
+	s.tenantWarnOnce.Do(func() {
+		if s.logger != nil {
+			s.logger.LogSecurity("rate-limit clause uses `per tenant` but no tenant_id/org_id present on session; clause is a no-op", nil)
+		}
+	})
+}
+
+// checkRateLimit returns true if the request is within the rate limit.
+// Uses the in-memory RateLimiter (mutex-protected, race-safe) so the check
+// works identically on SQLite and PostgreSQL deployments. Single-instance only:
+// in a multi-process deployment each instance enforces its own counter.
+func (s *Server) checkRateLimit(count int, period string, scope string, r *http.Request, session *Session) bool {
+	key := s.rateLimitKey(scope, r, session)
+	if key == "" {
+		return true
+	}
+	if s.rateLimiter == nil {
+		return true
+	}
+	return s.rateLimiter.CheckClause(count, period, key)
 }

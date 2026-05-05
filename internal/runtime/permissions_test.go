@@ -433,3 +433,16 @@ func TestRewritePermissionSQL_UnresolvedPlaceholder(t *testing.T) {
 		t.Errorf("expected unchanged SQL when placeholder unresolved, got %q", result)
 	}
 }
+
+func TestBuildPermissionMap_InvalidRule(t *testing.T) {
+	app := &parser.App{
+		Permissions: []parser.Permission{
+			{Role: "admin", Rules: []string{"invalid_rule_format!!!"}},
+		},
+	}
+	pm := BuildPermissionMap(app)
+	// Role map is created but contains no rules
+	if len(pm["admin"]) != 0 {
+		t.Errorf("expected empty rule map for invalid rule, got %v", pm)
+	}
+}

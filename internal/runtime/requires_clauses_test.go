@@ -89,7 +89,7 @@ func TestEvalRequiresClauses_auth(t *testing.T) {
 	s := makeServer("")
 	sess := makeSession("u@e.com", "viewer", nil)
 	clauses := []parser.RequiresClause{{Kind: parser.RequiresClauseAuth}}
-	if !s.evalRequiresClauses(clauses, sess) {
+	if !s.evalRequiresClauses(clauses, sess, nil) {
 		t.Error("auth clause should pass for logged-in user")
 	}
 }
@@ -100,10 +100,10 @@ func TestEvalRequiresClauses_role(t *testing.T) {
 	viewer := makeSession("v@e.com", "viewer", nil)
 
 	clauses := []parser.RequiresClause{{Kind: parser.RequiresClauseRole, Value: "admin"}}
-	if !s.evalRequiresClauses(clauses, admin) {
+	if !s.evalRequiresClauses(clauses, admin, nil) {
 		t.Error("admin clause should pass for admin user")
 	}
-	if s.evalRequiresClauses(clauses, viewer) {
+	if s.evalRequiresClauses(clauses, viewer, nil) {
 		t.Error("admin clause should fail for viewer")
 	}
 }
@@ -115,11 +115,11 @@ func TestEvalRequiresClauses_expr(t *testing.T) {
 		{Kind: parser.RequiresClauseAuth},
 		{Kind: parser.RequiresClauseExpr, Value: "current_user.plan in ['cad','full']"},
 	}
-	if !s.evalRequiresClauses(clauses, sess) {
+	if !s.evalRequiresClauses(clauses, sess, nil) {
 		t.Error("should pass: user has plan=cad")
 	}
 	sess2 := makeSession("u@e.com", "viewer", database.Row{"plan": "basic"})
-	if s.evalRequiresClauses(clauses, sess2) {
+	if s.evalRequiresClauses(clauses, sess2, nil) {
 		t.Error("should fail: user has plan=basic")
 	}
 }
@@ -130,10 +130,10 @@ func TestEvalRequiresClauses_superuser_clause(t *testing.T) {
 	regular := makeSession("user@example.com", "admin", nil)
 
 	clauses := []parser.RequiresClause{{Kind: parser.RequiresClauseSuperuser}}
-	if !s.evalRequiresClauses(clauses, ops) {
+	if !s.evalRequiresClauses(clauses, ops, nil) {
 		t.Error("superuser clause should pass for superuser identity")
 	}
-	if s.evalRequiresClauses(clauses, regular) {
+	if s.evalRequiresClauses(clauses, regular, nil) {
 		t.Error("superuser clause should fail for non-superuser")
 	}
 }
@@ -144,7 +144,7 @@ func TestEvalRequiresClauses_superuserBypass(t *testing.T) {
 
 	// superuser bypasses even an admin-only clause
 	clauses := []parser.RequiresClause{{Kind: parser.RequiresClauseRole, Value: "admin"}}
-	if !s.evalRequiresClauses(clauses, ops) {
+	if !s.evalRequiresClauses(clauses, ops, nil) {
 		t.Error("superuser identity should bypass role check")
 	}
 }
@@ -222,5 +222,13 @@ func TestCompareNumeric_invalid(t *testing.T) {
 	}
 	if compareNumeric("abc", "def") != -1 {
 		t.Errorf("expected -1 (abc < def lexicographically), got %d", compareNumeric("abc", "def"))
+	}
+}
+
+func TestEvalSingleAuthCondition_UnknownOperator(t *testing.T) {
+	sess := makeSession("user@example.com", "viewer", nil)
+	got := evalSingleAuthCondition("current_user.role ~= admin", sess)
+	if got != false {
+		t.Errorf("expected false for unknown operator, got %v", got)
 	}
 }
