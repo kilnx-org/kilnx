@@ -1636,4 +1636,3 @@ func inferHTTPVerb(action *parser.Page) string {
 	}
 	return "POST"
 }
-

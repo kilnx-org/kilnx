@@ -881,7 +881,7 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 	app := s.getApp()
 	ctx := &renderContext{
 		fragmentComponents: s.fragmentComponents,
-				actions: app.Actions,
+		actions:            app.Actions,
 		i18n:               s.i18n,
 		request:            nil,
 		queries:            make(map[string][]database.Row),
