@@ -1325,6 +1325,12 @@ func checkFragmentComponents(app *parser.App) []Diagnostic {
 	// Regex to find {{name arg=expr}} calls (args optional)
 	callRe := regexp.MustCompile(`\{\{(\w+)(?:\s+([^}]+))?\}\}`)
 
+	// Built-in template directives that look like fragment calls but are not.
+	builtins := map[string]bool{
+		"each": true, "end": true, "if": true, "else": true,
+		"t": true, "plural": true,
+	}
+
 	// Scan all NodeHTML bodies across pages, fragments, actions, apis
 	var scanNodes func([]parser.Node, string)
 	scanNodes = func(nodes []parser.Node, ctx string) {
@@ -1332,6 +1338,9 @@ func checkFragmentComponents(app *parser.App) []Diagnostic {
 			if node.Type == parser.NodeHTML {
 				for _, match := range callRe.FindAllStringSubmatch(node.HTMLContent, -1) {
 					name := match[1]
+					if builtins[name] {
+						continue
+					}
 					argStr := ""
 					if len(match) > 2 {
 						argStr = match[2]

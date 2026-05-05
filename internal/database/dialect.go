@@ -27,6 +27,11 @@ type Dialect interface {
 	// The single ? / $1 parameter is the table name.
 	TableExistsSQL() string
 
+	// ListTablesSQL returns a query that yields (name TEXT) rows for all user
+	// tables in the database. Internal tables (starting with _kilnx_ and
+	// _<model>_field_defs) must be excluded by the query itself.
+	ListTablesSQL() string
+
 	// ColumnsSQL returns a query that yields (column_name TEXT) rows for a table.
 	// Receives the table name as a literal (not a parameter) for PRAGMA compat.
 	ColumnsSQL(table string) string

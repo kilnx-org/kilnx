@@ -68,3 +68,145 @@ func TestCLI_Check(t *testing.T) {
 		t.Logf("check output: %s", out)
 	}
 }
+
+func TestCLI_Init_Blog(t *testing.T) {
+	bin := buildKilnx(t)
+	tmpDir := t.TempDir()
+	projDir := filepath.Join(tmpDir, "myblog")
+
+	cmd := exec.Command(bin, "init", "blog", projDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("kilnx init failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Created blog template") {
+		t.Errorf("expected success message, got: %s", out)
+	}
+
+	appFile := filepath.Join(projDir, "app.kilnx")
+	if _, err := os.Stat(appFile); err != nil {
+		t.Fatalf("app.kilnx not created: %v", err)
+	}
+
+	content, err := os.ReadFile(appFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "myblog") {
+		t.Errorf("expected project name substitution, got: %s", content)
+	}
+
+	checkCmd := exec.Command(bin, "check", appFile)
+	checkOut, checkErr := checkCmd.CombinedOutput()
+	if checkErr != nil {
+		t.Fatalf("kilnx check failed on generated blog template: %v\n%s", checkErr, checkOut)
+	}
+	if !strings.Contains(string(checkOut), "No issues found") {
+		t.Errorf("kilnx check did not report clean template: %s", checkOut)
+	}
+}
+
+func TestCLI_Init_Api(t *testing.T) {
+	bin := buildKilnx(t)
+	tmpDir := t.TempDir()
+	projDir := filepath.Join(tmpDir, "myapi")
+
+	cmd := exec.Command(bin, "init", "api", projDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("kilnx init failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Created api template") {
+		t.Errorf("expected success message, got: %s", out)
+	}
+
+	appFile := filepath.Join(projDir, "app.kilnx")
+	if _, err := os.Stat(appFile); err != nil {
+		t.Fatalf("app.kilnx not created: %v", err)
+	}
+
+	content, err := os.ReadFile(appFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(content)
+	// Guard against regression to unsupported `return` / `last_insert_id` syntax
+	// that the parser silently drops (see PR #100 review). Only `respond` is valid.
+	if strings.Contains(body, "last_insert_id") {
+		t.Error("api template references last_insert_id which is not a runtime binding")
+	}
+	if strings.Contains(body, "  return ") {
+		t.Error("api template uses `return` which the parser silently drops; use `respond` instead")
+	}
+	if !strings.Contains(body, "respond status") {
+		t.Error("api template should declare `respond status N` for mutations")
+	}
+
+	checkCmd := exec.Command(bin, "check", appFile)
+	checkOut, checkErr := checkCmd.CombinedOutput()
+	if checkErr != nil {
+		t.Fatalf("kilnx check failed on generated api template: %v\n%s", checkErr, checkOut)
+	}
+	if !strings.Contains(string(checkOut), "No issues found") {
+		t.Errorf("kilnx check did not report clean template: %s", checkOut)
+	}
+}
+
+func TestCLI_Init_UnknownTemplate(t *testing.T) {
+	bin := buildKilnx(t)
+	tmpDir := t.TempDir()
+	projDir := filepath.Join(tmpDir, "x")
+
+	cmd := exec.Command(bin, "init", "unknown", projDir)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected error for unknown template")
+	}
+	if !strings.Contains(string(out), "unknown template") {
+		t.Errorf("expected unknown template error, got: %s", out)
+	}
+}
+
+func TestCLI_Init_Duplicate(t *testing.T) {
+	bin := buildKilnx(t)
+	tmpDir := t.TempDir()
+	projDir := filepath.Join(tmpDir, "dup")
+
+	// First init succeeds
+	cmd1 := exec.Command(bin, "init", "blog", projDir)
+	if out, err := cmd1.CombinedOutput(); err != nil {
+		t.Fatalf("first init failed: %v\n%s", err, out)
+	}
+
+	// Second init fails because app.kilnx exists
+	cmd2 := exec.Command(bin, "init", "api", projDir)
+	out, err := cmd2.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected error when target exists")
+	}
+	if !strings.Contains(string(out), "already exists") {
+		t.Errorf("expected already exists error, got: %s", out)
+	}
+}
+
+func TestCLI_Init_MissingArgs(t *testing.T) {
+	bin := buildKilnx(t)
+
+	cmd := exec.Command(bin, "init")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected error when no template/dir provided")
+	}
+	if !strings.Contains(string(out), "Usage: kilnx init") {
+		t.Errorf("expected usage hint, got: %s", out)
+	}
+
+	cmd = exec.Command(bin, "init", "blog")
+	out, err = cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected error when dir omitted")
+	}
+	if !strings.Contains(string(out), "Usage: kilnx init") {
+		t.Errorf("expected usage hint, got: %s", out)
+	}
+}

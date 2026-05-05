@@ -358,7 +358,73 @@ func (db *DB) tableExists(name string) (bool, error) {
 	return count > 0, err
 }
 
-// planExistingTable returns ALTER TABLE statements needed without executing them
+// DataLossRisk describes a table in the database that is no longer represented
+// by any model in the current schema. If it contains rows, the migration may
+// leave data behind.
+type DataLossRisk struct {
+	TableName  string
+	RowCount   int
+	Suggestion string // human-readable hint, e.g. an ALTER TABLE RENAME statement
+}
+
+// DetectDataLossRisk inspects the database for tables that do not correspond
+// to any model in the provided slice and contain data. It returns a slice of
+// risks and any error encountered during introspection.
+func (db *DB) DetectDataLossRisk(models []parser.Model) ([]DataLossRisk, error) {
+	modelNames := make(map[string]bool, len(models))
+	for _, m := range models {
+		modelNames[m.Name] = true
+	}
+
+	rows, err := db.conn.Query(db.dialect.ListTablesSQL())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var risks []DataLossRisk
+	for rows.Next() {
+		var tableName string
+		if err := rows.Scan(&tableName); err != nil {
+			return nil, err
+		}
+		if modelNames[tableName] {
+			continue
+		}
+
+		var count int
+		escaped := strings.ReplaceAll(tableName, `"`, `""`)
+		countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, escaped)
+		if err := db.conn.QueryRow(countQuery).Scan(&count); err != nil {
+			return nil, fmt.Errorf("counting rows in %q: %w", tableName, err)
+		}
+		if count == 0 {
+			continue
+		}
+
+		var suggestion string
+		for _, m := range models {
+			if strings.EqualFold(m.Name, tableName) {
+				continue
+			}
+			if strings.EqualFold(m.Name+"s", tableName) ||
+				strings.EqualFold(tableName+"s", m.Name) ||
+				strings.EqualFold(m.Name, tableName+"es") ||
+				strings.EqualFold(tableName, m.Name+"es") {
+				suggestion = fmt.Sprintf(`run "ALTER TABLE %s RENAME TO %s;" before migrating to keep the data`, tableName, m.Name)
+				break
+			}
+		}
+
+		risks = append(risks, DataLossRisk{
+			TableName:  tableName,
+			RowCount:   count,
+			Suggestion: suggestion,
+		})
+	}
+	return risks, rows.Err()
+}
+
 func (db *DB) planExistingTable(model parser.Model, cm map[string]*parser.CustomFieldManifest) ([]string, error) {
 	var stmts []string
 

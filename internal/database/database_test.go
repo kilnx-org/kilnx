@@ -1273,3 +1273,179 @@ func TestPlanExistingTableOmitsComputedFields(t *testing.T) {
 		}
 	}
 }
+
+// ---------- Data-loss risk detection ----------
+
+func TestDetectDataLossRisk_NoRisk(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	models := []parser.Model{{
+		Name: "post",
+		Fields: []parser.Field{
+			{Name: "title", Type: parser.FieldText},
+		},
+	}}
+	_, err := db.Migrate(models)
+	if err != nil {
+		t.Fatalf("migrate failed: %v", err)
+	}
+
+	risks, err := db.DetectDataLossRisk(models)
+	if err != nil {
+		t.Fatalf("DetectDataLossRisk failed: %v", err)
+	}
+	if len(risks) != 0 {
+		t.Fatalf("expected no risks, got %d", len(risks))
+	}
+}
+
+func TestDetectDataLossRisk_OrphanTableWithData(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	// Create old table and insert data
+	_, err := db.Conn().Exec(`CREATE TABLE "contato" (id INTEGER PRIMARY KEY, nome TEXT)`)
+	if err != nil {
+		t.Fatalf("create old table failed: %v", err)
+	}
+	_, err = db.Conn().Exec(`INSERT INTO "contato" (nome) VALUES ('Alice')`)
+	if err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// New schema no longer has "contato"
+	models := []parser.Model{{
+		Name: "canal_de_comunicacao",
+		Fields: []parser.Field{
+			{Name: "nome", Type: parser.FieldText},
+		},
+	}}
+
+	risks, err := db.DetectDataLossRisk(models)
+	if err != nil {
+		t.Fatalf("DetectDataLossRisk failed: %v", err)
+	}
+	if len(risks) != 1 {
+		t.Fatalf("expected 1 risk, got %d", len(risks))
+	}
+	if risks[0].TableName != "contato" {
+		t.Errorf("expected table 'contato', got %q", risks[0].TableName)
+	}
+	if risks[0].RowCount != 1 {
+		t.Errorf("expected 1 row, got %d", risks[0].RowCount)
+	}
+}
+
+func TestDetectDataLossRisk_Suggestion(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	// Old table with data
+	_, err := db.Conn().Exec(`CREATE TABLE "articles" (id INTEGER PRIMARY KEY, title TEXT)`)
+	if err != nil {
+		t.Fatalf("create table failed: %v", err)
+	}
+	_, err = db.Conn().Exec(`INSERT INTO "articles" (title) VALUES ('Hello')`)
+	if err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	// New model is singular of old table
+	models := []parser.Model{{
+		Name: "article",
+		Fields: []parser.Field{
+			{Name: "title", Type: parser.FieldText},
+		},
+	}}
+
+	risks, err := db.DetectDataLossRisk(models)
+	if err != nil {
+		t.Fatalf("DetectDataLossRisk failed: %v", err)
+	}
+	if len(risks) != 1 {
+		t.Fatalf("expected 1 risk, got %d", len(risks))
+	}
+	expected := `run "ALTER TABLE articles RENAME TO article;" before migrating to keep the data`
+	if risks[0].Suggestion != expected {
+		t.Errorf("expected suggestion %q, got %q", expected, risks[0].Suggestion)
+	}
+}
+
+func TestDetectDataLossRisk_QuotedTableName(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	if _, err := db.Conn().Exec(`CREATE TABLE "weird""name" (id INTEGER PRIMARY KEY, x TEXT)`); err != nil {
+		t.Fatalf("create table failed: %v", err)
+	}
+	if _, err := db.Conn().Exec(`INSERT INTO "weird""name" (x) VALUES ('y')`); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	risks, err := db.DetectDataLossRisk(nil)
+	if err != nil {
+		t.Fatalf("DetectDataLossRisk failed: %v", err)
+	}
+	if len(risks) != 1 || risks[0].TableName != `weird"name` || risks[0].RowCount != 1 {
+		t.Fatalf("unexpected risks: %#v", risks)
+	}
+}
+
+func TestDetectDataLossRisk_SqliteInternalsFiltered(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	models := []parser.Model{{
+		Name:   "thing",
+		Fields: []parser.Field{{Name: "n", Type: parser.FieldText}},
+	}}
+	if _, err := db.Migrate(models); err != nil {
+		t.Fatalf("migrate failed: %v", err)
+	}
+	if _, err := db.Conn().Exec(`INSERT INTO thing (n) VALUES ('a')`); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+	// Create a sqlite_sequence row implicitly via AUTOINCREMENT? Skip; just ANALYZE
+	if _, err := db.Conn().Exec(`ANALYZE`); err != nil {
+		t.Fatalf("analyze failed: %v", err)
+	}
+
+	risks, err := db.DetectDataLossRisk(models)
+	if err != nil {
+		t.Fatalf("DetectDataLossRisk failed: %v", err)
+	}
+	for _, r := range risks {
+		if strings.HasPrefix(r.TableName, "sqlite_") {
+			t.Errorf("sqlite internal leaked into risks: %s", r.TableName)
+		}
+	}
+}
+
+func TestDetectDataLossRisk_EmptyTableIgnored(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	// Create old table but leave it empty
+	_, err := db.Conn().Exec(`CREATE TABLE "article" ("id" INTEGER PRIMARY KEY, "title" TEXT)`)
+	if err != nil {
+		t.Fatalf("create table failed: %v", err)
+	}
+
+	// New schema no longer has "article"
+	models := []parser.Model{{
+		Name: "post",
+		Fields: []parser.Field{
+			{Name: "title", Type: parser.FieldText},
+		},
+	}}
+
+	// Empty orphan tables should not be reported as risks
+	risks, err := db.DetectDataLossRisk(models)
+	if err != nil {
+		t.Fatalf("DetectDataLossRisk failed: %v", err)
+	}
+	if len(risks) != 0 {
+		t.Fatalf("expected 0 risks for empty table, got %d", len(risks))
+	}
+}
