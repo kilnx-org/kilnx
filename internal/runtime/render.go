@@ -278,6 +278,11 @@ func formatNumber(f float64, decimals int) string {
 func renderHTML(content string, ctx *renderContext) string {
 	result := content
 
+	// Step 0: Expand translation placeholders {t.key} and {t.key param=expr}
+	if ctx.i18n != nil {
+		result = expandTranslations(result, ctx)
+	}
+
 	// Step 1: Replace each {csrf} with a unique token (one per occurrence for multi-form pages)
 	for strings.Contains(result, "{csrf}") {
 		token := generateCSRFToken()
@@ -1279,4 +1284,211 @@ func expandFragmentCalls(content string, ctx *renderContext) string {
 		rendered := renderHTML(fragHTML, childCtx)
 		return rendered
 	})
+}
+
+// translationRe matches {t.key} and {t.key param=expr}
+var translationRe = regexp.MustCompile(`\{t\.(\w+)(?:\s+([^}]+))?\}`)
+
+// expandTranslations processes {t.key} and {t.key param=expr} placeholders.
+// It looks up the translation in the detected language, resolves any parameters,
+// and applies pluralization filters within the translated value.
+func expandTranslations(content string, ctx *renderContext) string {
+	return translationRe.ReplaceAllStringFunc(content, func(match string) string {
+		parts := translationRe.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+		key := parts[1]
+		argStr := ""
+		if len(parts) > 2 {
+			argStr = parts[2]
+		}
+
+		// Get translated value
+		val := ctx.i18n.Translate(key, ctx.request)
+		if val == key {
+			return match // translation not found, leave placeholder
+		}
+
+		// Parse and resolve parameters
+		params := make(map[string]string)
+		for _, pair := range strings.Split(argStr, " ") {
+			pair = strings.TrimSpace(pair)
+			if pair == "" {
+				continue
+			}
+			eqIdx := strings.Index(pair, "=")
+			if eqIdx < 0 {
+				continue
+			}
+			pname := strings.TrimSpace(pair[:eqIdx])
+			expr := strings.TrimSpace(pair[eqIdx+1:])
+			// Strip leading : from parameter references
+			expr = strings.TrimPrefix(expr, ":")
+			var pval string
+			if strings.HasPrefix(expr, `"`) && strings.HasSuffix(expr, `"`) {
+				pval = expr[1 : len(expr)-1]
+			} else if strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`) {
+				pval = expr[1 : len(expr)-1]
+			} else {
+				resolved := resolveValue(expr, ctx, ctx.currentRow)
+				if resolved == "{"+expr+"}" {
+					pval = expr // fallback to literal
+				} else {
+					pval = resolved
+				}
+			}
+			params[pname] = pval
+		}
+
+		// Process pluralization filter first (before parameter substitution)
+		result := expandPluralization(val, ctx, params)
+
+		// Substitute parameters into translation value
+		paramRe := regexp.MustCompile(`\{(\w+)\}`)
+		result = paramRe.ReplaceAllStringFunc(result, func(m string) string {
+			pparts := paramRe.FindStringSubmatch(m)
+			if len(pparts) < 2 {
+				return m
+			}
+			pname := pparts[1]
+			if pval, ok := params[pname]; ok {
+				return pval
+			}
+			return m // missing param, leave placeholder
+		})
+
+		return result
+	})
+}
+
+// expandPluralization processes {expr|plural:'singular','plural'} within a string.
+func expandPluralization(content string, ctx *renderContext, params map[string]string) string {
+	result := content
+	for {
+		idx := strings.Index(result, "|plural")
+		if idx < 0 {
+			break
+		}
+		// Find the opening '{' of this expression
+		start := strings.LastIndex(result[:idx], "{")
+		if start < 0 {
+			break
+		}
+		// Find the matching '}' (accounting for nested braces)
+		depth := 1
+		end := -1
+		for i := start + 1; i < len(result); i++ {
+			if result[i] == '{' {
+				depth++
+			} else if result[i] == '}' {
+				depth--
+				if depth == 0 {
+					end = i
+					break
+				}
+			}
+		}
+		if end < 0 {
+			break
+		}
+
+		match := result[start : end+1]
+		inner := result[start+1 : end]
+		// inner format: expr | plural : spec
+		colonIdx := strings.Index(inner, ":")
+		if colonIdx < 0 {
+			break
+		}
+		pipeIdx := strings.Index(inner, "|")
+		if pipeIdx < 0 {
+			break
+		}
+		countExpr := strings.TrimSpace(inner[:pipeIdx])
+		pluralSpec := strings.TrimSpace(inner[colonIdx+1:])
+
+		var countStr string
+		if pval, ok := params[countExpr]; ok {
+			countStr = pval
+		} else {
+			countStr = resolveValue(countExpr, ctx, ctx.currentRow)
+		}
+		count, _ := strconv.Atoi(countStr)
+
+		replacement := match
+		if strings.Contains(pluralSpec, "=") {
+			// Extended form: one='1 item', other='{count} items'
+			for _, part := range splitPluralSpec(pluralSpec) {
+				part = strings.TrimSpace(part)
+				eqIdx := strings.Index(part, "=")
+				if eqIdx < 0 {
+					continue
+				}
+				category := strings.TrimSpace(part[:eqIdx])
+				form := strings.TrimSpace(part[eqIdx+1:])
+				form = strings.Trim(form, `"'`)
+				if category == "zero" && count == 0 {
+					replacement = strings.ReplaceAll(form, "{"+countExpr+"}", countStr)
+					break
+				}
+				if category == "one" && count == 1 {
+					replacement = strings.ReplaceAll(form, "{"+countExpr+"}", countStr)
+					break
+				}
+				if category == "two" && count == 2 {
+					replacement = strings.ReplaceAll(form, "{"+countExpr+"}", countStr)
+					break
+				}
+				if category == "other" {
+					replacement = strings.ReplaceAll(form, "{"+countExpr+"}", countStr)
+					break
+				}
+			}
+		} else {
+			// Simple form: 'one','other' or "one","other"
+			forms := strings.Split(pluralSpec, ",")
+			if len(forms) >= 2 {
+				singular := strings.TrimSpace(forms[0])
+				plural := strings.TrimSpace(forms[1])
+				singular = strings.Trim(singular, `"'`)
+				plural = strings.Trim(plural, `"'`)
+				if count == 1 {
+					replacement = singular
+				} else {
+					replacement = plural
+				}
+			}
+		}
+
+		result = result[:start] + replacement + result[end+1:]
+	}
+	return result
+}
+
+// splitPluralSpec splits a plural spec by comma, but not inside quotes.
+func splitPluralSpec(spec string) []string {
+	var parts []string
+	var current strings.Builder
+	inQuote := false
+	quoteChar := byte(0)
+	for i := 0; i < len(spec); i++ {
+		ch := spec[i]
+		if !inQuote && (ch == '"' || ch == '\'') {
+			inQuote = true
+			quoteChar = ch
+			current.WriteByte(ch)
+		} else if inQuote && ch == quoteChar {
+			inQuote = false
+			current.WriteByte(ch)
+		} else if ch == ',' && !inQuote {
+			parts = append(parts, current.String())
+			current.Reset()
+		} else {
+			current.WriteByte(ch)
+		}
+	}
+	if current.Len() > 0 {
+		parts = append(parts, current.String())
+	}
+	return parts
 }

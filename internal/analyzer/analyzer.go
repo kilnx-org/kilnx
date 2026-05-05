@@ -134,6 +134,7 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkSQLCustomFieldRefs(app, schema)...)
 	diags = append(diags, checkCustomManifestRefs(app)...)
 	diags = append(diags, checkFragmentComponents(app)...)
+	diags = append(diags, checkTranslationParams(app)...)
 
 	return diags
 }
@@ -1441,4 +1442,135 @@ func splitArgStr(s string) []string {
 		tokens = append(tokens, cur.String())
 	}
 	return tokens
+}
+
+// checkTranslationParams validates that:
+// 1. Every {name} placeholder in a translation value is supplied at call sites
+// 2. Parameter placeholders are consistent across locales
+func checkTranslationParams(app *parser.App) []Diagnostic {
+	var diags []Diagnostic
+	if len(app.Translations) == 0 {
+		return nil
+	}
+
+	// Extract placeholders from translation values
+	paramRe := regexp.MustCompile(`\{(\w+)\}`)
+	pluralRe := regexp.MustCompile(`\{\w+\s*\|\s*plural`)
+
+	// Build map: key -> set of placeholder names across all locales
+	keyParams := make(map[string]map[string]bool)
+	for lang, entries := range app.Translations {
+		_ = lang
+		for key, val := range entries {
+			if keyParams[key] == nil {
+				keyParams[key] = make(map[string]bool)
+			}
+			for _, m := range paramRe.FindAllStringSubmatch(val, -1) {
+				pname := m[1]
+				// Skip if it's part of a plural expression (we handle those separately)
+				if !pluralRe.MatchString(val) {
+					keyParams[key][pname] = true
+				}
+			}
+		}
+	}
+
+	// Regex to find {t.key param=expr} and {t.key} calls
+	callRe := regexp.MustCompile(`\{t\.(\w+)(?:\s+([^}]+))?\}`)
+
+	// Scan all NodeHTML and NodeText bodies
+	var scanNodes func([]parser.Node, string)
+	scanNodes = func(nodes []parser.Node, ctx string) {
+		for _, node := range nodes {
+			var content string
+			switch node.Type {
+			case parser.NodeHTML:
+				content = node.HTMLContent
+			case parser.NodeText:
+				content = node.Value
+			}
+			if content != "" {
+				for _, match := range callRe.FindAllStringSubmatch(content, -1) {
+					key := match[1]
+					argStr := ""
+					if len(match) > 2 {
+						argStr = match[2]
+					}
+
+					expected, ok := keyParams[key]
+					if !ok {
+						continue // unknown key, checked elsewhere
+					}
+
+					// Parse provided args
+					provided := make(map[string]bool)
+					for _, pair := range strings.Split(argStr, " ") {
+						pair = strings.TrimSpace(pair)
+						if pair == "" {
+							continue
+						}
+						eqIdx := strings.Index(pair, "=")
+						if eqIdx < 0 {
+							continue
+						}
+						pname := strings.TrimSpace(pair[:eqIdx])
+						provided[pname] = true
+					}
+
+					// Check missing params
+					for pname := range expected {
+						if !provided[pname] {
+							diags = append(diags, Diagnostic{
+								Level:   "error",
+								Message: fmt.Sprintf("missing parameter '%s' for translation '%s'", pname, key),
+								Context: ctx,
+							})
+						}
+					}
+				}
+			}
+			scanNodes(node.Children, ctx)
+		}
+	}
+
+	for _, p := range app.Pages {
+		scanNodes(p.Body, "page "+p.Path)
+	}
+	for _, f := range app.Fragments {
+		scanNodes(f.Body, "fragment "+f.Path)
+	}
+	for _, a := range app.Actions {
+		scanNodes(a.Body, "action "+a.Path)
+	}
+	for _, a := range app.APIs {
+		scanNodes(a.Body, "api "+a.Path)
+	}
+
+	// Check parameter drift between locales
+	for key, params := range keyParams {
+		for lang, entries := range app.Translations {
+			_ = lang
+			val, ok := entries[key]
+			if !ok {
+				continue
+			}
+			localParams := make(map[string]bool)
+			for _, m := range paramRe.FindAllStringSubmatch(val, -1) {
+				if !pluralRe.MatchString(val) {
+					localParams[m[1]] = true
+				}
+			}
+			for pname := range params {
+				if !localParams[pname] {
+					diags = append(diags, Diagnostic{
+						Level:   "warning",
+						Message: fmt.Sprintf("translation '%s' missing parameter '%s' in locale", key, pname),
+						Context: "translations",
+					})
+				}
+			}
+		}
+	}
+
+	return diags
 }
