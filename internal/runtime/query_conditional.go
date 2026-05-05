@@ -27,7 +27,7 @@ func expandQueryConditionals(sql string, params map[string]string) string {
 		condition := strings.TrimSpace(remaining[idx+5 : tagEnd-2])
 
 		bodyStart := tagEnd
-		body, _, endPos := findMatchingEnd(remaining[bodyStart:])
+		body, elseBody, endPos := findMatchingEnd(remaining[bodyStart:])
 		if endPos < 0 {
 			result.WriteString(remaining[idx:])
 			break
@@ -35,6 +35,9 @@ func expandQueryConditionals(sql string, params map[string]string) string {
 
 		if evaluateQueryCondition(condition, params) {
 			expanded := expandQueryConditionals(body, params)
+			result.WriteString(expanded)
+		} else if elseBody != "" {
+			expanded := expandQueryConditionals(elseBody, params)
 			result.WriteString(expanded)
 		}
 

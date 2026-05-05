@@ -122,7 +122,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 				continue
 			}
 
-			sql, tErr := RewriteTenantSQL(node.SQL, s.tenants, pathParams)
+			sql := expandQueryConditionals(node.SQL, pathParams)
+			sql, tErr := RewriteTenantSQL(sql, s.tenants, pathParams)
 			if tErr != nil {
 				s.logger.LogSecurity("tenant guard rejected api query", tErr)
 				writeJSON(w, http.StatusForbidden, map[string]string{

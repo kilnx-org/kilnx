@@ -499,12 +499,12 @@ func TestMergeConsecutiveRoles_Empty(t *testing.T) {
 
 func TestFlattenPayload(t *testing.T) {
 	payload := map[string]interface{}{
-		"id":    "evt_123",
+		"id":     "evt_123",
 		"amount": 99.99,
 		"nested": map[string]interface{}{
 			"foo": "bar",
 		},
-		"flag": true,
+		"flag":  true,
 		"count": 5,
 	}
 	got := flattenPayload(payload, "stripe")
@@ -1003,9 +1003,9 @@ func TestBuildCustomIterRows(t *testing.T) {
 		},
 	}
 	row := database.Row{
-		"custom":  `{"revenue":5000}`,
-		"stage":   "won",
-		"name":    "Deal A",
+		"custom": `{"revenue":5000}`,
+		"stage":  "won",
+		"name":   "Deal A",
 	}
 	got := buildCustomIterRows(row, manifest)
 	if len(got) != 2 {
@@ -1415,7 +1415,7 @@ func TestLogger_LogError_WithStacktrace(t *testing.T) {
 
 func TestLogger_LogSlowQuery(t *testing.T) {
 	l := NewLogger(&parser.LogConfig{SlowQueryMs: 10})
-	l.LogSlowQuery("SELECT * FROM users", 5*time.Millisecond) // under threshold
+	l.LogSlowQuery("SELECT * FROM users", 5*time.Millisecond)  // under threshold
 	l.LogSlowQuery("SELECT * FROM users", 50*time.Millisecond) // over threshold
 }
 
@@ -1509,7 +1509,7 @@ func TestRateLimiter_CheckWithRule_Exceeded(t *testing.T) {
 	})
 	req := httptest.NewRequest("GET", "/api", nil)
 	req.RemoteAddr = "1.2.3.4:1234"
-	rl.Check(req, nil) // first request
+	rl.Check(req, nil)                           // first request
 	exceeded, rule := rl.CheckWithRule(req, nil) // second request
 	if !exceeded {
 		t.Error("expected exceeded")
@@ -1592,7 +1592,6 @@ func TestIsPathWithinAllowedDirs_Outside(t *testing.T) {
 		t.Error("expected false for outside path")
 	}
 }
-
 
 func TestResolveManifest_DynamicFields(t *testing.T) {
 	db, err := database.Open(":memory:")

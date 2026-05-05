@@ -1,9 +1,9 @@
 package runtime
 
 import (
+	"github.com/kilnx-org/kilnx/internal/parser"
 	"net/http/httptest"
 	"testing"
-	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
 func TestCheckHTML(t *testing.T) {

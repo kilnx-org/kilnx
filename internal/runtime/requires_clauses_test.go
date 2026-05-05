@@ -173,7 +173,6 @@ func TestParseInList(t *testing.T) {
 	}
 }
 
-
 func TestEvalSingleAuthCondition_comparison(t *testing.T) {
 	sess := makeSession("user@example.com", "viewer", database.Row{"credits": "100", "score": "50"})
 

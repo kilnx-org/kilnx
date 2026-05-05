@@ -33,12 +33,12 @@ func newTestServer(db database.Executor) *Server {
 		},
 	}
 	s := &Server{
-		app:       app,
-		db:        db,
-		sessions:  NewSessionStore("test-secret"),
-		logger:    NewLogger(nil),
-		i18n:      NewI18n(nil, "en", false),
-		tenants:   nil,
+		app:      app,
+		db:       db,
+		sessions: NewSessionStore("test-secret"),
+		logger:   NewLogger(nil),
+		i18n:     NewI18n(nil, "en", false),
+		tenants:  nil,
 	}
 	if db != nil {
 		s.sessions.SetDB(db)
@@ -1078,7 +1078,6 @@ func TestHandleRegister_NoAuthConfig(t *testing.T) {
 	}
 }
 
-
 // ---------- handleAction ----------
 
 func TestHandleAction_InvalidCSRF(t *testing.T) {
@@ -1615,7 +1614,7 @@ func TestHandleAction_OnForbidden(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	action := parser.Page{
-		Path:    "/action",
+		Path:         "/action",
 		RequiresRole: "admin",
 		Body: []parser.Node{
 			{Type: parser.NodeOn, Props: map[string]string{"condition": "forbidden"}, Children: []parser.Node{
@@ -1649,7 +1648,7 @@ func TestHandleAction_OnForbiddenWithSession(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	action := parser.Page{
-		Path:    "/action",
+		Path:         "/action",
 		RequiresRole: "admin",
 		Body: []parser.Node{
 			{Type: parser.NodeOn, Props: map[string]string{"condition": "forbidden"}, Children: []parser.Node{
@@ -1935,7 +1934,6 @@ func TestHandleAction_LLMNode(t *testing.T) {
 	}
 }
 
-
 func TestHandleAction_QueryErrorNoOnError(t *testing.T) {
 	db, err := database.Open(":memory:")
 	if err != nil {
@@ -2056,7 +2054,6 @@ func TestHandleAction_SendEmailToQueryTenantReject(t *testing.T) {
 		t.Errorf("code = %d, want 303", rec.Code)
 	}
 }
-
 
 func TestHandleAction_GeneratePDF(t *testing.T) {
 	db, err := database.Open(":memory:")
@@ -2504,7 +2501,6 @@ func TestHandleResetPassword_NoDB(t *testing.T) {
 		t.Errorf("code = %d, want 500", rec.Code)
 	}
 }
-
 
 func TestRenderFragment_QueryNoName(t *testing.T) {
 	mock := newMockExecutor()

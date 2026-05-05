@@ -425,6 +425,8 @@ func expandEachBlocks(content string, ctx *renderContext, nonce string) string {
 			for _, row := range rows {
 				// Push current row onto eachStack for parent-scope resolution
 				ctx.eachStack = append(ctx.eachStack, row)
+				// Track source model on a parallel stack for computed-field resolution
+				ctx.eachModels = append(ctx.eachModels, ctx.querySourceModels[queryName])
 				// Rebind q.custom per row so {{each q.custom}} works on list pages (#66)
 				if sourceModel, ok := ctx.querySourceModels[queryName]; ok {
 					if manifest, ok := ctx.customManifests[sourceModel]; ok {
@@ -442,6 +444,7 @@ func expandEachBlocks(content string, ctx *renderContext, nonce string) string {
 				result.WriteString(expanded)
 				// Pop row from eachStack
 				ctx.eachStack = ctx.eachStack[:len(ctx.eachStack)-1]
+				ctx.eachModels = ctx.eachModels[:len(ctx.eachModels)-1]
 			}
 		}
 
@@ -821,6 +824,12 @@ func resolveValue(expr string, ctx *renderContext, currentRow database.Row) stri
 				return val
 			}
 		}
+		// Fall back to computed-field evaluation: {orders.total} where total
+		// is declared as `total: computed quantity * unit_price` on the
+		// model behind the orders query.
+		if val, ok := resolveComputedFromQuery(ctx, prefix, field); ok {
+			return val
+		}
 		return ""
 	}
 
@@ -829,10 +838,21 @@ func resolveValue(expr string, ctx *renderContext, currentRow database.Row) stri
 		if val, ok := currentRow[expr]; ok {
 			return val
 		}
+		// Inside an {{each}}, resolve computed fields against the current row
+		// using the source model recorded on eachModels.
+		if len(ctx.eachModels) > 0 {
+			modelName := ctx.eachModels[len(ctx.eachModels)-1]
+			if val, ok := resolveComputedFromRow(ctx, currentRow, modelName, expr); ok {
+				return val
+			}
+		}
 	}
-	for _, rows := range ctx.queries {
+	for queryName, rows := range ctx.queries {
 		if len(rows) > 0 {
 			if val, ok := rows[0][expr]; ok {
+				return val
+			}
+			if val, ok := resolveComputedFromQuery(ctx, queryName, expr); ok {
 				return val
 			}
 		}

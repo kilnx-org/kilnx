@@ -198,7 +198,6 @@ func TestSafeExecuteNodesCatchesPanic(t *testing.T) {
 	}
 }
 
-
 func TestReadWSFrameReturnsPongOpcode(t *testing.T) {
 	// Create a pong frame (opcode 0xA, FIN, no mask, no payload)
 	pongFrame := []byte{0x8A, 0x00}
@@ -710,7 +709,6 @@ func TestSafeExecuteNodes_PanicRecovery(t *testing.T) {
 	}
 }
 
-
 func TestExecuteNodes_Fetch(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -826,7 +824,6 @@ func TestExecuteNodes_SendEmailWithAttachmentFromParam(t *testing.T) {
 	}
 }
 
-
 func TestRunSchedule_Executes(t *testing.T) {
 	mock := newMockExecutor()
 	mock.queryRowsWithParamsResults[`SELECT 1`] = []database.Row{{"1": "1"}}
@@ -925,7 +922,6 @@ func TestRunSchedule_ExecuteError(t *testing.T) {
 		t.Fatal("runSchedule did not exit")
 	}
 }
-
 
 func TestExecuteNodes_FetchWithVar(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

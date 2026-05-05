@@ -337,6 +337,8 @@ type renderContext struct {
 	querySourceModels map[string]string                      // query name -> primary model name (set by analyzer)
 	customManifests   map[string]*parser.CustomFieldManifest // model name -> manifest (for list-page rebinding)
 	eachStack         []database.Row                         // stack of active {{each}} rows for parent-scope resolution
+	eachModels        []string                               // parallel stack of source model names for each entry in eachStack ("" if unknown)
+	models            []parser.Model                         // all models, for resolving computed fields
 }
 
 func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Request) string {
@@ -348,6 +350,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		queryParams:       make(map[string]string),
 		querySourceModels: make(map[string]string),
 		customManifests:   app.CustomManifests,
+		models:            app.Models,
 	}
 
 	pathParams := matchPathParams(p.Path, r.URL.Path)
@@ -523,6 +526,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 					layoutCtx = &renderContext{
 						queries:  make(map[string][]database.Row),
 						paginate: make(map[string]PaginateInfo),
+						models:   app.Models,
 					}
 					// Build params from path and current_user (same as page queries)
 					layoutParams := make(map[string]string)
@@ -563,6 +567,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 					layoutCtx = &renderContext{
 						queries:  make(map[string][]database.Row),
 						paginate: make(map[string]PaginateInfo),
+						models:   app.Models,
 					}
 				}
 				layoutCtx.currentUser = ctx.currentUser
@@ -716,6 +721,7 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 		queryParams:       make(map[string]string),
 		querySourceModels: make(map[string]string),
 		customManifests:   app.CustomManifests,
+		models:            app.Models,
 	}
 
 	// Make current_user available in fragments
@@ -827,6 +833,7 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 		paginate:          make(map[string]PaginateInfo),
 		querySourceModels: make(map[string]string),
 		customManifests:   app.CustomManifests,
+		models:            app.Models,
 	}
 
 	var body strings.Builder
@@ -1210,6 +1217,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				queryParams:       formData,
 				querySourceModels: make(map[string]string),
 				customManifests:   app.CustomManifests,
+				models:            app.Models,
 			}
 			htmlContent := renderHTML(node.HTMLContent, htmlCtx)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1332,6 +1340,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 					queries:           map[string][]database.Row{"_result": rows},
 					querySourceModels: make(map[string]string),
 					customManifests:   respondApp.CustomManifests,
+					models:            respondApp.Models,
 				}
 				if node.RespondTarget != "" {
 					w.Header().Set("HX-Retarget", node.RespondTarget)

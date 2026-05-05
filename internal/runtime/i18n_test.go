@@ -15,7 +15,7 @@ func TestNewI18n_DefaultLangEmpty(t *testing.T) {
 func TestTranslate_FallbackToDefault(t *testing.T) {
 	i18n := NewI18n(map[string]map[string]string{
 		"en": {"hello": "Hello"},
-		"pt": {"bye":   "Tchau"},
+		"pt": {"bye": "Tchau"},
 	}, "en", true)
 
 	// pt has "bye" but not "hello" — should fallback to en

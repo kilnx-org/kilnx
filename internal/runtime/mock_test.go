@@ -11,12 +11,14 @@ var _ database.Executor = (*mockExecutor)(nil)
 
 // mockExecutor is a test fake for database.Executor
 type mockExecutor struct {
-	queryRowsResults        map[string][]database.Row
+	queryRowsResults           map[string][]database.Row
 	queryRowsWithParamsResults map[string][]database.Row
-	queryRowsWithParamsErr    map[string]error
-	queryRowsErr              map[string]error
-	execErr                  map[string]error
-	execCalled               []execCall
+	queryRowsWithParamsErr     map[string]error
+	queryRowsErr               map[string]error
+	execErr                    map[string]error
+	execCalled                 []execCall
+	queryRowsCalls             []string // SQL strings executed via QueryRows
+	queryRowsWithParamsCalls   []string // SQL strings executed via QueryRowsWithParams
 }
 
 type execCall struct {
@@ -36,6 +38,7 @@ func newMockExecutor() *mockExecutor {
 }
 
 func (m *mockExecutor) QueryRows(sqlStr string) ([]database.Row, error) {
+	m.queryRowsCalls = append(m.queryRowsCalls, sqlStr)
 	if err, ok := m.queryRowsErr[sqlStr]; ok {
 		return nil, err
 	}
@@ -46,6 +49,7 @@ func (m *mockExecutor) QueryRows(sqlStr string) ([]database.Row, error) {
 }
 
 func (m *mockExecutor) QueryRowsWithParams(sqlStr string, params map[string]string) ([]database.Row, error) {
+	m.queryRowsWithParamsCalls = append(m.queryRowsWithParamsCalls, sqlStr)
 	key := sqlStr + "|" + paramsKey(params)
 	if err, ok := m.queryRowsWithParamsErr[key]; ok {
 		return nil, err

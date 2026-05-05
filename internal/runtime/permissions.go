@@ -217,9 +217,10 @@ func RewritePermissionSQL(sql string, pm PermissionMap, role string, params map[
 // translatePermissionCondition converts a simple permission condition like
 // "author = current_user" into a SQL predicate.
 // Supported shapes (case-insensitive):
-//   field = current_user
-//   field = 'literal'
-//   field = 123
+//
+//	field = current_user
+//	field = 'literal'
+//	field = 123
 func translatePermissionCondition(condition, qualifier string) (string, error) {
 	condition = strings.TrimSpace(condition)
 	parts := strings.SplitN(condition, "=", 2)

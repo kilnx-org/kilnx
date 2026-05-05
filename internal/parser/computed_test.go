@@ -62,6 +62,38 @@ func TestParseComputedFieldWithComplexExpr(t *testing.T) {
 	}
 }
 
+// TestParseComputedFieldNameContainsComputed guards against a bug where the
+// extractor used strings.Index(line, "computed") and matched the field name
+// itself when the name happened to contain "computed".
+func TestParseComputedFieldNameContainsComputed(t *testing.T) {
+	src := `model order
+  a: int required
+  b: int required
+  precomputed: computed a + b`
+
+	tokens := lexer.Tokenize(src)
+	app, err := Parse(tokens, src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	m := app.Models[0]
+	if len(m.Fields) != 3 {
+		t.Fatalf("expected 3 fields, got %d", len(m.Fields))
+	}
+
+	f := m.Fields[2]
+	if f.Name != "precomputed" {
+		t.Errorf("expected field name 'precomputed', got %q", f.Name)
+	}
+	if !f.Computed {
+		t.Errorf("expected computed=true")
+	}
+	if f.ComputedExpr != "a + b" {
+		t.Errorf("expected computed expr 'a + b', got %q", f.ComputedExpr)
+	}
+}
+
 func TestParseComputedFieldEmptyExpr(t *testing.T) {
 	src := `model order
   total: computed`

@@ -62,6 +62,26 @@ func TestExpandQueryConditionalsInequality(t *testing.T) {
 	}
 }
 
+func TestExpandQueryConditionalsElseTrue(t *testing.T) {
+	sql := `SELECT * FROM orders WHERE 1=1 {{if params.x}}A{{else}}B{{end}}`
+	params := map[string]string{"x": "yes"}
+	got := expandQueryConditionals(sql, params)
+	want := "SELECT * FROM orders WHERE 1=1 A"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestExpandQueryConditionalsElseFalse(t *testing.T) {
+	sql := `SELECT * FROM orders WHERE 1=1 {{if params.x}}A{{else}}B{{end}}`
+	params := map[string]string{}
+	got := expandQueryConditionals(sql, params)
+	want := "SELECT * FROM orders WHERE 1=1 B"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestExpandQueryConditionalsNoConditionals(t *testing.T) {
 	sql := "SELECT * FROM orders"
 	params := map[string]string{"status": "shipped"}

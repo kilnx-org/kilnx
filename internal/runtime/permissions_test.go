@@ -48,9 +48,9 @@ func TestBuildPermissionMap(t *testing.T) {
 
 func TestParsePermissionRule(t *testing.T) {
 	tests := []struct {
-		raw      string
-		want     *PermissionRule
-		wantNil  bool
+		raw     string
+		want    *PermissionRule
+		wantNil bool
 	}{
 		{"all", &PermissionRule{Action: "all", Resource: "", Condition: ""}, false},
 		{"read post", &PermissionRule{Action: "read", Resource: "post", Condition: ""}, false},
@@ -293,7 +293,6 @@ func TestRewritePermissionSQL_UsesAlias(t *testing.T) {
 	}
 }
 
-
 func TestBuildPermissionMap_NilApp(t *testing.T) {
 	pm := BuildPermissionMap(nil)
 	if len(pm) != 0 {
@@ -418,7 +417,6 @@ func TestRewritePermissionSQL_EmptyFilter(t *testing.T) {
 		t.Errorf("expected unchanged SQL when no condition, got %q", result)
 	}
 }
-
 
 func TestRewritePermissionSQL_UnresolvedPlaceholder(t *testing.T) {
 	sql := `SELECT * FROM post`

@@ -1093,7 +1093,6 @@ func TestStripQuotes_SingleChar(t *testing.T) {
 	}
 }
 
-
 func TestSplitCondition_MixedQuotes(t *testing.T) {
 	left, op, right := splitCondition(`name == "Alice"`)
 	if left != `name` || op != "==" || right != `"Alice"` {
@@ -1122,7 +1121,6 @@ func TestSplitCondition_OperatorAfterQuote(t *testing.T) {
 		t.Errorf("unexpected split: %q %q %q", left, op, right)
 	}
 }
-
 
 func TestEvaluateCondition_GreaterThanOrEqual(t *testing.T) {
 	ctx := newTestContext()

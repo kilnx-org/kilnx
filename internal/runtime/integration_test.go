@@ -131,7 +131,6 @@ func (rt *urlRewritingTransport) RoundTrip(req *http.Request) (*http.Response, e
 	return http.DefaultTransport.RoundTrip(req)
 }
 
-
 // ---------- SendEmail ----------
 
 func TestSendEmail_WithoutAuth(t *testing.T) {
@@ -607,7 +606,9 @@ func TestExecuteLLM_HistorySkipEmptyAndSystem(t *testing.T) {
 			t.Errorf("expected user role with system msg, got %+v", req.Messages[0])
 		}
 		_ = json.NewEncoder(w).Encode(anthropicResponse{
-			Content: []struct{ Text string `json:"text"` }{{Text: "ok"}},
+			Content: []struct {
+				Text string `json:"text"`
+			}{{Text: "ok"}},
 		})
 	}))
 	defer srv.Close()

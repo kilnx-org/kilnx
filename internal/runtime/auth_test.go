@@ -719,7 +719,7 @@ func TestValidateFormData_OptionValidation(t *testing.T) {
 func TestValidateFormData_CustomFields(t *testing.T) {
 	app := &parser.App{
 		Models: []parser.Model{{
-			Name:       "deal",
+			Name:             "deal",
 			CustomFieldsFile: "deal.json",
 			Fields: []parser.Field{
 				{Name: "title", Type: parser.FieldText, Required: true},

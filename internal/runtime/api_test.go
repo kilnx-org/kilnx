@@ -573,7 +573,6 @@ func TestHandleAPI_Pagination(t *testing.T) {
 	}
 }
 
-
 func TestHandleAPI_CORSAllowed(t *testing.T) {
 	mock := newMockExecutor()
 	s := newTestServer(mock)
@@ -796,7 +795,6 @@ func TestHandleAPI_ValidateInlinePass(t *testing.T) {
 	}
 }
 
-
 func TestHandleAPI_QueryNoName(t *testing.T) {
 	mock := newMockExecutor()
 	mock.queryRowsWithParamsResults[`SELECT id, name FROM users`] = []database.Row{
@@ -833,4 +831,86 @@ func TestHandleAPI_QueryNoName(t *testing.T) {
 	if len(data) != 1 {
 		t.Errorf("expected 1 row, got %d", len(data))
 	}
+}
+
+// TestHandleAPI_QueryConditional verifies {{if params.x}}...{{end}} fragments
+// inside an api block are expanded before SQL execution. Both the with-param
+// and without-param branches must hit the database with the correctly-shaped
+// SQL.
+func TestHandleAPI_QueryConditional(t *testing.T) {
+	rawSQL := `SELECT id FROM users{{if params.status}} WHERE status = :status{{end}}`
+
+	t.Run("with param", func(t *testing.T) {
+		mock := newMockExecutor()
+		mock.queryRowsWithParamsResults[`SELECT id FROM users WHERE status = :status`] = []database.Row{
+			{"id": "1"},
+		}
+		s := newTestServer(mock)
+		s.app.APIs = []parser.Page{
+			{
+				Path: "/api/users",
+				Body: []parser.Node{
+					{Type: parser.NodeQuery, SQL: rawSQL, Name: "users"},
+				},
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/users?status=active", nil)
+		rec := httptest.NewRecorder()
+		s.handleAPI(rec, req, s.app.APIs[0])
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("code = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		found := false
+		for _, sql := range mock.queryRowsWithParamsCalls {
+			if strings.Contains(sql, "WHERE status = :status") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected expanded SQL with WHERE clause to be executed, calls=%v", mock.queryRowsWithParamsCalls)
+		}
+		for _, sql := range mock.queryRowsWithParamsCalls {
+			if strings.Contains(sql, "{{if") || strings.Contains(sql, "{{end}}") {
+				t.Errorf("conditional template tokens leaked into SQL: %q", sql)
+			}
+		}
+	})
+
+	t.Run("without param", func(t *testing.T) {
+		mock := newMockExecutor()
+		mock.queryRowsWithParamsResults[`SELECT id FROM users`] = []database.Row{
+			{"id": "1"},
+			{"id": "2"},
+		}
+		s := newTestServer(mock)
+		s.app.APIs = []parser.Page{
+			{
+				Path: "/api/users",
+				Body: []parser.Node{
+					{Type: parser.NodeQuery, SQL: rawSQL, Name: "users"},
+				},
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+		rec := httptest.NewRecorder()
+		s.handleAPI(rec, req, s.app.APIs[0])
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("code = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+
+		for _, sql := range mock.queryRowsWithParamsCalls {
+			if strings.Contains(sql, "WHERE status") {
+				t.Errorf("WHERE clause leaked into SQL when param absent: %q", sql)
+			}
+			if strings.Contains(sql, "{{if") || strings.Contains(sql, "{{end}}") {
+				t.Errorf("conditional template tokens leaked into SQL: %q", sql)
+			}
+		}
+	})
 }

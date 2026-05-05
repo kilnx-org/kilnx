@@ -1258,14 +1258,20 @@ func (p *parserState) extractComputedExprFromLine(lineNum int) string {
 	}
 	line := p.lines[lineNum-1]
 
-	// Find "computed" in the line
-	idx := strings.Index(line, "computed")
+	// Search for "computed" only after the colon to avoid matching it inside
+	// the field name (e.g. "precomputed: computed a + b").
+	colonIdx := strings.Index(line, ":")
+	if colonIdx < 0 {
+		return ""
+	}
+	sub := line[colonIdx+1:]
+	idx := strings.Index(sub, "computed")
 	if idx < 0 {
 		return ""
 	}
 
 	// Get everything after "computed"
-	expr := strings.TrimSpace(line[idx+len("computed"):])
+	expr := strings.TrimSpace(sub[idx+len("computed"):])
 	return expr
 }
 

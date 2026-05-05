@@ -1,9 +1,9 @@
 package runtime
 
 import (
-	"testing"
 	"fmt"
 	"github.com/kilnx-org/kilnx/internal/database"
+	"testing"
 )
 
 func TestCheckQuery8(t *testing.T) {
@@ -12,15 +12,15 @@ func TestCheckQuery8(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	
+
 	db.Conn().Exec("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)")
 	db.Conn().Exec("INSERT INTO users (id, email) VALUES (1, 'queried@example.com')")
-	
+
 	tx, err := db.BeginTxHandle()
 	if err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Use db (not tx) after tx is started
 	rows, err := db.QueryRowsWithParams("SELECT email FROM users WHERE id = :id", map[string]string{"id": "1"})
 	fmt.Printf("err=%v rows=%v\n", err, rows)
