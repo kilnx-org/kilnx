@@ -1310,9 +1310,13 @@ func expandTranslations(content string, ctx *renderContext) string {
 			return match // translation not found, leave placeholder
 		}
 
-		// Parse and resolve parameters
+		// Parse and resolve parameters. Values are HTML-escaped at storage
+		// time because expandTranslations runs as Step 0 of renderHTML, before
+		// interpolateEscaped. Substituted values lack surrounding {...} so the
+		// later escape pass would miss them, leaving an XSS hole if a param
+		// resolves to attacker-controlled HTML (e.g. a row field).
 		params := make(map[string]string)
-		for _, pair := range strings.Split(argStr, " ") {
+		for _, pair := range splitArgPairs(argStr) {
 			pair = strings.TrimSpace(pair)
 			if pair == "" {
 				continue
@@ -1338,7 +1342,7 @@ func expandTranslations(content string, ctx *renderContext) string {
 					pval = resolved
 				}
 			}
-			params[pname] = pval
+			params[pname] = html.EscapeString(pval)
 		}
 
 		// Process pluralization filter first (before parameter substitution)
@@ -1417,7 +1421,21 @@ func expandPluralization(content string, ctx *renderContext, params map[string]s
 
 		replacement := match
 		if strings.Contains(pluralSpec, "=") {
-			// Extended form: one='1 item', other='{count} items'
+			// Extended form: one='1 item', other='{count} items'.
+			// CLDR plural categories: zero, one, two, few, many, other.
+			// The few/many tests are a basic Slavic-family heuristic; full
+			// CLDR locale data is future work.
+			matched := false
+			otherFallback := ""
+			haveOther := false
+			n := count
+			if n < 0 {
+				n = -n
+			}
+			mod10 := n % 10
+			mod100 := n % 100
+			isFew := mod10 >= 3 && mod10 <= 6 && !(mod100 >= 13 && mod100 <= 16)
+			isMany := mod10 == 0 || (mod10 >= 5 && mod10 <= 9) || (mod100 >= 11 && mod100 <= 14)
 			for _, part := range splitPluralSpec(pluralSpec) {
 				part = strings.TrimSpace(part)
 				eqIdx := strings.Index(part, "=")
@@ -1427,22 +1445,35 @@ func expandPluralization(content string, ctx *renderContext, params map[string]s
 				category := strings.TrimSpace(part[:eqIdx])
 				form := strings.TrimSpace(part[eqIdx+1:])
 				form = strings.Trim(form, `"'`)
-				if category == "zero" && count == 0 {
-					replacement = strings.ReplaceAll(form, "{"+countExpr+"}", countStr)
-					break
-				}
-				if category == "one" && count == 1 {
-					replacement = strings.ReplaceAll(form, "{"+countExpr+"}", countStr)
-					break
-				}
-				if category == "two" && count == 2 {
-					replacement = strings.ReplaceAll(form, "{"+countExpr+"}", countStr)
-					break
-				}
 				if category == "other" {
+					// Record the fallback but do NOT emit yet. A later
+					// branch (one, few, etc.) declared after `other` in the
+					// spec must still win when the count matches.
+					otherFallback = form
+					haveOther = true
+					continue
+				}
+				fired := false
+				switch category {
+				case "zero":
+					fired = count == 0
+				case "one":
+					fired = count == 1
+				case "two":
+					fired = count == 2
+				case "few":
+					fired = isFew
+				case "many":
+					fired = isMany
+				}
+				if fired {
 					replacement = strings.ReplaceAll(form, "{"+countExpr+"}", countStr)
+					matched = true
 					break
 				}
+			}
+			if !matched && haveOther {
+				replacement = strings.ReplaceAll(otherFallback, "{"+countExpr+"}", countStr)
 			}
 		} else {
 			// Simple form: 'one','other' or "one","other"
@@ -1491,4 +1522,36 @@ func splitPluralSpec(spec string) []string {
 		parts = append(parts, current.String())
 	}
 	return parts
+}
+
+// splitArgPairs tokenizes a translation argument string into space-separated
+// pairs while respecting quoted values. A naive strings.Split on " " would
+// corrupt arguments such as name="John Doe".
+func splitArgPairs(s string) []string {
+	var tokens []string
+	var cur strings.Builder
+	inQuote := byte(0)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inQuote != 0 {
+			cur.WriteByte(c)
+			if c == inQuote {
+				inQuote = 0
+			}
+		} else if c == '"' || c == '\'' {
+			inQuote = c
+			cur.WriteByte(c)
+		} else if c == ' ' || c == '\t' {
+			if cur.Len() > 0 {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+			}
+		} else {
+			cur.WriteByte(c)
+		}
+	}
+	if cur.Len() > 0 {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
 }

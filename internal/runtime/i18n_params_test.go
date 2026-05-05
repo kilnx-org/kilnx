@@ -93,6 +93,88 @@ func TestExpandTranslationsPluralExtended(t *testing.T) {
 	}
 }
 
+// TestExpandTranslationsXSSEscape verifies that attacker-controlled parameter
+// values are HTML-escaped before substitution. expandTranslations runs as
+// Step 0 of renderHTML, before interpolateEscaped, so the substituted value
+// has no surrounding {...} for the later escape pass to catch.
+func TestExpandTranslationsXSSEscape(t *testing.T) {
+	i18n := NewI18n(map[string]map[string]string{
+		"en": {"greeting": "Hello {name}"},
+	}, "en", false)
+	ctx := &renderContext{
+		i18n:    i18n,
+		request: &http.Request{},
+	}
+	content := `{t.greeting name="<script>alert(1)</script>"}`
+	got := expandTranslations(content, ctx)
+	want := "Hello &lt;script&gt;alert(1)&lt;/script&gt;"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestExpandTranslationsQuotedValueWithSpaces verifies that quoted argument
+// values containing spaces survive tokenization (e.g. name="John Doe").
+func TestExpandTranslationsQuotedValueWithSpaces(t *testing.T) {
+	i18n := NewI18n(map[string]map[string]string{
+		"en": {"greeting": "Hello {name}"},
+	}, "en", false)
+	ctx := &renderContext{
+		i18n:    i18n,
+		request: &http.Request{},
+	}
+	content := `{t.greeting name="John Doe"}`
+	got := expandTranslations(content, ctx)
+	want := "Hello John Doe"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestExpandTranslationsPluralOtherDoesNotShortCircuit verifies that an
+// "other" branch declared before "one" does not preempt the matching
+// specific category for count=1.
+func TestExpandTranslationsPluralOtherDoesNotShortCircuit(t *testing.T) {
+	i18n := NewI18n(map[string]map[string]string{
+		"en": {"items": "{count|plural: other='X', one='Y'}"},
+	}, "en", false)
+	ctx := &renderContext{
+		i18n:    i18n,
+		request: &http.Request{},
+	}
+	content := `{t.items count=1}`
+	got := expandTranslations(content, ctx)
+	want := "Y"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+
+	content = `{t.items count=7}`
+	got = expandTranslations(content, ctx)
+	want = "X"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestExpandTranslationsPluralFew verifies the basic Slavic-family heuristic
+// for the CLDR "few" category (n%10 in [3..6] and n%100 not in [13..16]).
+func TestExpandTranslationsPluralFew(t *testing.T) {
+	i18n := NewI18n(map[string]map[string]string{
+		"en": {"items": "{count|plural: one='1 item', few='{count} items (few)', other='{count} items'}"},
+	}, "en", false)
+	ctx := &renderContext{
+		i18n:    i18n,
+		request: &http.Request{},
+	}
+	content := `{t.items count=3}`
+	got := expandTranslations(content, ctx)
+	want := "3 items (few)"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestExpandTranslationsWithQuery(t *testing.T) {
 	i18n := NewI18n(map[string]map[string]string{
 		"en": {"order": "Order {number} totals {total}"},
