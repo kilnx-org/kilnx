@@ -808,3 +808,137 @@ func TestRenderFragment_CustomFieldsNoManifest(t *testing.T) {
 		t.Errorf("expected Deal A, got %q", got)
 	}
 }
+
+func TestRenderPage_LayoutWithEmptyQuery(t *testing.T) {
+	s := newTestServer(nil)
+	s.app.Layouts = []parser.Layout{
+		{
+			Name:        "main",
+			HTMLContent: `<html><body>{page.content}</body></html>`,
+			Queries: []parser.Node{
+				{SQL: ""},
+			},
+		},
+	}
+	s.app.Pages = append(s.app.Pages, parser.Page{
+		Path:   "/layout-empty-query",
+		Layout: "main",
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<h1>Hi</h1>`},
+		},
+	})
+
+	req := httptest.NewRequest("GET", "/layout-empty-query", nil)
+	page := findPageByPath(s.app.Pages, "/layout-empty-query")
+	if page == nil {
+		t.Fatal("page not found")
+	}
+	got := s.renderPage(*page, s.app.Pages, req)
+	if !strings.Contains(got, "<h1>Hi</h1>") {
+		t.Errorf("expected page content, got %q", got)
+	}
+}
+
+func TestRenderPage_LayoutWithTenantRejection(t *testing.T) {
+	mock := newMockExecutor()
+	s := newTestServer(mock)
+	s.tenants = TenantMap{"settings": "org_id"}
+	s.app.Layouts = []parser.Layout{
+		{
+			Name:        "main",
+			HTMLContent: `<html><body>{page.content}</body></html>`,
+			Queries: []parser.Node{
+				{SQL: `SELECT title FROM settings`, Name: "settings"},
+			},
+		},
+	}
+	s.app.Pages = append(s.app.Pages, parser.Page{
+		Path:   "/layout-tenant-reject",
+		Layout: "main",
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<h1>Hi</h1>`},
+		},
+	})
+
+	req := httptest.NewRequest("GET", "/layout-tenant-reject", nil)
+	page := findPageByPath(s.app.Pages, "/layout-tenant-reject")
+	if page == nil {
+		t.Fatal("page not found")
+	}
+	got := s.renderPage(*page, s.app.Pages, req)
+	if !strings.Contains(got, "<h1>Hi</h1>") {
+		t.Errorf("expected page content despite layout tenant rejection, got %q", got)
+	}
+}
+
+func TestRenderNav_NoTitle(t *testing.T) {
+	pages := []parser.Page{
+		{Path: "/", Title: "Home"},
+		{Path: "/about", Title: ""},
+		{Path: "/contact", Title: "Contact Us"},
+	}
+	nav := renderNav(pages, "/about", nil, "MyApp", "")
+	if !strings.Contains(nav, ">About<") {
+		t.Errorf("expected 'About' label for page without title, got %q", nav)
+	}
+	if !strings.Contains(nav, ">Home<") {
+		t.Errorf("expected 'Home' label, got %q", nav)
+	}
+	if !strings.Contains(nav, ">Contact Us<") {
+		t.Errorf("expected 'Contact Us' label, got %q", nav)
+	}
+}
+
+func TestRenderNav_WithSession(t *testing.T) {
+	pages := []parser.Page{
+		{Path: "/", Title: "Home"},
+	}
+	session := &Session{Identity: "alice@example.com"}
+	nav := renderNav(pages, "/", session, "MyApp", "/custom-logout")
+	if !strings.Contains(nav, "alice@example.com") {
+		t.Errorf("expected identity in nav, got %q", nav)
+	}
+	if !strings.Contains(nav, "/custom-logout") {
+		t.Errorf("expected custom logout path, got %q", nav)
+	}
+}
+
+func TestRenderNav_SkipsParamPaths(t *testing.T) {
+	pages := []parser.Page{
+		{Path: "/", Title: "Home"},
+		{Path: "/user/:id", Title: "User"},
+	}
+	nav := renderNav(pages, "/", nil, "", "")
+	if strings.Contains(nav, "User") {
+		t.Errorf("expected param path to be skipped, got %q", nav)
+	}
+}
+
+func TestRenderPage_PaginationNoParams(t *testing.T) {
+	mock := newMockExecutor()
+	countSQL := `SELECT COUNT(*) as _count FROM (SELECT id FROM users)`
+	dataSQL := `SELECT id FROM users LIMIT 10 OFFSET 0`
+	mock.queryRowsResults[countSQL] = []database.Row{{"_count": "5"}}
+	mock.queryRowsResults[dataSQL] = []database.Row{
+		{"id": "1"},
+		{"id": "2"},
+	}
+	s := newTestServer(mock)
+	s.app.Pages = append(s.app.Pages, parser.Page{
+		Path: "/users",
+		Body: []parser.Node{
+			{Type: parser.NodeQuery, SQL: `SELECT id FROM users`, Name: "users", Paginate: 10},
+			{Type: parser.NodeHTML, HTMLContent: `<p>{paginate.users.total}</p>`},
+		},
+	})
+
+	req := httptest.NewRequest("GET", "/users", nil)
+	page := findPageByPath(s.app.Pages, "/users")
+	if page == nil {
+		t.Fatal("page not found")
+	}
+	got := s.renderPage(*page, s.app.Pages, req)
+	if !strings.Contains(got, "5") {
+		t.Errorf("expected total count, got %q", got)
+	}
+}

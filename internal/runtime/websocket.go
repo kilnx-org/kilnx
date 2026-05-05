@@ -86,7 +86,7 @@ func (s *Server) handleSocket(w http.ResponseWriter, r *http.Request, sock parse
 			return
 		}
 		if len(sock.RequiresClauses) > 0 {
-			if !s.evalRequiresClauses(sock.RequiresClauses, session) {
+			if !s.evalRequiresClauses(sock.RequiresClauses, session, r) {
 				http.Error(w, "Forbidden", http.StatusForbidden)
 				return
 			}

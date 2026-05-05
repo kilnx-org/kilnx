@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
@@ -80,6 +81,57 @@ func TestFetchOGData_InvalidURL(t *testing.T) {
 	}
 }
 
+func TestFetchOGData_NetworkError(t *testing.T) {
+	og := fetchOGData("http://localhost:99999/no-server")
+	if og != nil {
+		t.Error("expected nil for network error")
+	}
+}
+
+func TestFetchOGData_EmptyHTML(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><head></head><body></body></html>`))
+	}))
+	defer ts.Close()
+
+	og := fetchOGData(ts.URL)
+	if og != nil {
+		t.Error("expected nil for empty HTML without OG tags or title")
+	}
+}
+
+func TestFetchOGData_TooManyRedirects(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "/redirect")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer ts.Close()
+
+	og := fetchOGData(ts.URL)
+	if og != nil {
+		t.Error("expected nil for too many redirects")
+	}
+}
+
+func TestFetchOGData_CacheExpired(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><head><meta property="og:title" content="Fresh"></head></html>`))
+	}))
+	defer ts.Close()
+
+	// Pre-populate cache with expired entry
+	unfurlCacheMu.Lock()
+	unfurlCache[ts.URL] = &ogData{URL: ts.URL, Title: "Stale", FetchedAt: time.Now().Add(-2 * time.Hour)}
+	unfurlCacheMu.Unlock()
+
+	og := fetchOGData(ts.URL)
+	if og == nil || og.Title != "Fresh" {
+		t.Errorf("expected fresh data after cache expiry, got %v", og)
+	}
+}
+
 func TestFetchOGData_FallbackTitle(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -149,6 +201,12 @@ func TestPrintRoutes(t *testing.T) {
 		Schedules: []parser.Schedule{
 			{Name: "daily", Cron: "0 0 * * *"},
 		},
+		Sockets: []parser.Socket{
+			{Path: "/ws"},
+		},
+		RateLimits: []parser.RateLimit{
+			{PathPattern: "/api/*", Requests: 10, Window: "minute", Per: "ip"},
+		},
 	}
 
 	// Capture stdout by redirecting os.Stdout
@@ -176,6 +234,12 @@ func TestPrintRoutes(t *testing.T) {
 	}
 	if !strings.Contains(output, "SSE  /events") {
 		t.Error("expected SSE /events in output")
+	}
+	if !strings.Contains(output, "WS   /ws") {
+		t.Error("expected WS /ws in output")
+	}
+	if !strings.Contains(output, "LIMIT /api/*") {
+		t.Error("expected LIMIT /api/* in output")
 	}
 }
 

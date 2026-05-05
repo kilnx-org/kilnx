@@ -141,5 +141,16 @@ func (SqliteDialect) InternalTableDDL() []string {
 			completed_at DATETIME,
 			last_error TEXT
 		)`,
+		`CREATE TABLE IF NOT EXISTS _kilnx_flags (
+			name TEXT PRIMARY KEY,
+			enabled BOOLEAN NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS _kilnx_rate_limits (
+			scope_key TEXT NOT NULL,
+			limit_period TEXT NOT NULL,
+			window_start INTEGER NOT NULL,
+			request_count INTEGER NOT NULL DEFAULT 1,
+			PRIMARY KEY (scope_key, limit_period, window_start)
+		)`,
 	}
 }

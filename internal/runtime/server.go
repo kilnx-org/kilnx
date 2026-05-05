@@ -1098,7 +1098,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				if sess == nil {
 					shouldExecute = true
 				} else if len(action.RequiresClauses) > 0 {
-					shouldExecute = !s.evalRequiresClauses(action.RequiresClauses, sess)
+					shouldExecute = !s.evalRequiresClauses(action.RequiresClauses, sess, r)
 				} else if action.RequiresRole != "" && action.RequiresRole != "auth" {
 					shouldExecute = sess.Role != action.RequiresRole &&
 						!s.hasPermission(sess.Role, action.RequiresRole, app.Permissions)

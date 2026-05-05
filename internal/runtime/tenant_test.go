@@ -221,6 +221,17 @@ func TestRewriteTenantSQL_MutationNeedleInsideCommentRejected(t *testing.T) {
 	}
 }
 
+func TestRewriteTenantSQL_NonSelectNonMutationPasses(t *testing.T) {
+	// PRAGMA does not touch tenant tables
+	got, err := RewriteTenantSQL("PRAGMA foreign_keys = ON", BuildTenantMap(buildApp(t)), withTenantParam())
+	if err != nil {
+		t.Fatalf("expected no error for harmless pragma, got %v", err)
+	}
+	if got != "PRAGMA foreign_keys = ON" {
+		t.Errorf("expected unchanged SQL, got %q", got)
+	}
+}
+
 func TestRewriteTenantSQL_MutationWithSubqueryRejected(t *testing.T) {
 	cases := []string{
 		"UPDATE quote SET x = 1 WHERE id IN (SELECT id FROM quote WHERE org_id = :current_user.org_id)",
@@ -375,5 +386,74 @@ func TestCheckTenantMutation_UnparseableNoTenant(t *testing.T) {
 	err := checkTenantMutation(sql, stripSQLNoise(sql), TenantMap{"quote": "org"}, withTenantParam())
 	if err != nil {
 		t.Errorf("expected nil for unparseable non-tenant mutation, got %v", err)
+	}
+}
+
+func TestBuildTenantMap_NilApp(t *testing.T) {
+	m := BuildTenantMap(nil)
+	if m == nil || len(m) != 0 {
+		t.Error("expected empty map for nil app")
+	}
+}
+
+func TestPopulateCurrentUserParams_NilSession(t *testing.T) {
+	s := &Server{}
+	params := map[string]string{}
+	s.populateCurrentUserParams(params, nil)
+	if len(params) != 0 {
+		t.Errorf("expected empty params, got %v", params)
+	}
+}
+
+func TestPopulateCurrentUserParams_WithSession(t *testing.T) {
+	s := &Server{app: &parser.App{Auth: &parser.AuthConfig{Password: "password_hash"}}}
+	params := map[string]string{}
+	session := &Session{
+		UserID:   "42",
+		Identity: "user@example.com",
+		Role:     "admin",
+		Data:     map[string]string{"plan": "premium", "password_hash": "secret"},
+	}
+	s.populateCurrentUserParams(params, session)
+	if params["current_user.id"] != "42" {
+		t.Errorf("expected id=42, got %s", params["current_user.id"])
+	}
+	if params["current_user.plan"] != "premium" {
+		t.Errorf("expected plan=premium, got %s", params["current_user.plan"])
+	}
+	if _, ok := params["current_user.password_hash"]; ok {
+		t.Error("expected sensitive field to be excluded")
+	}
+}
+
+func TestCheckTenantMutation_ParseableNonTenantNoTouch(t *testing.T) {
+	sql := `INSERT INTO "material" (name) VALUES ('x')`
+	err := checkTenantMutation(sql, stripSQLNoise(sql), TenantMap{"quote": "org"}, withTenantParam())
+	if err != nil {
+		t.Errorf("expected nil for parseable non-tenant mutation, got %v", err)
+	}
+}
+
+func TestRewriteTenantSQL_SelectWithoutFromTouchesTenant(t *testing.T) {
+	_, err := RewriteTenantSQL("SELECT quote",
+		BuildTenantMap(buildApp(t)), withTenantParam())
+	if !errors.Is(err, ErrUnsafeTenantShape) {
+		t.Fatalf("expected ErrUnsafeTenantShape for SELECT without FROM touching tenant, got %v", err)
+	}
+}
+
+func TestCheckTenantMutation_UnparseableNoTable(t *testing.T) {
+	sql := `INSERT VALUES ('x')`
+	err := checkTenantMutation(sql, stripSQLNoise(sql), TenantMap{"quote": "org"}, withTenantParam())
+	if err != nil {
+		t.Errorf("expected nil for unparseable mutation without tenant table, got %v", err)
+	}
+}
+
+func TestCheckTenantMutation_UnparseableNoTableTouchesTenant(t *testing.T) {
+	sql := `INSERT quote VALUES (1)`
+	err := checkTenantMutation(sql, stripSQLNoise(sql), TenantMap{"quote": "org"}, withTenantParam())
+	if !errors.Is(err, ErrUnsafeTenantShape) {
+		t.Errorf("expected ErrUnsafeTenantShape for unparseable mutation touching tenant, got %v", err)
 	}
 }

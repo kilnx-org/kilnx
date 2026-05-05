@@ -68,6 +68,22 @@ func TestSessionVerify_InvalidSignature(t *testing.T) {
 	}
 }
 
+func TestSessionVerify_NoSecret(t *testing.T) {
+	ss := &SessionStore{sessions: make(map[string]*Session), secret: ""}
+	id, valid := ss.verifySessionID("plain-id")
+	if !valid || id != "plain-id" {
+		t.Errorf("expected plain-id when secret is empty, got %q, valid=%v", id, valid)
+	}
+}
+
+func TestSessionVerify_MalformedCookie(t *testing.T) {
+	ss := NewSessionStore("my-secret")
+	_, valid := ss.verifySessionID("nosig")
+	if valid {
+		t.Error("verifySessionID should return false for malformed cookie")
+	}
+}
+
 func TestCheckPasswordInvalidHash(t *testing.T) {
 	if CheckPassword("anything", "not-a-bcrypt-hash") {
 		t.Error("CheckPassword should return false for invalid hash")
@@ -1139,5 +1155,59 @@ func TestDelete_WithDB(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected DB delete to be called")
+	}
+}
+
+func TestValidateFormData_CustomFieldsColumnMode(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name:             "product",
+			CustomFieldsFile: "product.json",
+			Fields: []parser.Field{
+				{Name: "name", Type: parser.FieldText, Required: true},
+			},
+		}},
+		CustomManifests: map[string]*parser.CustomFieldManifest{
+			"product": {
+				ModelName: "product",
+				Fields: []parser.CustomFieldDef{
+					{Name: "sku", Kind: parser.CustomFieldKindText, Mode: parser.CustomFieldModeColumn, Required: true},
+				},
+			},
+		},
+	}
+	// Missing column-mode field (promoted to top-level)
+	errs := validateFormData("product", app, map[string]string{"name": "Widget"})
+	if len(errs) == 0 {
+		t.Fatal("expected error for missing column-mode custom field")
+	}
+	// Valid column-mode field
+	errs = validateFormData("product", app, map[string]string{"name": "Widget", "sku": "W123"})
+	if len(errs) != 0 {
+		t.Errorf("expected no errors, got %v", errs)
+	}
+}
+
+func TestValidateFormData_CustomFieldsInvalidNumber(t *testing.T) {
+	app := &parser.App{
+		Models: []parser.Model{{
+			Name:             "invoice",
+			CustomFieldsFile: "invoice.json",
+			Fields: []parser.Field{
+				{Name: "number", Type: parser.FieldText, Required: true},
+			},
+		}},
+		CustomManifests: map[string]*parser.CustomFieldManifest{
+			"invoice": {
+				ModelName: "invoice",
+				Fields: []parser.CustomFieldDef{
+					{Name: "amount", Kind: parser.CustomFieldKindNumber, Required: false},
+				},
+			},
+		},
+	}
+	errs := validateFormData("invoice", app, map[string]string{"number": "INV1", "custom": `{"amount":"not-a-number"}`})
+	if len(errs) == 0 {
+		t.Fatal("expected error for invalid number custom field")
 	}
 }

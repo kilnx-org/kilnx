@@ -201,6 +201,20 @@ func TestEvaluateExpect_RedirectWithoutLocation(t *testing.T) {
 	}
 }
 
+func TestEvaluateExpect_RedirectShorthand(t *testing.T) {
+	step := parser.TestStep{Target: "redirect /home", Value: ""}
+	if !evaluateExpect(step, "", 302, "/home", nil) {
+		t.Error("expected true for redirect shorthand")
+	}
+}
+
+func TestEvaluateExpect_RedirectWithValueOverride(t *testing.T) {
+	step := parser.TestStep{Target: "redirect to /home", Value: "/dashboard"}
+	if !evaluateExpect(step, "", 302, "/dashboard", nil) {
+		t.Error("expected true when Value overrides redirect path")
+	}
+}
+
 func TestEvaluateExpect_ContainsNotFound(t *testing.T) {
 	step := parser.TestStep{Target: "page contains", Value: "missing"}
 	if evaluateExpect(step, "hello world", 200, "", nil) {

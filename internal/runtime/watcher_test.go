@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,42 +49,141 @@ func TestResolveImports_IndentedIgnored(t *testing.T) {
 `)
 	out, err := resolveImports(entry, dir, nil, 0)
 	if err != nil {
-		t.Fatalf("expected indented 'import' to be content, got error: %v", err)
+		t.Fatalf("resolve: %v", err)
 	}
-	if !strings.Contains(out, "not-an-import.txt") {
-		t.Errorf("indented import line should be preserved as content")
-	}
-	if !strings.Contains(out, "How to import files?") {
-		t.Errorf("html content lost: %s", out)
+	if !strings.Contains(out, `import "not-an-import.txt"`) {
+		t.Errorf("indented import should be preserved, got:\n%s", out)
 	}
 }
 
 func TestResolveImports_Circular(t *testing.T) {
 	dir := t.TempDir()
-	writeTemp(t, dir, "a.kilnx", `import "b.kilnx"`+"\n")
-	writeTemp(t, dir, "b.kilnx", `import "a.kilnx"`+"\n")
-	entry := filepath.Join(dir, "a.kilnx")
-	if _, err := resolveImports(entry, dir, nil, 0); err == nil {
-		t.Fatal("expected circular import error")
+	a := writeTemp(t, dir, "a.kilnx", `import "b.kilnx"
+page /a
+  "a"
+`)
+	writeTemp(t, dir, "b.kilnx", `import "a.kilnx"
+page /b
+  "b"
+`)
+	_, err := resolveImports(a, dir, nil, 0)
+	if err == nil || !strings.Contains(err.Error(), "circular import") {
+		t.Fatalf("expected circular import error, got: %v", err)
 	}
 }
 
-func TestResolveImports_RejectsTraversal(t *testing.T) {
-	root := t.TempDir()
-	parent := filepath.Dir(root)
-	writeTemp(t, parent, "outside.kilnx", "model leak\n")
-	entry := writeTemp(t, root, "app.kilnx", `import "../outside.kilnx"`+"\n")
-	_, err := resolveImports(entry, root, nil, 0)
-	if err == nil || !strings.Contains(err.Error(), "escapes project") {
-		t.Fatalf("expected path-traversal rejection, got: %v", err)
-	}
-}
-
-func TestResolveImports_RequiresKilnxExtension(t *testing.T) {
+func TestResolveImports_FileNotFound(t *testing.T) {
 	dir := t.TempDir()
-	entry := writeTemp(t, dir, "app.kilnx", `import "data.txt"`+"\n")
+	entry := writeTemp(t, dir, "app.kilnx", `import "missing.kilnx"
+page /
+  "hi"
+`)
 	_, err := resolveImports(entry, dir, nil, 0)
-	if err == nil || !strings.Contains(err.Error(), ".kilnx file") {
-		t.Fatalf("expected extension rejection, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "reading") {
+		t.Fatalf("expected file read error, got: %v", err)
+	}
+}
+
+func TestResolveImports_InvalidExtension(t *testing.T) {
+	dir := t.TempDir()
+	writeTemp(t, dir, "bad.txt", "page /\n  \"hi\"\n")
+	entry := writeTemp(t, dir, "app.kilnx", `import "bad.txt"
+page /
+  "hi"
+`)
+	_, err := resolveImports(entry, dir, nil, 0)
+	if err == nil || !strings.Contains(err.Error(), "must be a .kilnx file") {
+		t.Fatalf("expected extension error, got: %v", err)
+	}
+}
+
+func TestResolveImports_EscapesProject(t *testing.T) {
+	dir := t.TempDir()
+	// Create a file outside the project root
+	outsideDir := t.TempDir()
+	writeTemp(t, outsideDir, "evil.kilnx", "page /evil\n  \"bad\"\n")
+
+	entry := writeTemp(t, dir, "app.kilnx", fmt.Sprintf(`import "%s"
+page /
+  "hi"
+`, filepath.Join("..", filepath.Base(outsideDir), "evil.kilnx")))
+	_, err := resolveImports(entry, dir, nil, 0)
+	if err == nil || !strings.Contains(err.Error(), "escapes project directory") {
+		t.Fatalf("expected escape error, got: %v", err)
+	}
+}
+
+func TestResolveImports_MaxDepth(t *testing.T) {
+	dir := t.TempDir()
+	// Create a chain of imports deeper than maxImportDepth (64)
+	var files []string
+	for i := 0; i < 66; i++ {
+		name := fmt.Sprintf("level%d.kilnx", i)
+		content := fmt.Sprintf(`import "level%d.kilnx"`, i+1)
+		if i == 65 {
+			content = "page /\n  \"done\"\n"
+		}
+		writeTemp(t, dir, name, content+"\n")
+		files = append(files, filepath.Join(dir, name))
+	}
+	_, err := resolveImports(files[0], dir, nil, 0)
+	if err == nil || !strings.Contains(err.Error(), "depth exceeds") {
+		t.Fatalf("expected max depth error, got: %v", err)
+	}
+}
+
+func TestResolveImports_EmptyImport(t *testing.T) {
+	dir := t.TempDir()
+	entry := writeTemp(t, dir, "app.kilnx", "import \npage /\n  \"hi\"\n")
+	out, err := resolveImports(entry, dir, nil, 0)
+	if err != nil {
+		t.Fatalf("expected empty import to be skipped, got error: %v", err)
+	}
+	if !strings.Contains(out, "page /") {
+		t.Errorf("expected page to remain, got:\n%s", out)
+	}
+}
+
+// ---------- loadApp tests ----------
+
+func TestLoadApp_Success(t *testing.T) {
+	dir := t.TempDir()
+	entry := writeTemp(t, dir, "app.kilnx", `page /
+  "hello"
+`)
+	app, err := loadApp(entry)
+	if err != nil {
+		t.Fatalf("loadApp: %v", err)
+	}
+	if len(app.Pages) != 1 || app.Pages[0].Path != "/" {
+		t.Errorf("expected one page with path /, got %+v", app.Pages)
+	}
+}
+
+func TestLoadApp_FileNotFound(t *testing.T) {
+	_, err := loadApp("/nonexistent/path/app.kilnx")
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+}
+
+func TestLoadApp_ParseError(t *testing.T) {
+	dir := t.TempDir()
+	entry := writeTemp(t, dir, "app.kilnx", "model user\n  index(\n")
+	_, err := loadApp(entry)
+	if err == nil || !strings.Contains(err.Error(), "parsing") {
+		t.Fatalf("expected parsing error, got: %v", err)
+	}
+}
+
+func TestLoadApp_ResolveImportError(t *testing.T) {
+	dir := t.TempDir()
+	entry := writeTemp(t, dir, "app.kilnx", `import "missing.kilnx"
+page /
+  "hi"
+`)
+	_, err := loadApp(entry)
+	if err == nil || !strings.Contains(err.Error(), "reading") {
+		t.Fatalf("expected import read error, got: %v", err)
 	}
 }

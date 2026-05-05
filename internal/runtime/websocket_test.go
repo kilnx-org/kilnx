@@ -52,17 +52,15 @@ func TestWriteWSFrame_Medium(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read error: %v", err)
 	}
-	if buf[0] != 0x81 {
-		t.Errorf("opcode = 0x%02x, want 0x81", buf[0])
+	if buf[0] != 0x81 || buf[1] != 126 {
+		t.Errorf("expected [0x81, 126], got [0x%02x, %d]", buf[0], buf[1])
 	}
-	if buf[1] != 126 {
-		t.Errorf("length indicator = %d, want 126", buf[1])
-	}
-	if binary.BigEndian.Uint16(buf[2:4]) != 200 {
-		t.Errorf("payload length = %d, want 200", binary.BigEndian.Uint16(buf[2:4]))
+	length := binary.BigEndian.Uint16(buf[2:4])
+	if int(length) != len(payload) {
+		t.Errorf("length = %d, want %d", length, len(payload))
 	}
 	if !bytes.Equal(buf[4:], payload) {
-		t.Error("payload mismatch")
+		t.Errorf("payload mismatch")
 	}
 }
 
@@ -83,17 +81,15 @@ func TestWriteWSFrame_Large(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read error: %v", err)
 	}
-	if buf[0] != 0x81 {
-		t.Errorf("opcode = 0x%02x, want 0x81", buf[0])
+	if buf[0] != 0x81 || buf[1] != 127 {
+		t.Errorf("expected [0x81, 127], got [0x%02x, %d]", buf[0], buf[1])
 	}
-	if buf[1] != 127 {
-		t.Errorf("length indicator = %d, want 127", buf[1])
-	}
-	if binary.BigEndian.Uint64(buf[2:10]) != 70000 {
-		t.Errorf("payload length = %d, want 70000", binary.BigEndian.Uint64(buf[2:10]))
+	length := binary.BigEndian.Uint64(buf[2:10])
+	if int(length) != len(payload) {
+		t.Errorf("length = %d, want %d", length, len(payload))
 	}
 	if !bytes.Equal(buf[10:], payload) {
-		t.Error("payload mismatch")
+		t.Errorf("payload mismatch")
 	}
 }
 
@@ -212,6 +208,46 @@ func TestReadWSFrame_ReadError(t *testing.T) {
 	}
 }
 
+func TestReadWSFrame_ExtLengthError(t *testing.T) {
+	// length == 126 but only 1 extra byte available
+	frame := []byte{0x81, 126, 0x00}
+	reader := bufio.NewReader(bytes.NewReader(frame))
+	_, _, err := readWSFrame(reader)
+	if err == nil {
+		t.Fatal("expected error for incomplete extended length")
+	}
+}
+
+func TestReadWSFrame_ExtLength8Error(t *testing.T) {
+	// length == 127 but only 4 extra bytes available
+	frame := []byte{0x81, 127, 0x00, 0x00, 0x00, 0x00}
+	reader := bufio.NewReader(bytes.NewReader(frame))
+	_, _, err := readWSFrame(reader)
+	if err == nil {
+		t.Fatal("expected error for incomplete 64-bit extended length")
+	}
+}
+
+func TestReadWSFrame_MaskKeyError(t *testing.T) {
+	// masked frame with only 1 byte of mask key
+	frame := []byte{0x81, byte(0x80 | 5), 0x01}
+	reader := bufio.NewReader(bytes.NewReader(frame))
+	_, _, err := readWSFrame(reader)
+	if err == nil {
+		t.Fatal("expected error for incomplete mask key")
+	}
+}
+
+func TestReadWSFrame_PayloadReadError(t *testing.T) {
+	// header says 10 bytes but only 3 available
+	frame := []byte{0x81, 10, 0x01, 0x02, 0x03}
+	reader := bufio.NewReader(bytes.NewReader(frame))
+	_, _, err := readWSFrame(reader)
+	if err == nil {
+		t.Fatal("expected error for incomplete payload")
+	}
+}
+
 func TestBroadcast_RemoveDeadClient(t *testing.T) {
 	room := &Room{clients: make(map[net.Conn]bool)}
 
@@ -263,6 +299,76 @@ func TestHandleSocket_RequiresRole(t *testing.T) {
 	}
 }
 
+// hijackableWriter is a ResponseWriter that supports Hijack for WebSocket tests.
+type hijackableWriter struct {
+	http.ResponseWriter
+	conn     net.Conn
+	bufrw    *bufio.ReadWriter
+	hijacked bool
+}
+
+func (hw *hijackableWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hw.hijacked = true
+	return hw.conn, hw.bufrw, nil
+}
+
+func TestHandleSocket_HandshakeSuccess(t *testing.T) {
+	// Create a pipe: clientConn is what the test reads, serverConn is what handleSocket writes to.
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	s := newTestServer(nil)
+	req := httptest.NewRequest("GET", "/ws", nil)
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+
+	hw := &hijackableWriter{
+		ResponseWriter: httptest.NewRecorder(),
+		conn:           serverConn,
+		bufrw:          bufio.NewReadWriter(bufio.NewReader(serverConn), bufio.NewWriter(serverConn)),
+	}
+
+	sock := parser.Socket{Path: "/ws", Auth: false}
+
+	// Run handleSocket in a goroutine because it blocks in the read loop.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.handleSocket(hw, req, sock)
+	}()
+
+	// Read the HTTP upgrade response from clientConn.
+	reader := bufio.NewReader(clientConn)
+	resp, err := http.ReadResponse(reader, req)
+	if err != nil {
+		t.Fatalf("failed to read upgrade response: %v", err)
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Errorf("status = %d, want 101", resp.StatusCode)
+	}
+	if resp.Header.Get("Sec-WebSocket-Accept") == "" {
+		t.Error("expected Sec-WebSocket-Accept header")
+	}
+
+	// Send a close frame to exercise the read loop close-path
+	closeFrame := []byte{0x88, 0x00}
+	clientConn.Write(closeFrame)
+
+	// Give handleSocket a moment to process the frame
+	time.Sleep(100 * time.Millisecond)
+
+	// Close the connection to make the read loop exit.
+	clientConn.Close()
+	select {
+	case <-done:
+		// expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("handleSocket did not exit after connection close")
+	}
+}
+
 func TestHandleSocket_NoUpgrade(t *testing.T) {
 	s := newTestServer(nil)
 	req := httptest.NewRequest("GET", "/ws", nil)
@@ -303,9 +409,11 @@ func TestHandleSocket_MissingKey(t *testing.T) {
 	}
 }
 
-func TestHandleSocket_RequiresClauses(t *testing.T) {
+func TestHandleSocket_RequiresClausesForbidden(t *testing.T) {
 	s := newTestServer(nil)
-	// Create a viewer session with future expiry
+	s.app.Permissions = []parser.Permission{
+		{Role: "viewer", Rules: []string{"all"}},
+	}
 	session := &Session{UserID: "1", Identity: "user@example.com", Role: "viewer", Data: database.Row{"plan": "basic"}, ExpiresAt: time.Now().Add(time.Hour)}
 	s.sessions.sessions["session-viewer"] = session
 	cookieVal := s.sessions.signSessionID("session-viewer")

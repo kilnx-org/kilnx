@@ -289,7 +289,7 @@ func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request, page parser
 	}
 
 	if len(page.RequiresClauses) > 0 {
-		if !s.evalRequiresClauses(page.RequiresClauses, session) {
+		if !s.evalRequiresClauses(page.RequiresClauses, session, r) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte(renderForbidden(app.Pages, session)))
@@ -332,7 +332,7 @@ func (s *Server) requireAPIAuth(w http.ResponseWriter, r *http.Request, page par
 	}
 
 	if len(page.RequiresClauses) > 0 {
-		if !s.evalRequiresClauses(page.RequiresClauses, session) {
+		if !s.evalRequiresClauses(page.RequiresClauses, session, r) {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte(`{"error":"forbidden"}`))
@@ -386,7 +386,7 @@ func (s *Server) hasPermission(userRole, requiredRole string, perms []parser.Per
 
 // evalRequiresClauses returns true when the session satisfies ALL clauses (AND semantics).
 // A superuser (matched by identity) bypasses all checks.
-func (s *Server) evalRequiresClauses(clauses []parser.RequiresClause, session *Session) bool {
+func (s *Server) evalRequiresClauses(clauses []parser.RequiresClause, session *Session, r *http.Request) bool {
 	if s.superuserIdentity != "" && session != nil && session.Identity == s.superuserIdentity {
 		return true
 	}
@@ -405,6 +405,14 @@ func (s *Server) evalRequiresClauses(clauses []parser.RequiresClause, session *S
 			}
 		case parser.RequiresClauseSuperuser:
 			if s.superuserIdentity == "" || session.Identity != s.superuserIdentity {
+				return false
+			}
+		case parser.RequiresClauseFlag:
+			if !s.resolveFlag(clause.Value) {
+				return false
+			}
+		case parser.RequiresClauseRateLimit:
+			if r != nil && !s.checkRateLimit(clause.LimitCount, clause.LimitPeriod, clause.LimitScope, r, session) {
 				return false
 			}
 		}
@@ -974,4 +982,116 @@ func sanitizeIdentifier(name string) string {
 		result = "_" + result
 	}
 	return result
+}
+
+// resolveFlag checks if a feature flag is enabled.
+// Priority: 1) env var FLAG_<NAME>, 2) DB table _kilnx_flags, 3) false
+func (s *Server) resolveFlag(name string) bool {
+	envName := "FLAG_" + strings.ToUpper(name)
+	if v := os.Getenv(envName); v != "" {
+		return v == "true" || v == "1" || v == "yes"
+	}
+	if s.db != nil {
+		if rawDB, ok := s.db.(*database.DB); ok && rawDB != nil {
+			var enabled bool
+			err := rawDB.Conn().QueryRow("SELECT enabled FROM _kilnx_flags WHERE name = ?", name).Scan(&enabled)
+			if err == nil {
+				return enabled
+			}
+		}
+	}
+	return false
+}
+
+// rateLimitKey returns the key for rate limiting based on scope.
+func rateLimitKey(scope string, r *http.Request, session *Session) string {
+	switch scope {
+	case "user":
+		if session != nil {
+			return session.Identity
+		}
+		return ""
+	case "tenant":
+		if session != nil {
+			// Try to extract tenant from user row data
+			if tenantID, ok := session.Data["tenant_id"]; ok && tenantID != "" {
+				return tenantID
+			}
+			if orgID, ok := session.Data["org_id"]; ok && orgID != "" {
+				return orgID
+			}
+		}
+		return ""
+	case "ip":
+		return r.RemoteAddr
+	default:
+		return r.RemoteAddr
+	}
+}
+
+// checkRateLimit returns true if the request is within the rate limit.
+// It increments the counter in the _kilnx_rate_limits table.
+func (s *Server) checkRateLimit(count int, period string, scope string, r *http.Request, session *Session) bool {
+	if s.db == nil {
+		return true
+	}
+	key := rateLimitKey(scope, r, session)
+	if key == "" {
+		return true // no key to rate limit by
+	}
+
+	rawDB, ok := s.db.(*database.DB)
+	if !ok || rawDB == nil {
+		return true
+	}
+
+	window := rateLimitWindow(period)
+	if window == 0 {
+		return true
+	}
+
+	now := time.Now().Unix()
+	windowStart := now - window
+
+	// Clean old entries and count current window
+	_, _ = rawDB.Conn().Exec("DELETE FROM _kilnx_rate_limits WHERE window_start < ?", windowStart)
+
+	var currentCount int
+	err := rawDB.Conn().QueryRow(
+		"SELECT request_count FROM _kilnx_rate_limits WHERE scope_key = ? AND limit_period = ? AND window_start = ?",
+		key, period, windowStart,
+	).Scan(&currentCount)
+
+	if err != nil {
+		// No entry yet, create one
+		_, _ = rawDB.Conn().Exec(
+			"INSERT INTO _kilnx_rate_limits (scope_key, limit_period, window_start, request_count) VALUES (?, ?, ?, 1)",
+			key, period, windowStart,
+		)
+		return true
+	}
+
+	if currentCount >= count {
+		return false
+	}
+
+	_, _ = rawDB.Conn().Exec(
+		"UPDATE _kilnx_rate_limits SET request_count = request_count + 1 WHERE scope_key = ? AND limit_period = ? AND window_start = ?",
+		key, period, windowStart,
+	)
+	return true
+}
+
+func rateLimitWindow(period string) int64 {
+	switch strings.ToLower(period) {
+	case "second":
+		return 1
+	case "minute":
+		return 60
+	case "hour":
+		return 3600
+	case "day":
+		return 86400
+	}
+	return 0
 }

@@ -174,7 +174,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request, endpoint pars
 					return
 				}
 				allRows = rows
-				// Merge SELECT results into params for subsequent queries
 				name := node.Name
 				if name == "" {
 					name = "_last"

@@ -1387,3 +1387,25 @@ func TestFindMatchingEnd_LoopExhausted(t *testing.T) {
 		t.Error("expected empty body/elseBody")
 	}
 }
+
+// ---------- inferHTTPVerb ----------
+
+func TestInferHTTPVerb(t *testing.T) {
+	tests := []struct {
+		name   string
+		action parser.Page
+		want   string
+	}{
+		{"explicit GET", parser.Page{Method: "GET"}, "GET"},
+		{"explicit post lowercase", parser.Page{Method: "post"}, "POST"},
+		{"empty body defaults to POST", parser.Page{Body: []parser.Node{}}, "POST"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := inferHTTPVerb(&tt.action)
+			if got != tt.want {
+				t.Errorf("inferHTTPVerb() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

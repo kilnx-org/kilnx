@@ -422,6 +422,7 @@ func TestExpandCustomFields(t *testing.T) {
 	rows := []database.Row{
 		{"name": "Deal A", "custom": `{"revenue":"100"}`},
 		{"name": "Deal B", "custom": ``},
+		{"name": "Deal C", "custom": `not json`},
 	}
 	got := expandCustomFields(rows)
 	if got[0]["custom.revenue"] != "100" {
@@ -429,6 +430,9 @@ func TestExpandCustomFields(t *testing.T) {
 	}
 	if _, ok := got[1]["custom.revenue"]; ok {
 		t.Error("empty custom should not produce fields")
+	}
+	if _, ok := got[2]["custom.revenue"]; ok {
+		t.Error("invalid json should not produce fields")
 	}
 }
 
@@ -504,8 +508,9 @@ func TestFlattenPayload(t *testing.T) {
 		"nested": map[string]interface{}{
 			"foo": "bar",
 		},
-		"flag":  true,
-		"count": 5,
+		"flag":   true,
+		"count":  5,
+		"active": false,
 	}
 	got := flattenPayload(payload, "stripe")
 	if got["stripe_id"] != "evt_123" {
@@ -522,6 +527,9 @@ func TestFlattenPayload(t *testing.T) {
 	}
 	if got["stripe_count"] != "5" {
 		t.Errorf("stripe_count = %q, want 5", got["stripe_count"])
+	}
+	if got["stripe_active"] != "false" {
+		t.Errorf("stripe_active = %q, want false", got["stripe_active"])
 	}
 }
 
@@ -733,6 +741,34 @@ func TestNextCronOccurrence_Weekday(t *testing.T) {
 	}
 	if got.Hour() != 9 || got.Minute() != 0 {
 		t.Errorf("expected 09:00, got %02d:%02d", got.Hour(), got.Minute())
+	}
+}
+
+func TestNextCronOccurrence_TodayPassed(t *testing.T) {
+	// Use a time far in the past so "today" has definitely passed
+	got := nextCronOccurrence("every monday at 0:00")
+	if got.IsZero() {
+		t.Fatal("expected non-zero time")
+	}
+	if got.Weekday() != time.Monday {
+		t.Errorf("expected Monday, got %v", got.Weekday())
+	}
+	// If today is Monday, the time should be next Monday (7 days later)
+	if time.Now().Weekday() == time.Monday {
+		expected := time.Now().AddDate(0, 0, 7)
+		if got.Day() != expected.Day() {
+			t.Errorf("expected next Monday (day %d), got day %d", expected.Day(), got.Day())
+		}
+	}
+}
+
+func TestNextCronOccurrence_NoMinutes(t *testing.T) {
+	got := nextCronOccurrence("every day at 5")
+	if got.IsZero() {
+		t.Fatal("expected non-zero time")
+	}
+	if got.Hour() != 5 || got.Minute() != 0 {
+		t.Errorf("expected 05:00, got %02d:%02d", got.Hour(), got.Minute())
 	}
 }
 
@@ -961,6 +997,29 @@ func TestVerifyStripeSignature_OldTimestamp(t *testing.T) {
 	}
 }
 
+func TestVerifyStripeSignature_InvalidTimestamp(t *testing.T) {
+	header := "t=notanumber,v1=abc"
+	if verifyStripeSignature([]byte("{}"), header, "secret") {
+		t.Error("expected invalid timestamp to fail")
+	}
+}
+
+func TestVerifyStripeSignature_ExtraParts(t *testing.T) {
+	secret := "whsec_test"
+	payload := []byte(`{"id":"evt_123"}`)
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+
+	signedPayload := timestamp + "." + string(payload)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(signedPayload))
+	sig := hex.EncodeToString(mac.Sum(nil))
+
+	header := fmt.Sprintf("foo=bar,t=%s,v1=%s", timestamp, sig)
+	if !verifyStripeSignature(payload, header, secret) {
+		t.Error("expected valid signature with extra parts to pass")
+	}
+}
+
 // ---------- websocket.go ----------
 
 func TestWriteWSFrame_Small(t *testing.T) {
@@ -1025,6 +1084,30 @@ func TestBuildCustomIterRows_EmptyManifest(t *testing.T) {
 	got := buildCustomIterRows(row, manifest)
 	if len(got) != 0 {
 		t.Errorf("expected 0 rows, got %d", len(got))
+	}
+}
+
+func TestBuildCustomIterRows_InvalidJSON(t *testing.T) {
+	manifest := &parser.CustomFieldManifest{
+		ModelName: "deal",
+		Fields:    []parser.CustomFieldDef{{Name: "revenue", Kind: parser.CustomFieldKindNumber, Label: "Revenue"}},
+	}
+	row := database.Row{"custom": `not json`}
+	got := buildCustomIterRows(row, manifest)
+	if len(got) != 1 || got[0]["value"] != "" {
+		t.Errorf("expected empty value for invalid JSON, got %v", got)
+	}
+}
+
+func TestBuildCustomIterRows_EmptyLabel(t *testing.T) {
+	manifest := &parser.CustomFieldManifest{
+		ModelName: "deal",
+		Fields:    []parser.CustomFieldDef{{Name: "revenue", Kind: parser.CustomFieldKindNumber}},
+	}
+	row := database.Row{"custom": `{"revenue":100}`}
+	got := buildCustomIterRows(row, manifest)
+	if len(got) != 1 || got[0]["label"] != "revenue" {
+		t.Errorf("expected label fallback to name, got %v", got)
 	}
 }
 
@@ -1470,6 +1553,39 @@ func TestLogger_LogSlowQuery_Disabled(t *testing.T) {
 	l.LogSlowQuery("SELECT *", 500*time.Millisecond) // should not print
 }
 
+func TestLoggingMiddleware(t *testing.T) {
+	l := NewLogger(&parser.LogConfig{LogRequests: true})
+	handler := l.LoggingMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+		w.Write([]byte("hello"))
+	}))
+	req := httptest.NewRequest("GET", "/test", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTeapot {
+		t.Errorf("code = %d, want 418", rec.Code)
+	}
+	if rec.Body.String() != "hello" {
+		t.Errorf("body = %q, want hello", rec.Body.String())
+	}
+}
+
+func TestLoggingResponseWriter_HijackUnsupported(t *testing.T) {
+	rec := httptest.NewRecorder()
+	lw := &loggingResponseWriter{ResponseWriter: rec, statusCode: 200}
+	_, _, err := lw.Hijack()
+	if err == nil {
+		t.Error("expected error for unsupported hijack")
+	}
+}
+
+func TestLoggingResponseWriter_FlushUnsupported(t *testing.T) {
+	rec := httptest.NewRecorder()
+	lw := &loggingResponseWriter{ResponseWriter: rec, statusCode: 200}
+	// Should not panic even if underlying writer doesn't support Flusher
+	lw.Flush()
+}
+
 // ---------- permissions.go ----------
 
 func TestResolvePermissionPlaceholders_Missing(t *testing.T) {
@@ -1706,5 +1822,25 @@ func TestResolveManifest_DynamicPathNoFallback(t *testing.T) {
 	got := s.resolveManifest(model, app, nil, map[string]string{"org": "missing"}, nil)
 	if got != nil {
 		t.Error("expected nil when file missing and no fallback")
+	}
+}
+
+func TestResolveManifest_DynamicPathNonKilnxExtension(t *testing.T) {
+	manifest := &parser.CustomFieldManifest{ModelName: "deal"}
+	s := &Server{}
+	model := &parser.Model{
+		Name:                 "deal",
+		CustomFieldsFile:     "tenant_{:org}.json",
+		CustomFieldsFallback: "static",
+	}
+	app := &parser.App{
+		CustomManifests: map[string]*parser.CustomFieldManifest{
+			"deal": manifest,
+		},
+	}
+	// Resolved path does not end in .kilnx and dynamic fields false → nil
+	got := s.resolveManifest(model, app, nil, map[string]string{"org": "acme"}, nil)
+	if got != nil {
+		t.Errorf("expected nil for non-.kilnx resolved path without dynamic fields, got %v", got)
 	}
 }
