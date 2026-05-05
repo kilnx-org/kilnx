@@ -283,6 +283,9 @@ func renderHTML(content string, ctx *renderContext) string {
 		result = expandTranslations(result, ctx)
 	}
 
+	// Step 0.5: Expand action= attributes to htmx equivalents
+	result = expandActionAttributes(result, ctx)
+
 	// Step 1: Replace each {csrf} with a unique token (one per occurrence for multi-form pages)
 	for strings.Contains(result, "{csrf}") {
 		token := generateCSRFToken()
@@ -1554,4 +1557,116 @@ func splitArgPairs(s string) []string {
 		tokens = append(tokens, cur.String())
 	}
 	return tokens
+}
+
+// actionAttrRe matches action="/path" or action="/path/{id}"
+var actionAttrRe = regexp.MustCompile(`action="([^"]+)"`)
+
+// expandActionAttributes replaces action="/path" with hx-post/hx-delete/etc.
+// It infers the HTTP verb from the matching action block and sets hx-target
+// and hx-swap appropriately.
+func expandActionAttributes(content string, ctx *renderContext) string {
+	if len(ctx.actions) == 0 {
+		return content
+	}
+	return actionAttrRe.ReplaceAllStringFunc(content, func(match string) string {
+		parts := actionAttrRe.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+		path := parts[1]
+
+		// Find matching action
+		var matchedAction *parser.Page
+		for i := range ctx.actions {
+			if pathsMatch(ctx.actions[i].Path, path) {
+				matchedAction = &ctx.actions[i]
+				break
+			}
+		}
+		if matchedAction == nil {
+			return match // unknown action, leave for analyzer to catch
+		}
+
+		// Infer HTTP verb
+		verb := inferHTTPVerb(matchedAction)
+
+		// Build hx- attributes
+		var attrs []string
+		switch verb {
+		case "GET":
+			attrs = append(attrs, fmt.Sprintf(`hx-get="%s"`, path))
+		case "POST":
+			attrs = append(attrs, fmt.Sprintf(`hx-post="%s"`, path))
+		case "PUT":
+			attrs = append(attrs, fmt.Sprintf(`hx-put="%s"`, path))
+		case "PATCH":
+			attrs = append(attrs, fmt.Sprintf(`hx-patch="%s"`, path))
+		case "DELETE":
+			attrs = append(attrs, fmt.Sprintf(`hx-delete="%s"`, path))
+		}
+
+		// hx-target: closest ancestor with matching data-action-scope
+		attrs = append(attrs, fmt.Sprintf(`hx-target="closest [data-action-scope='%s']"`, matchedAction.Path))
+
+		// hx-swap: look for swap directive in action body
+		swap := findSwapDirective(matchedAction)
+		if swap != "" {
+			attrs = append(attrs, fmt.Sprintf(`hx-swap="%s"`, swap))
+		}
+
+		return strings.Join(attrs, " ")
+	})
+}
+
+// pathsMatch checks if a route template matches a concrete path.
+// e.g. /tasks/:id/delete matches /tasks/123/delete
+func pathsMatch(template, path string) bool {
+	tParts := strings.Split(template, "/")
+	pParts := strings.Split(path, "/")
+	if len(tParts) != len(pParts) {
+		return false
+	}
+	for i, tp := range tParts {
+		if strings.HasPrefix(tp, ":") {
+			continue
+		}
+		if tp != pParts[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// inferHTTPVerb guesses the HTTP verb from an action block.
+func inferHTTPVerb(action *parser.Page) string {
+	if action.Method != "" {
+		return strings.ToUpper(action.Method)
+	}
+	// Infer from body nodes
+	for _, node := range action.Body {
+		if node.Type == parser.NodeQuery && node.SQL != "" {
+			sql := strings.ToUpper(strings.TrimSpace(node.SQL))
+			if strings.HasPrefix(sql, "DELETE") {
+				return "DELETE"
+			}
+			if strings.HasPrefix(sql, "UPDATE") {
+				return "PUT"
+			}
+			if strings.HasPrefix(sql, "INSERT") {
+				return "POST"
+			}
+		}
+	}
+	return "POST"
+}
+
+// findSwapDirective searches for a swap: directive in the action body.
+func findSwapDirective(action *parser.Page) string {
+	for _, node := range action.Body {
+		if node.Type == parser.NodeOn && node.Value == "swap" {
+			return "outerHTML"
+		}
+	}
+	return ""
 }

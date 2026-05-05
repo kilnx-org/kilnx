@@ -371,6 +371,7 @@ type renderContext struct {
 	fragmentArgs       map[string]string                      // active component argument bindings
 	fragmentDepth      int                                    // recursion guard for component fragments
 	fragmentComponents map[string]*parser.Page                // component name -> fragment (for inline rendering)
+	actions            []parser.Page                          // declared actions for action= attribute expansion
 	i18n               *I18n                                  // translation engine
 	request            *http.Request                          // current HTTP request (for language detection)
 }
@@ -379,6 +380,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 	app := s.getApp()
 	ctx := &renderContext{
 		fragmentComponents: s.fragmentComponents,
+		actions:            app.Actions,
 		i18n:               s.i18n,
 		request:            r,
 		queries:            make(map[string][]database.Row),
@@ -562,6 +564,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 				if len(layout.Queries) > 0 && s.db != nil {
 					layoutCtx = &renderContext{
 						fragmentComponents: s.fragmentComponents,
+						actions:            app.Actions,
 						i18n:               s.i18n,
 						request:            r,
 						queries:            make(map[string][]database.Row),
@@ -606,6 +609,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 				if layoutCtx == nil {
 					layoutCtx = &renderContext{
 						fragmentComponents: s.fragmentComponents,
+						actions:            app.Actions,
 						i18n:               s.i18n,
 						request:            r,
 						queries:            make(map[string][]database.Row),
@@ -759,6 +763,7 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 	app := s.getApp()
 	ctx := &renderContext{
 		fragmentComponents: s.fragmentComponents,
+		actions:            app.Actions,
 		i18n:               s.i18n,
 		request:            r,
 		queries:            make(map[string][]database.Row),
@@ -876,6 +881,7 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 	app := s.getApp()
 	ctx := &renderContext{
 		fragmentComponents: s.fragmentComponents,
+				actions: app.Actions,
 		i18n:               s.i18n,
 		request:            nil,
 		queries:            make(map[string][]database.Row),
@@ -1261,6 +1267,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			}
 			htmlCtx := &renderContext{
 				fragmentComponents: s.fragmentComponents,
+				actions:            app.Actions,
 				i18n:               s.i18n,
 				request:            r,
 				queries:            map[string][]database.Row{"_form": {formRow}},
@@ -1396,6 +1403,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				respondApp := s.getApp()
 				ctx := &renderContext{
 					fragmentComponents: s.fragmentComponents,
+					actions:            respondApp.Actions,
 					i18n:               s.i18n,
 					request:            r,
 					queries:            map[string][]database.Row{"_result": rows},

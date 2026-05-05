@@ -135,6 +135,7 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkCustomManifestRefs(app)...)
 	diags = append(diags, checkFragmentComponents(app)...)
 	diags = append(diags, checkTranslationParams(app)...)
+	diags = append(diags, checkActionAttributes(app)...)
 
 	return diags
 }
@@ -1573,4 +1574,77 @@ func checkTranslationParams(app *parser.App) []Diagnostic {
 	}
 
 	return diags
+}
+
+// checkActionAttributes validates that action="/path" attributes in HTML
+// reference existing action blocks.
+func checkActionAttributes(app *parser.App) []Diagnostic {
+	var diags []Diagnostic
+
+	// Build action path index
+	actionPaths := make(map[string]bool)
+	for _, a := range app.Actions {
+		actionPaths[a.Path] = true
+	}
+
+	actionAttrRe := regexp.MustCompile(`action="([^"]+)"`)
+
+	var scanNodes func([]parser.Node, string)
+	scanNodes = func(nodes []parser.Node, ctx string) {
+		for _, node := range nodes {
+			if node.Type == parser.NodeHTML {
+				for _, match := range actionAttrRe.FindAllStringSubmatch(node.HTMLContent, -1) {
+					path := match[1]
+					found := false
+					for apath := range actionPaths {
+						if pathsMatchAction(apath, path) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						diags = append(diags, Diagnostic{
+							Level:   "error",
+							Message: fmt.Sprintf("action attribute references unknown route '%s'", path),
+							Context: ctx,
+						})
+					}
+				}
+			}
+			scanNodes(node.Children, ctx)
+		}
+	}
+
+	for _, p := range app.Pages {
+		scanNodes(p.Body, "page "+p.Path)
+	}
+	for _, f := range app.Fragments {
+		scanNodes(f.Body, "fragment "+f.Path)
+	}
+	for _, a := range app.Actions {
+		scanNodes(a.Body, "action "+a.Path)
+	}
+	for _, a := range app.APIs {
+		scanNodes(a.Body, "api "+a.Path)
+	}
+
+	return diags
+}
+
+// pathsMatchAction checks if a route template matches a concrete path.
+func pathsMatchAction(template, path string) bool {
+	tParts := strings.Split(template, "/")
+	pParts := strings.Split(path, "/")
+	if len(tParts) != len(pParts) {
+		return false
+	}
+	for i, tp := range tParts {
+		if strings.HasPrefix(tp, ":") {
+			continue
+		}
+		if tp != pParts[i] {
+			return false
+		}
+	}
+	return true
 }
