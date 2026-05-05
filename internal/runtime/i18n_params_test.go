@@ -12,9 +12,9 @@ func TestExpandTranslationsBasic(t *testing.T) {
 		"en": {"greeting": "Hello {name}"},
 	}, "en", false)
 	ctx := &renderContext{
-		i18n:     i18n,
-		request:  &http.Request{},
-		queries:  map[string][]database.Row{},
+		i18n:    i18n,
+		request: &http.Request{},
+		queries: map[string][]database.Row{},
 	}
 	content := `{t.greeting name="World"}`
 	got := expandTranslations(content, ctx)
