@@ -124,7 +124,6 @@ func TestBroadcast(t *testing.T) {
 	}
 }
 
-
 func TestReadWSFrame_MediumPayload(t *testing.T) {
 	payload := bytes.Repeat([]byte("x"), 200)
 	frame := []byte{0x81, 126}
@@ -230,7 +229,6 @@ func TestBroadcast_RemoveDeadClient(t *testing.T) {
 	}
 	client.Close()
 }
-
 
 func TestHandleSocket_AuthRequired(t *testing.T) {
 	s := newTestServer(nil)

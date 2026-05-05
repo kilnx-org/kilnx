@@ -107,7 +107,6 @@ func TestSendSSEEvent_TenantRejection(t *testing.T) {
 	}
 }
 
-
 func TestHandleStream_AuthRequired(t *testing.T) {
 	s := newTestServer(nil)
 	stream := parser.Stream{Path: "/stream", Auth: true}

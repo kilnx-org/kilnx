@@ -639,7 +639,6 @@ func TestRenderPage_WithFetch(t *testing.T) {
 	}
 }
 
-
 func TestRenderPage_QueryNoName(t *testing.T) {
 	mock := newMockExecutor()
 	mock.queryRowsResults[`SELECT name FROM users`] = []database.Row{
@@ -752,7 +751,6 @@ func TestRenderPage_CustomFieldsEmptyRows(t *testing.T) {
 		t.Errorf("expected empty or unresolved, got %q", got)
 	}
 }
-
 
 func TestRenderFragment_CustomFieldsWithManifest(t *testing.T) {
 	mock := newMockExecutor()
