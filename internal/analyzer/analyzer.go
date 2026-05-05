@@ -1343,9 +1343,9 @@ func checkFragmentComponents(app *parser.App) []Diagnostic {
 						continue
 					}
 
-					// Parse provided args
+					// Parse provided args (quoted values may contain spaces)
 					provided := make(map[string]bool)
-					for _, pair := range strings.Split(argStr, " ") {
+					for _, pair := range splitArgStr(argStr) {
 						pair = strings.TrimSpace(pair)
 						if pair == "" {
 							continue
@@ -1360,7 +1360,7 @@ func checkFragmentComponents(app *parser.App) []Diagnostic {
 
 					// Check required args
 					for _, arg := range frag.FragmentArgs {
-						if arg.DefaultValue == "" && !provided[arg.Name] {
+						if !arg.HasDefault && !provided[arg.Name] {
 							diags = append(diags, Diagnostic{
 								Level:   "error",
 								Message: fmt.Sprintf("missing required argument '%s' for component '%s'", arg.Name, name),
@@ -1406,4 +1406,39 @@ func checkFragmentComponents(app *parser.App) []Diagnostic {
 	}
 
 	return diags
+}
+
+// splitArgStr tokenizes a fragment call argument string into space-separated
+// tokens, respecting single and double quoted substrings. Whitespace inside
+// quotes is preserved within the token (e.g. title="Hello World").
+//
+// Duplicated in internal/runtime/render.go to keep the analyzer free of
+// runtime imports; they share the same semantics.
+func splitArgStr(s string) []string {
+	var tokens []string
+	var cur strings.Builder
+	inQuote := byte(0)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inQuote != 0 {
+			cur.WriteByte(c)
+			if c == inQuote {
+				inQuote = 0
+			}
+		} else if c == '"' || c == '\'' {
+			inQuote = c
+			cur.WriteByte(c)
+		} else if c == ' ' || c == '\t' {
+			if cur.Len() > 0 {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+			}
+		} else {
+			cur.WriteByte(c)
+		}
+	}
+	if cur.Len() > 0 {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
 }

@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/kilnx-org/kilnx/internal/database"
@@ -31,7 +32,7 @@ func TestExpandFragmentCallsWithDefault(t *testing.T) {
 		Path: "money",
 		FragmentArgs: []parser.FragmentArg{
 			{Name: "amount"},
-			{Name: "currency", DefaultValue: "R$"},
+			{Name: "currency", HasDefault: true, DefaultValue: "R$"},
 		},
 		Body: []parser.Node{
 			{Type: parser.NodeHTML, HTMLContent: `<span>{currency} {amount}</span>`},
@@ -104,6 +105,193 @@ func TestExpandFragmentCallsNestedComponent(t *testing.T) {
 	want := `<div><b>hello</b></div>`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestExpandFragmentCallsQuotedSpaces verifies that quoted argument values
+// containing spaces are tokenized as a single value (not split on spaces).
+// Regression test for splitArgStr replacing strings.Split(argStr, " ").
+func TestExpandFragmentCallsQuotedSpaces(t *testing.T) {
+	card := &parser.Page{
+		Path: "card",
+		FragmentArgs: []parser.FragmentArg{
+			{Name: "title"},
+			{Name: "count"},
+		},
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<div><h2>{title}</h2><span>{count}</span></div>`},
+		},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"card": card},
+	}
+	content := `{{card title="Hello World" count=5}}`
+	got := expandFragmentCalls(content, ctx)
+	want := `<div><h2>Hello World</h2><span>5</span></div>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestExpandFragmentCallsSingleQuotedSpaces ensures single quotes work too.
+func TestExpandFragmentCallsSingleQuotedSpaces(t *testing.T) {
+	card := &parser.Page{
+		Path:         "card",
+		FragmentArgs: []parser.FragmentArg{{Name: "title"}},
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<h2>{title}</h2>`},
+		},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"card": card},
+	}
+	content := `{{card title='Hello World'}}`
+	got := expandFragmentCalls(content, ctx)
+	want := `<h2>Hello World</h2>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestRenderHTMLNoFragmentReexpansionOfRowData verifies the security fix:
+// when an each-block iterates rows and a row column value contains
+// a literal {{badge ...}} string, that string must NOT be re-interpreted
+// as a fragment call after row interpolation. (Template injection guard.)
+func TestRenderHTMLNoFragmentReexpansionOfRowData(t *testing.T) {
+	badge := &parser.Page{
+		Path:         "badge",
+		FragmentArgs: []parser.FragmentArg{{Name: "status"}},
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<span class="badge">{status}</span>`},
+		},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"badge": badge},
+		queries: map[string][]database.Row{
+			"items": {
+				{"name": "{{badge status=active}}"},
+			},
+		},
+		paginate:          map[string]PaginateInfo{},
+		querySourceModels: map[string]string{},
+		customManifests:   map[string]*parser.CustomFieldManifest{},
+		queryParams:       map[string]string{},
+	}
+	content := `{{each items}}<li>{name}</li>{{end}}`
+	got := renderHTML(content, ctx)
+	// The row's name field must appear as escaped literal text, not as
+	// an expanded badge component.
+	if strings.Contains(got, `<span class="badge">`) {
+		t.Errorf("row data was incorrectly expanded as fragment call. got: %q", got)
+	}
+	// Should contain the escaped literal braces
+	if !strings.Contains(got, "{{badge") {
+		t.Errorf("expected literal text containing '{{badge', got: %q", got)
+	}
+}
+
+// TestExpandFragmentCallsOutsideEachDuplicateMatchOrder verifies that when an
+// identical fragment-call string appears both inside and outside an {{each}}
+// block, the outside occurrence is still expanded. Regression for first-match
+// position bug in expandFragmentCallsOutsideEach.
+func TestExpandFragmentCallsOutsideEachDuplicateMatchOrder(t *testing.T) {
+	badge := &parser.Page{
+		Path:         "badge",
+		FragmentArgs: []parser.FragmentArg{{Name: "status", HasDefault: true, DefaultValue: "active"}},
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<span class="badge">{status}</span>`},
+		},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"badge": badge},
+	}
+	// inside-each occurrence textually precedes outside-each occurrence.
+	content := `{{each items}}{{badge status=active}}{{end}}{{badge status=active}}`
+	got := expandFragmentCallsOutsideEach(content, ctx)
+	// inside-each should remain literal; outside should expand exactly once.
+	if !strings.Contains(got, `{{each items}}{{badge status=active}}{{end}}`) {
+		t.Errorf("inside-each occurrence must remain literal. got: %q", got)
+	}
+	// Trailing call must be expanded.
+	if !strings.HasSuffix(got, `<span class="badge">active</span>`) {
+		t.Errorf("outside-each occurrence must be expanded. got: %q", got)
+	}
+}
+
+// TestExpandFragmentCallsEmptyStringDefault verifies that fragment(label="")
+// is treated as having a default (empty string), not as required.
+// Uses HasDefault flag rather than DefaultValue == "".
+func TestExpandFragmentCallsEmptyStringDefault(t *testing.T) {
+	badge := &parser.Page{
+		Path: "badge",
+		FragmentArgs: []parser.FragmentArg{
+			{Name: "label", HasDefault: true, DefaultValue: ""},
+		},
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<span>[{label}]</span>`},
+		},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"badge": badge},
+	}
+	// Call without providing label - default empty string should apply.
+	content := `{{badge}}`
+	got := expandFragmentCalls(content, ctx)
+	want := `<span>[]</span>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestServerReloadRebuildsFragmentComponents verifies that Server.Reload
+// rebuilds the fragmentComponents index so newly added components are
+// visible to the renderer after hot-reload.
+func TestServerReloadRebuildsFragmentComponents(t *testing.T) {
+	// Initial app has no component fragments.
+	initialApp := &parser.App{}
+	srv := NewServer(initialApp, nil, 0)
+	if len(srv.fragmentComponents) != 0 {
+		t.Fatalf("expected empty fragmentComponents, got %d", len(srv.fragmentComponents))
+	}
+
+	// New app introduces a component fragment.
+	newApp := &parser.App{
+		Fragments: []parser.Page{
+			{
+				Path:         "badge",
+				FragmentArgs: []parser.FragmentArg{{Name: "status"}},
+				Body: []parser.Node{
+					{Type: parser.NodeHTML, HTMLContent: `<span>{status}</span>`},
+				},
+			},
+		},
+	}
+	srv.Reload(newApp)
+
+	// fragmentComponents must contain the new component.
+	if _, ok := srv.fragmentComponents["badge"]; !ok {
+		t.Fatalf("Reload did not register 'badge' in fragmentComponents")
+	}
+
+	// And the renderer must actually expand it via the server's index.
+	ctx := &renderContext{fragmentComponents: srv.fragmentComponents}
+	got := expandFragmentCalls(`{{badge status=active}}`, ctx)
+	want := `<span>active</span>`
+	if got != want {
+		t.Errorf("after Reload, expansion got %q, want %q", got, want)
+	}
+
+	// And the server's standard renderHTML path picks it up.
+	got2 := renderHTML(`<div>{{badge status=ok}}</div>`, &renderContext{
+		fragmentComponents: srv.fragmentComponents,
+		queries:            map[string][]database.Row{},
+		paginate:           map[string]PaginateInfo{},
+		querySourceModels:  map[string]string{},
+		customManifests:    map[string]*parser.CustomFieldManifest{},
+		queryParams:        map[string]string{},
+	})
+	if !strings.Contains(got2, `<span>ok</span>`) {
+		t.Errorf("renderHTML after Reload did not expand badge. got %q", got2)
 	}
 }
 

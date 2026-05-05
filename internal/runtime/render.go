@@ -323,14 +323,19 @@ func renderHTML(content string, ctx *renderContext) string {
 		return placeholder
 	})
 
+	// Step 2.5: Expand component fragment calls that live OUTSIDE {{each}}
+	// blocks. Calls inside {{each}} are expanded per-row in expandEachBlocks
+	// so they have access to row context. We deliberately do NOT do another
+	// pass after each/interpolate: by then row data has been written into
+	// the output and re-scanning would let user content like {{name}} be
+	// interpreted as a component call (template injection).
+	result = expandFragmentCallsOutsideEach(result, ctx)
+
 	// Step 3: Process {{each queryName}}...{{else}}...{{end}} blocks
 	result = expandEachBlocks(result, ctx, nonce)
 
 	// Step 4: Process {{if expr}}...{{else}}...{{end}} blocks
 	result = expandIfBlocks(result, ctx, nil)
-
-	// Step 4.5: Process {{fragmentName arg=expr}} component calls
-	result = expandFragmentCalls(result, ctx)
 
 	// Step 5: Run standard interpolation (with escaping)
 	result = interpolateEscaped(result, ctx)
@@ -1030,6 +1035,154 @@ func linkify(text string) string {
 // fragmentCallRe matches {{name key=expr key2=expr}} (args optional)
 var fragmentCallRe = regexp.MustCompile(`\{\{(\w+)(?:\s+([^}]+))?\}\}`)
 
+// splitArgStr tokenizes a fragment call argument string into space-separated
+// tokens, respecting single and double quoted substrings. Whitespace inside
+// quotes is preserved within the token (e.g. title="Hello World").
+func splitArgStr(s string) []string {
+	var tokens []string
+	var cur strings.Builder
+	inQuote := byte(0)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inQuote != 0 {
+			cur.WriteByte(c)
+			if c == inQuote {
+				inQuote = 0
+			}
+		} else if c == '"' || c == '\'' {
+			inQuote = c
+			cur.WriteByte(c)
+		} else if c == ' ' || c == '\t' {
+			if cur.Len() > 0 {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+			}
+		} else {
+			cur.WriteByte(c)
+		}
+	}
+	if cur.Len() > 0 {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
+}
+
+// expandFragmentCallsOutsideEach expands fragment component calls that are
+// NOT inside a {{each}}...{{end}} block. Calls inside each-blocks are handled
+// per-row inside expandEachBlocks (so they can reference the current row).
+func expandFragmentCallsOutsideEach(content string, ctx *renderContext) string {
+	if ctx.fragmentComponents == nil || len(ctx.fragmentComponents) == 0 {
+		return content
+	}
+	insideEach := isInsideEachBlock(content)
+	matches := fragmentCallRe.FindAllStringIndex(content, -1)
+	if len(matches) == 0 {
+		return content
+	}
+	var b strings.Builder
+	b.Grow(len(content))
+	prev := 0
+	for _, m := range matches {
+		start, end := m[0], m[1]
+		b.WriteString(content[prev:start])
+		match := content[start:end]
+		if insideEach(start) {
+			b.WriteString(match)
+		} else {
+			b.WriteString(expandSingleFragmentCall(match, ctx))
+		}
+		prev = end
+	}
+	b.WriteString(content[prev:])
+	return b.String()
+}
+
+// expandSingleFragmentCall expands one {{name args}} occurrence using ctx.
+// Returns the original match if the name is not a known component or if the
+// recursion guard has fired.
+func expandSingleFragmentCall(match string, ctx *renderContext) string {
+	if ctx.fragmentComponents == nil || len(ctx.fragmentComponents) == 0 {
+		return match
+	}
+	if ctx.fragmentDepth >= 2 {
+		return match
+	}
+	parts := fragmentCallRe.FindStringSubmatch(match)
+	if len(parts) < 2 {
+		return match
+	}
+	name := parts[1]
+	argStr := ""
+	if len(parts) > 2 {
+		argStr = parts[2]
+	}
+	frag, ok := ctx.fragmentComponents[name]
+	if !ok {
+		return match
+	}
+	argMap := buildFragmentArgs(argStr, frag, ctx)
+	var fragHTML string
+	for _, node := range frag.Body {
+		if node.Type == parser.NodeHTML {
+			fragHTML = node.HTMLContent
+			break
+		}
+	}
+	if fragHTML == "" {
+		return ""
+	}
+	childCtx := &renderContext{
+		queries:            ctx.queries,
+		paginate:           ctx.paginate,
+		currentUser:        ctx.currentUser,
+		queryParams:        ctx.queryParams,
+		querySourceModels:  ctx.querySourceModels,
+		customManifests:    ctx.customManifests,
+		eachStack:          ctx.eachStack,
+		fragmentArgs:       argMap,
+		fragmentDepth:      ctx.fragmentDepth + 1,
+		fragmentComponents: ctx.fragmentComponents,
+	}
+	return renderHTML(fragHTML, childCtx)
+}
+
+// buildFragmentArgs parses an argument string and applies defaults for a fragment.
+func buildFragmentArgs(argStr string, frag *parser.Page, ctx *renderContext) map[string]string {
+	argMap := make(map[string]string)
+	for _, pair := range splitArgStr(argStr) {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		eqIdx := strings.Index(pair, "=")
+		if eqIdx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(pair[:eqIdx])
+		expr := strings.TrimSpace(pair[eqIdx+1:])
+		var val string
+		if strings.HasPrefix(expr, `"`) && strings.HasSuffix(expr, `"`) && len(expr) >= 2 {
+			val = expr[1 : len(expr)-1]
+		} else if strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`) && len(expr) >= 2 {
+			val = expr[1 : len(expr)-1]
+		} else {
+			resolved := resolveValue(expr, ctx, ctx.currentRow)
+			if resolved == "{"+expr+"}" {
+				val = expr
+			} else {
+				val = resolved
+			}
+		}
+		argMap[key] = val
+	}
+	for _, arg := range frag.FragmentArgs {
+		if _, ok := argMap[arg.Name]; !ok && arg.HasDefault {
+			argMap[arg.Name] = arg.DefaultValue
+		}
+	}
+	return argMap
+}
+
 // expandFragmentCalls processes {{componentName arg=expr}} blocks inside HTML content.
 // It looks up the component fragment, binds arguments, and renders the body inline.
 func expandFragmentCalls(content string, ctx *renderContext) string {
@@ -1057,9 +1210,9 @@ func expandFragmentCalls(content string, ctx *renderContext) string {
 			return match // unknown component, leave for analyzer to catch
 		}
 
-		// Parse arguments: key=expr key2=expr
+		// Parse arguments: key=expr key2=expr (quoted values may contain spaces)
 		argMap := make(map[string]string)
-		for _, pair := range strings.Split(argStr, " ") {
+		for _, pair := range splitArgStr(argStr) {
 			pair = strings.TrimSpace(pair)
 			if pair == "" {
 				continue
@@ -1092,7 +1245,7 @@ func expandFragmentCalls(content string, ctx *renderContext) string {
 
 		// Apply defaults for missing args
 		for _, arg := range frag.FragmentArgs {
-			if _, ok := argMap[arg.Name]; !ok && arg.DefaultValue != "" {
+			if _, ok := argMap[arg.Name]; !ok && arg.HasDefault {
 				argMap[arg.Name] = arg.DefaultValue
 			}
 		}

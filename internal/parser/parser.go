@@ -265,7 +265,8 @@ type Field struct {
 
 type FragmentArg struct {
 	Name         string
-	DefaultValue string // empty = required
+	HasDefault   bool   // true if `=` was provided in the source (even with empty string)
+	DefaultValue string // value when HasDefault is true; ignored otherwise
 }
 
 type Page struct {
@@ -1570,6 +1571,7 @@ func (p *parserState) parseFragment() (Page, error) {
 			// Check for default value: arg="value"
 			if p.current().Type == lexer.TokenAssign {
 				p.advance() // consume '='
+				arg.HasDefault = true
 				if p.current().Type == lexer.TokenString {
 					arg.DefaultValue = p.advance().Value
 				} else if p.current().Type == lexer.TokenNumber {

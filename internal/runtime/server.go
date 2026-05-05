@@ -91,6 +91,16 @@ func (s *Server) Reload(app *parser.App) {
 	if app.Auth != nil {
 		s.superuserIdentity = app.Auth.Superuser
 	}
+	// Rebuild component fragment index so newly added/removed components
+	// are reflected after hot reload.
+	fragmentComponents := make(map[string]*parser.Page)
+	for i := range app.Fragments {
+		frag := &app.Fragments[i]
+		if frag.FragmentArgs != nil {
+			fragmentComponents[frag.Path] = frag
+		}
+	}
+	s.fragmentComponents = fragmentComponents
 }
 
 func (s *Server) StartJobQueue() {
