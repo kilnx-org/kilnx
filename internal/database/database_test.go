@@ -1220,3 +1220,56 @@ func TestSchemaHashIncludesIndexes(t *testing.T) {
 		t.Error("schemaHash must differ when index groups differ")
 	}
 }
+
+func TestGenerateCreateTableOmitsComputedFields(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+	model := parser.Model{
+		Name: "order",
+		Fields: []parser.Field{
+			{Name: "quantity", Type: parser.FieldInt, Required: true},
+			{Name: "unit_price", Type: parser.FieldFloat, Required: true},
+			{Name: "total", Type: parser.FieldComputed, Computed: true, ComputedExpr: "quantity * unit_price"},
+		},
+	}
+	sql := db.generateCreateTable(model, nil)
+	if strings.Contains(sql, `"total"`) {
+		t.Errorf("computed field 'total' should not appear in CREATE TABLE: %s", sql)
+	}
+	if !strings.Contains(sql, `"quantity" INTEGER NOT NULL`) {
+		t.Errorf("missing quantity column in: %s", sql)
+	}
+	if !strings.Contains(sql, `"unit_price" REAL NOT NULL`) {
+		t.Errorf("missing unit_price column in: %s", sql)
+	}
+}
+
+func TestPlanExistingTableOmitsComputedFields(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	// Create initial table without computed field
+	_, err := db.conn.Exec(`CREATE TABLE "invoice" ("subtotal" REAL NOT NULL, "tax_rate" REAL NOT NULL)`)
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	model := parser.Model{
+		Name: "invoice",
+		Fields: []parser.Field{
+			{Name: "subtotal", Type: parser.FieldFloat, Required: true},
+			{Name: "tax_rate", Type: parser.FieldFloat, Required: true},
+			{Name: "total", Type: parser.FieldComputed, Computed: true, ComputedExpr: "(subtotal * tax_rate) + subtotal"},
+		},
+	}
+
+	stmts, err := db.planExistingTable(model, nil)
+	if err != nil {
+		t.Fatalf("planExistingTable: %v", err)
+	}
+	for _, stmt := range stmts {
+		if strings.Contains(stmt, `"total"`) {
+			t.Errorf("computed field 'total' should not generate ALTER TABLE: %s", stmt)
+		}
+	}
+}

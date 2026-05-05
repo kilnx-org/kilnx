@@ -61,6 +61,7 @@ func TestIsAllowedURLScheme(t *testing.T) {
 		{"#anchor", true},
 		{"", true},
 		{"invalid", true},
+		{":", false},
 	}
 	for _, tc := range tests {
 		got := isAllowedURLScheme(tc.url)

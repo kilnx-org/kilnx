@@ -368,6 +368,9 @@ func (db *DB) planExistingTable(model parser.Model, cm map[string]*parser.Custom
 	}
 
 	for _, field := range model.Fields {
+		if field.Type == parser.FieldComputed {
+			continue
+		}
 		colName := fieldToColumnName(field)
 		if !isValidIdentifier(colName) {
 			return stmts, fmt.Errorf("invalid column name: %q", colName)
@@ -445,6 +448,9 @@ func (db *DB) generateCreateTable(model parser.Model, cm map[string]*parser.Cust
 	cols = append(cols, db.dialect.AutoIncrementPK())
 
 	for _, field := range model.Fields {
+		if field.Type == parser.FieldComputed {
+			continue
+		}
 		col := db.fieldToColumnDef(field)
 		cols = append(cols, col)
 	}

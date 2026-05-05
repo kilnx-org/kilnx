@@ -172,3 +172,55 @@ func TestParseInList(t *testing.T) {
 		}
 	}
 }
+
+func TestEvalSingleAuthCondition_comparison(t *testing.T) {
+	sess := makeSession("user@example.com", "viewer", database.Row{"credits": "100", "score": "50"})
+
+	tests := []struct {
+		expr string
+		want bool
+	}{
+		{"current_user.credits > 50", true},
+		{"current_user.credits > 200", false},
+		{"current_user.credits < 200", true},
+		{"current_user.credits < 50", false},
+		{"current_user.credits >= 100", true},
+		{"current_user.credits >= 101", false},
+		{"current_user.credits <= 100", true},
+		{"current_user.credits <= 99", false},
+		{"current_user.score == 50", true},
+		{"current_user.score != 50", false},
+		{"current_user.score == '50'", true},
+		// invalid / non-numeric falls through to string comparison for ==/!=
+		{"current_user.score >= '50'", true}, // numeric comparison after stripping quotes
+	}
+
+	for _, tt := range tests {
+		got := evalSingleAuthCondition(tt.expr, sess)
+		if got != tt.want {
+			t.Errorf("evalSingleAuthCondition(%q): got %v, want %v", tt.expr, got, tt.want)
+		}
+	}
+}
+
+func TestEvalSingleAuthCondition_noOperator(t *testing.T) {
+	sess := makeSession("user@example.com", "viewer", nil)
+	// Expression without a recognizable operator
+	got := evalSingleAuthCondition("current_user.role", sess)
+	if got != false {
+		t.Errorf("expected false for expression without operator, got %v", got)
+	}
+}
+
+func TestCompareNumeric_invalid(t *testing.T) {
+	// When one or both are non-numeric, compareNumeric falls back to strings.Compare
+	if compareNumeric("abc", "10") != 1 {
+		t.Errorf("expected 1 (abc > 10 lexicographically), got %d", compareNumeric("abc", "10"))
+	}
+	if compareNumeric("10", "abc") != -1 {
+		t.Errorf("expected -1 (10 < abc lexicographically), got %d", compareNumeric("10", "abc"))
+	}
+	if compareNumeric("abc", "def") != -1 {
+		t.Errorf("expected -1 (abc < def lexicographically), got %d", compareNumeric("abc", "def"))
+	}
+}

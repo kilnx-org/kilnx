@@ -275,14 +275,27 @@ func extractFormAction(htmlContent string) string {
 }
 
 func extractCSRFFromHTML(html string) string {
+	// Try name="_csrf" value="..." first
 	idx := strings.Index(html, `name="_csrf" value="`)
-	if idx < 0 {
-		return ""
+	if idx >= 0 {
+		start := idx + len(`name="_csrf" value="`)
+		end := strings.Index(html[start:], `"`)
+		if end >= 0 {
+			return html[start : start+end]
+		}
 	}
-	start := idx + len(`name="_csrf" value="`)
-	end := strings.Index(html[start:], `"`)
-	if end < 0 {
-		return ""
+	// Try value="..." name="_csrf" (reordered attributes)
+	idx = strings.Index(html, `value="`)
+	if idx >= 0 {
+		// Check if name="_csrf" appears after this value
+		afterVal := html[idx:]
+		if strings.Contains(afterVal, `name="_csrf"`) {
+			start := idx + len(`value="`)
+			end := strings.Index(html[start:], `"`)
+			if end >= 0 {
+				return html[start : start+end]
+			}
+		}
 	}
-	return html[start : start+end]
+	return ""
 }

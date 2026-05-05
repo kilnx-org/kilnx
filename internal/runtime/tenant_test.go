@@ -287,3 +287,93 @@ func TestIsSensitiveField(t *testing.T) {
 		t.Error("explicit password column should be treated as sensitive")
 	}
 }
+
+// --- firstLine ---
+
+func TestFirstLine_Short(t *testing.T) {
+	got := firstLine("SELECT * FROM users")
+	if got != "SELECT * FROM users" {
+		t.Errorf("expected unchanged short string, got %q", got)
+	}
+}
+
+func TestFirstLine_Long(t *testing.T) {
+	long := strings.Repeat("a", 200)
+	got := firstLine(long)
+	if len(got) != 123 || !strings.HasSuffix(got, "...") {
+		t.Errorf("expected truncated long string with ..., got %q (len=%d)", got, len(got))
+	}
+}
+
+func TestFirstLine_Multiline(t *testing.T) {
+	got := firstLine("SELECT *\nFROM users\nWHERE id = 1")
+	if got != "SELECT *..." {
+		t.Errorf("expected first line + ..., got %q", got)
+	}
+}
+
+// --- checkTenantMutation ---
+
+func TestCheckTenantMutation_SubqueryRejected(t *testing.T) {
+	sql := `INSERT INTO quotes (name) VALUES ((SELECT name FROM quotes WHERE id = 1))`
+	err := checkTenantMutation(sql, stripSQLNoise(sql), TenantMap{"quote": "org"}, withTenantParam())
+	if !errors.Is(err, ErrUnsafeTenantShape) {
+		t.Errorf("expected ErrUnsafeTenantShape for subquery in mutation, got %v", err)
+	}
+}
+
+func TestCheckTenantMutation_UnparseableTouchesTenant(t *testing.T) {
+	sql := `UPDATE quote SET name = 'x'`
+	err := checkTenantMutation(sql, stripSQLNoise(sql), TenantMap{"quote": "org"}, withTenantParam())
+	if !errors.Is(err, ErrMutationNotScoped) {
+		t.Errorf("expected ErrMutationNotScoped, got %v", err)
+	}
+}
+
+func TestCheckTenantMutation_MissingParam(t *testing.T) {
+	sql := `INSERT INTO "quote" (name, org_id) VALUES ('x', :current_user.org_id)`
+	err := checkTenantMutation(sql, stripSQLNoise(sql), TenantMap{"quote": "org"}, map[string]string{})
+	if !errors.Is(err, ErrMissingTenantParam) {
+		t.Errorf("expected ErrMissingTenantParam, got %v", err)
+	}
+}
+
+func TestCheckTenantMutation_NonTenantTable(t *testing.T) {
+	sql := `INSERT INTO material (name) VALUES ('x')`
+	err := checkTenantMutation(sql, stripSQLNoise(sql), TenantMap{"quote": "org"}, withTenantParam())
+	if err != nil {
+		t.Errorf("expected nil for non-tenant table, got %v", err)
+	}
+}
+
+func TestCheckTenantMutation_NonTenantTableTouchingTenant(t *testing.T) {
+	sql := `INSERT INTO material (name) SELECT name FROM quote`
+	err := checkTenantMutation(sql, stripSQLNoise(sql), TenantMap{"quote": "org"}, withTenantParam())
+	if !errors.Is(err, ErrUnsafeTenantShape) {
+		t.Errorf("expected ErrUnsafeTenantShape when touching tenant table, got %v", err)
+	}
+}
+
+func TestCheckTenantMutation_Success(t *testing.T) {
+	sql := `INSERT INTO "quote" (name, org_id) VALUES ('x', :current_user.org_id)`
+	err := checkTenantMutation(sql, stripSQLNoise(sql), TenantMap{"quote": "org"}, withTenantParam())
+	if err != nil {
+		t.Errorf("expected nil for scoped mutation, got %v", err)
+	}
+}
+
+func TestCheckTenantMutation_UnsafeShape(t *testing.T) {
+	sql := `INSERT INTO quote (name) VALUES ('x'); DELETE FROM quote`
+	err := checkTenantMutation(sql, stripSQLNoise(sql), TenantMap{"quote": "org"}, withTenantParam())
+	if !errors.Is(err, ErrUnsafeTenantShape) {
+		t.Errorf("expected ErrUnsafeTenantShape for multi-statement, got %v", err)
+	}
+}
+
+func TestCheckTenantMutation_UnparseableNoTenant(t *testing.T) {
+	sql := `UPDATE other SET name = 'x'`
+	err := checkTenantMutation(sql, stripSQLNoise(sql), TenantMap{"quote": "org"}, withTenantParam())
+	if err != nil {
+		t.Errorf("expected nil for unparseable non-tenant mutation, got %v", err)
+	}
+}

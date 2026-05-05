@@ -244,20 +244,23 @@ const (
 	FieldJSON      FieldType = "json"
 	FieldUUID      FieldType = "uuid"
 	FieldBigInt    FieldType = "bigint"
+	FieldComputed  FieldType = "computed"
 )
 
 type Field struct {
-	Name       string
-	Type       FieldType
-	Required   bool
-	Unique     bool
-	Default    string
-	Auto       bool
-	AutoUpdate bool
-	Min        string
-	Max        string
-	Options    []string // for option type: [admin, editor, viewer]
-	Reference  string   // for reference type: model name
+	Name         string
+	Type         FieldType
+	Required     bool
+	Unique       bool
+	Default      string
+	Auto         bool
+	AutoUpdate   bool
+	Min          string
+	Max          string
+	Options      []string // for option type: [admin, editor, viewer]
+	Reference    string   // for reference type: model name
+	Computed     bool     // virtual field, not stored in DB
+	ComputedExpr string   // expression for computed field (e.g. "quantity * unit_price")
 }
 
 type Page struct {
@@ -936,6 +939,19 @@ func (p *parserState) parseField(app *App) (Field, error) {
 
 	typeName := p.advance().Value
 
+	if typeName == "computed" {
+		field.Type = FieldComputed
+		field.Computed = true
+		// Extract expression from original source line to preserve operators (*, /, +, -)
+		// that the lexer skips
+		field.ComputedExpr = p.extractComputedExprFromLine(p.current().Line)
+		// Skip remaining tokens on this line
+		for !p.isEOF() && p.current().Type != lexer.TokenNewline && p.current().Type != lexer.TokenDedent {
+			p.advance()
+		}
+		return field, nil
+	}
+
 	if lexer.IsFieldType(typeName) {
 		field.Type = FieldType(typeName)
 	} else {
@@ -1232,6 +1248,31 @@ func (p *parserState) extractSQLFromLine(lineNum int) string {
 		return strings.TrimSpace(line)
 	}
 	return strings.TrimSpace(line[idx+1:])
+}
+
+// extractComputedExprFromLine extracts the computed expression from a source line.
+// For "  total: computed quantity * unit_price", it returns "quantity * unit_price".
+func (p *parserState) extractComputedExprFromLine(lineNum int) string {
+	if lineNum < 1 || lineNum > len(p.lines) {
+		return ""
+	}
+	line := p.lines[lineNum-1]
+
+	// Search for "computed" only after the colon to avoid matching it inside
+	// the field name (e.g. "precomputed: computed a + b").
+	colonIdx := strings.Index(line, ":")
+	if colonIdx < 0 {
+		return ""
+	}
+	sub := line[colonIdx+1:]
+	idx := strings.Index(sub, "computed")
+	if idx < 0 {
+		return ""
+	}
+
+	// Get everything after "computed"
+	expr := strings.TrimSpace(sub[idx+len("computed"):])
+	return expr
 }
 
 // extractTitleFromSourceLine extracts a dynamic title expression from the source line.
