@@ -251,6 +251,50 @@ value is read from the environment at request time, never hard-coded). Query
 strings are redacted in stdout logs to avoid leaking parameters embedded in
 the URL.
 
+**Inline expressions.** `fetch` body and header values may invoke any builtin
+function (see [Builtin Functions](#builtin-functions) below). The shape
+`fn(args)` opts into expression mode; everything else stays a plain template:
+
+```kilnx
+fetch payment: POST https://api.stripe.com/v1/charges
+  header Authorization: env STRIPE_SECRET
+  header Idempotency-Key: uuid()
+  header Content-Type: application/json
+  body amount:     round(:total * 100)
+  body description: format("Order {0}", :order_id)
+  body slug:       slugify(:title)
+```
+
+## Builtin Functions
+
+Pure, deterministic functions callable from any place that resolves a value
+through the expression evaluator (currently `fetch` body and headers).
+A value enters expression mode only when it starts with `name(`; bare
+`:param`, `Bearer :token`, etc. are still plain templates.
+
+| Group   | Functions                                                                        |
+|---------|----------------------------------------------------------------------------------|
+| String  | `lower`, `upper`, `trim`, `len`, `slugify`, `replace`, `contains`, `starts`, `ends`, `format` |
+| Crypto  | `bcrypt`, `sha256`, `base64`, `unbase64`, `uuid`                                 |
+| Math    | `round`, `floor`, `ceil`, `abs`, `min`, `max`, `int`, `clamp`                    |
+| Util    | `now`, `coalesce`, `regex`, `matches`, `json_get`                                |
+
+Examples:
+
+```kilnx
+body amount:    round(:total * 100)            # numeric arithmetic
+body slug:      slugify(:title)                # "Hello World!" -> hello-world
+body password:  bcrypt(:plain)                 # cost-12 hash
+body fingerprint: sha256(:email)               # 64-char hex digest
+body request_id: uuid()                        # RFC 4122 v4
+body name:      coalesce(:nickname, :fullname, "Anonymous")
+body verified:  matches(:email, "^[^@]+@[^@]+$")
+body rating:    clamp(:score, 0, 100)
+```
+
+Functions have **no I/O, no DB, no network**: they are pure transformations.
+Stateful or side-effecting extension is reserved for the `plugin` keyword.
+
 ## Background Jobs
 
 Async work dispatched from actions and executed in the same binary.

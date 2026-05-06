@@ -485,6 +485,11 @@ connection) rolls back the implicit transaction and returns `502`. HTTP
 4xx / 5xx are not transport errors and let the action keep running so it
 can react via `on`.
 
+`body` and `header` values may invoke builtin functions
+(`round`, `slugify`, `bcrypt`, `sha256`, `uuid`, `format`, ...). The shape
+`name(args)` opts into expression mode; plain `:param` templates are
+unchanged. See `## Builtin Functions` in FEATURES.md for the full registry.
+
 ### schedule
 
 Timed tasks running inside the same binary.

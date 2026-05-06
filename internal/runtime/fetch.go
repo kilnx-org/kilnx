@@ -67,10 +67,7 @@ func executeFetch(node parser.Node, params map[string]string) ([]database.Row, i
 				continue
 			}
 		}
-		for pk, pv := range params {
-			v = strings.ReplaceAll(v, ":"+pk, pv)
-		}
-		req.Header.Set(k, v)
+		req.Header.Set(k, resolveKxValue(v, params))
 	}
 
 	resp, err := fetchClient.Do(req)
@@ -114,13 +111,7 @@ func buildRequestBody(node parser.Node, params map[string]string, wantJSON bool)
 
 	resolved := make(map[string]string, len(node.FetchBody))
 	for k, v := range node.FetchBody {
-		if strings.HasPrefix(v, ":") {
-			paramName := strings.TrimPrefix(v, ":")
-			if got, ok := params[paramName]; ok {
-				v = got
-			}
-		}
-		resolved[k] = v
+		resolved[k] = resolveKxValue(v, params)
 	}
 
 	if wantJSON {
