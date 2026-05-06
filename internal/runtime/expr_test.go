@@ -187,3 +187,29 @@ func TestResolveKxValue_FallbackOnError(t *testing.T) {
 		t.Errorf("got %q, want nope(y) (legacy substitution after eval failure)", got)
 	}
 }
+
+func TestEvalExpression_NowDefault(t *testing.T) {
+	got, err := evalExpression("now()", nil)
+	if err != nil {
+		t.Fatalf("now(): %v", err)
+	}
+	if len(got) < 19 || !(got[4] == '-' && got[7] == '-' && got[10] == 'T') {
+		t.Errorf("now() expected RFC3339-like, got %q", got)
+	}
+}
+
+func TestEvalExpression_NowFormat(t *testing.T) {
+	got, err := evalExpression(`now('YYYY-MM-DD')`, nil)
+	if err != nil {
+		t.Fatalf("now(fmt): %v", err)
+	}
+	if len(got) != 10 || got[4] != '-' || got[7] != '-' {
+		t.Errorf("now(fmt) expected YYYY-MM-DD, got %q", got)
+	}
+}
+
+func TestEvalExpression_NowTooManyArgs(t *testing.T) {
+	if _, err := evalExpression(`now('a','b')`, nil); err == nil {
+		t.Error("expected error for now with 2 args")
+	}
+}

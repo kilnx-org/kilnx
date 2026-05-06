@@ -656,3 +656,28 @@ func TestMarkStream_SumAvgMinMax(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractPathParams(t *testing.T) {
+	cases := []struct {
+		path string
+		want []string
+	}{
+		{"/users/:id", []string{"id"}},
+		{"/users/:id/posts/:slug", []string{"id", "slug"}},
+		{"/static/path", nil},
+		{"", nil},
+		{"/:tenant/:resource/:op", []string{"tenant", "resource", "op"}},
+	}
+	for _, tc := range cases {
+		got := extractPathParams(tc.path)
+		if len(got) != len(tc.want) {
+			t.Errorf("extractPathParams(%q) = %v, want %v", tc.path, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("extractPathParams(%q)[%d] = %q, want %q", tc.path, i, got[i], tc.want[i])
+			}
+		}
+	}
+}

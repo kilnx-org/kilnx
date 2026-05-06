@@ -214,3 +214,78 @@ func TestPostgresDialectColumnsSQL(t *testing.T) {
 		t.Errorf("expected table name in query, got: %s", sql)
 	}
 }
+
+func TestPostgresDialectInitStatementsEmpty(t *testing.T) {
+	if got := (PostgresDialect{}).InitStatements(); len(got) != 0 {
+		t.Errorf("expected empty init statements, got %v", got)
+	}
+}
+
+func TestPostgresDialectListTablesSQL(t *testing.T) {
+	sql := PostgresDialect{}.ListTablesSQL()
+	for _, want := range []string{"information_schema.tables", `\_kilnx\_`, `\_field\_defs`} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("expected %q in ListTablesSQL, got: %s", want, sql)
+		}
+	}
+}
+
+func TestPostgresDialectBoolLiterals(t *testing.T) {
+	d := PostgresDialect{}
+	if d.BoolTrue() != "TRUE" {
+		t.Errorf("BoolTrue = %q, want TRUE", d.BoolTrue())
+	}
+	if d.BoolFalse() != "FALSE" {
+		t.Errorf("BoolFalse = %q, want FALSE", d.BoolFalse())
+	}
+}
+
+func TestPostgresAutoUpdateTriggerDDL(t *testing.T) {
+	stmts := PostgresDialect{}.AutoUpdateTriggerDDL("posts", "updated_at")
+	if len(stmts) != 2 {
+		t.Fatalf("expected 2 stmts, got %d", len(stmts))
+	}
+	for _, want := range []string{"CREATE OR REPLACE FUNCTION", "_kilnx_upd_posts_updated_at_fn", "plpgsql"} {
+		if !strings.Contains(stmts[0], want) {
+			t.Errorf("function DDL missing %q: %s", want, stmts[0])
+		}
+	}
+	for _, want := range []string{"CREATE OR REPLACE TRIGGER", "_kilnx_upd_posts_updated_at", "BEFORE UPDATE ON \"posts\""} {
+		if !strings.Contains(stmts[1], want) {
+			t.Errorf("trigger DDL missing %q: %s", want, stmts[1])
+		}
+	}
+}
+
+func TestSqliteDialectBoolLiterals(t *testing.T) {
+	d := SqliteDialect{}
+	if d.BoolTrue() != "1" {
+		t.Errorf("BoolTrue = %q, want 1", d.BoolTrue())
+	}
+	if d.BoolFalse() != "0" {
+		t.Errorf("BoolFalse = %q, want 0", d.BoolFalse())
+	}
+}
+
+func TestSqliteAutoUpdateTriggerDDL(t *testing.T) {
+	stmts := SqliteDialect{}.AutoUpdateTriggerDDL("posts", "updated_at")
+	if len(stmts) != 1 {
+		t.Fatalf("expected 1 stmt, got %d", len(stmts))
+	}
+	for _, want := range []string{"CREATE TRIGGER IF NOT EXISTS", "_kilnx_upd_posts_updated_at", "AFTER UPDATE ON \"posts\"", "CURRENT_TIMESTAMP"} {
+		if !strings.Contains(stmts[0], want) {
+			t.Errorf("trigger DDL missing %q: %s", want, stmts[0])
+		}
+	}
+}
+
+func TestDBDialectAccessor(t *testing.T) {
+	db, err := Open("file::memory:?cache=shared")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	if _, ok := db.Dialect().(SqliteDialect); !ok {
+		t.Errorf("Dialect() = %T, want SqliteDialect", db.Dialect())
+	}
+}
