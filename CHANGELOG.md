@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ## [Unreleased]
 
+### Added
+- `fetch` results bind under the user-chosen name (`fetch payment: ...` exposes `:payment.*`); previous releases hardcoded the `fetch.` prefix, silently overwriting multiple fetches in the same action.
+- Every `fetch` exposes `:<name>.status_code` and `:<name>.ok` (true for 2xx) so actions can branch with `on payment.ok` without inspecting response shape.
+- `fetch` body is encoded as JSON (with typed numbers and booleans) when the user sets `header Content-Type: application/json`. Required by Stripe, OpenAI, and other JSON-only APIs; legacy form-urlencoded encoding remains the default.
+
+### Changed
+- Transport-level `fetch` failures (DNS, timeout, connection refused) now abort the surrounding action with `502 Bad Gateway` and roll back the implicit transaction. Jobs and schedules surface the error to the queue. HTTP 4xx / 5xx are still parsed and exposed (not treated as transport errors). Page renders continue to degrade gracefully.
+
+### Security
+- `fetch` log lines redact the URL query string so secrets passed via `:param` substitution do not leak to stdout.
+
 ## [0.1.2] - 2026-04-22
 
 ### Added

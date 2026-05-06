@@ -324,7 +324,7 @@ func TestExecuteFetch_GetJSON(t *testing.T) {
 		FetchURL:    srv.URL,
 		FetchMethod: "GET",
 	}
-	rows, err := executeFetch(node, nil)
+	rows, _, err := executeFetch(node, nil)
 	if err != nil {
 		t.Fatalf("executeFetch failed: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestExecuteFetch_PostWithBodyAndHeaders(t *testing.T) {
 		FetchBody:    map[string]string{"key": "value"},
 		FetchHeaders: map[string]string{"X-Custom": "testval"},
 	}
-	rows, err := executeFetch(node, nil)
+	rows, _, err := executeFetch(node, nil)
 	if err != nil {
 		t.Fatalf("executeFetch failed: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestExecuteFetch_UrlParams(t *testing.T) {
 		FetchURL:    srv.URL + "/users/:id",
 		FetchMethod: "GET",
 	}
-	rows, err := executeFetch(node, map[string]string{"id": "42"})
+	rows, _, err := executeFetch(node, map[string]string{"id": "42"})
 	if err != nil {
 		t.Fatalf("executeFetch failed: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestExecuteFetch_NonJSONResponse(t *testing.T) {
 		FetchURL:    srv.URL,
 		FetchMethod: "GET",
 	}
-	rows, err := executeFetch(node, nil)
+	rows, _, err := executeFetch(node, nil)
 	if err != nil {
 		t.Fatalf("executeFetch failed: %v", err)
 	}

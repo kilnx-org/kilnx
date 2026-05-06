@@ -454,6 +454,37 @@ webhook /github secret env GITHUB_SECRET
            values (:event.type, :event.body, now())
 ```
 
+### fetch
+
+Outbound HTTP from a page, action, job or schedule. Official escape hatch for
+calling external services without leaving the language.
+
+```kilnx
+action /orders/:id/charge method POST requires auth
+  fetch payment: POST https://api.stripe.com/v1/charges
+    header Authorization: env STRIPE_SECRET
+    header Content-Type: application/json
+    body amount: :total
+    body currency: usd
+  on payment.ok
+    query: update orders set charge_id = :payment.id
+           where id = :id
+    redirect /orders/:id
+  on not payment.ok
+    redirect /orders/:id/failed
+```
+
+The response JSON is flattened under the chosen name (`payment.id`,
+`payment.status`, ...). Every fetch additionally exposes
+`:<name>.status_code` and `:<name>.ok` (`"true"` for 2xx) for `on`
+branching. Set `Content-Type: application/json` to send a JSON body with
+typed numbers and booleans; otherwise the body is form-urlencoded.
+
+Inside an action a transport-level failure (DNS, timeout, refused
+connection) rolls back the implicit transaction and returns `502`. HTTP
+4xx / 5xx are not transport errors and let the action keep running so it
+can react via `on`.
+
 ### schedule
 
 Timed tasks running inside the same binary.

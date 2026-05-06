@@ -202,6 +202,55 @@ webhook /stripe secret env STRIPE_SECRET
            VALUES (:event.type, :event.body)
 ```
 
+## Outbound HTTP (`fetch`)
+
+`fetch` is the official escape hatch for talking to external services from
+inside a page, action, job or schedule. It performs an HTTP request and binds
+the parsed response under a name you choose.
+
+```kilnx
+action /orders/:id/charge method POST requires auth
+  fetch payment: POST https://api.stripe.com/v1/charges
+    header Authorization: env STRIPE_SECRET
+    header Content-Type: application/json
+    body amount: :total
+    body currency: usd
+    body live: true
+  on payment.ok
+    query: UPDATE orders SET charge_id = :payment.id
+           WHERE id = :id
+    redirect /orders/:id
+  on not payment.ok
+    redirect /orders/:id/failed
+```
+
+**Bindings exposed.** The response is flattened and bound under the chosen
+name (`payment` above): `:payment.id`, `:payment.status`, etc. Every fetch
+also binds `:<name>.status_code` (HTTP code as string) and `:<name>.ok`
+(`"true"` for 2xx, `"false"` otherwise) so `on` clauses can branch on
+success without touching response shape.
+
+**Body encoding.** When you set `header Content-Type: application/json` the
+body is encoded as a JSON object with typed numbers / booleans (`1000` stays
+a number, `true` / `false` stay booleans). Otherwise the body is
+form-urlencoded for backward compatibility.
+
+**Error semantics.**
+- Inside an action: a transport-level failure (DNS, refused, timeout)
+  rolls back the implicit transaction and returns `502 Bad Gateway`. HTTP
+  4xx / 5xx are not transport errors: the body is parsed, the status is
+  exposed, and the action proceeds — branch on `:<name>.ok` to react.
+- Inside a job or schedule: a transport-level failure aborts the run and
+  surfaces to the queue, enabling retries.
+- Inside a page render: failures are silently logged and the binding stays
+  unset so unresolved `{name.field}` tokens remain literal in the HTML
+  (graceful degradation).
+
+**Secrets.** Pass credentials via `header Authorization: env VAR_NAME` (the
+value is read from the environment at request time, never hard-coded). Query
+strings are redacted in stdout logs to avoid leaking parameters embedded in
+the URL.
+
 ## Background Jobs
 
 Async work dispatched from actions and executed in the same binary.

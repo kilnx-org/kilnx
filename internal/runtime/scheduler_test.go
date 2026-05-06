@@ -740,12 +740,18 @@ func TestExecuteNodes_Fetch(t *testing.T) {
 }
 
 func TestExecuteNodes_FetchError(t *testing.T) {
+	// Transport-level fetch failures must propagate so jobs/schedules can
+	// surface the error to the caller (and trigger retries) instead of
+	// silently committing partial work.
 	s := newTestServer(nil)
 	err := s.executeNodes([]parser.Node{
 		{Type: parser.NodeFetch, FetchURL: "http://invalid.localhost:99999", Name: "post"},
 	}, map[string]string{})
-	if err != nil {
-		t.Errorf("expected no error (logged), got %v", err)
+	if err == nil {
+		t.Fatal("expected fetch transport error to propagate, got nil")
+	}
+	if !strings.Contains(err.Error(), "post") {
+		t.Errorf("expected error to mention fetch name, got %v", err)
 	}
 }
 

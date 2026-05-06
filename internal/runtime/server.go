@@ -515,12 +515,15 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		if fetchName == "" {
 			fetchName = "_fetch"
 		}
-		rows, err := executeFetch(node, pathParams)
+		rows, status, err := executeFetch(node, pathParams)
 		if err != nil {
+			// Page render keeps degrading gracefully: leave the binding
+			// unset so unresolved `{name.field}` tokens stay literal in
+			// the rendered HTML, matching pre-hardening behavior.
 			fmt.Printf("  fetch error: %v\n", err)
 			continue
 		}
-		ctx.queries[fetchName] = rows
+		ctx.queries[fetchName] = annotateFetchRows(rows, status)
 	}
 
 	var body strings.Builder
@@ -1228,14 +1231,18 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			if fetchName == "" {
 				fetchName = "_fetch"
 			}
-			rows, err := executeFetch(node, formData)
+			rows, status, err := executeFetch(node, formData)
 			if err != nil {
-				fmt.Printf("  fetch error in action: %v\n", err)
-			} else if len(rows) > 0 {
-				for k, v := range rows[0] {
-					formData["fetch."+k] = v
+				// Transport-level failure (DNS, timeout, connection refused).
+				// Roll back the implicit transaction and 502 the caller.
+				if tx != nil {
+					tx.Rollback()
 				}
+				fmt.Printf("  fetch error in action: %v\n", err)
+				http.Error(w, "Upstream fetch failed", http.StatusBadGateway)
+				return
 			}
+			bindFetchResult(formData, fetchName, rows, status)
 
 		case parser.NodeLLM:
 			varName := node.Name

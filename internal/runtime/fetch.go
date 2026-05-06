@@ -1,12 +1,15 @@
 package runtime
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,44 +27,38 @@ var fetchClient = &http.Client{
 	},
 }
 
-// executeFetch performs an HTTP request and returns the result as query rows.
-// The response JSON is flattened into a map[string]string for template interpolation.
-func executeFetch(node parser.Node, params map[string]string) ([]database.Row, error) {
-	// Resolve URL params (:param -> value)
+var jsonNumberRe = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
+
+// executeFetch performs an HTTP request and returns the response rows plus
+// the HTTP status code. A non-nil error indicates a transport-level failure
+// (DNS, connection, timeout, body read) and should propagate to the caller
+// so the surrounding action can roll back. HTTP 4xx/5xx are NOT treated as
+// errors: the response body is parsed and the status code is returned so
+// the caller may bind `<name>.status_code` / `<name>.ok` and let the user
+// branch with `on`.
+func executeFetch(node parser.Node, params map[string]string) ([]database.Row, int, error) {
 	fetchURL := node.FetchURL
 	for k, v := range params {
 		fetchURL = strings.ReplaceAll(fetchURL, ":"+k, url.QueryEscape(v))
 	}
 
-	// Build request body for POST/PUT/PATCH
-	var bodyReader io.Reader
-	if len(node.FetchBody) > 0 && node.FetchMethod != "GET" {
-		bodyParams := url.Values{}
-		for k, v := range node.FetchBody {
-			// Resolve :param references
-			if strings.HasPrefix(v, ":") {
-				paramName := strings.TrimPrefix(v, ":")
-				if resolved, ok := params[paramName]; ok {
-					v = resolved
-				}
-			}
-			bodyParams.Set(k, v)
-		}
-		bodyReader = strings.NewReader(bodyParams.Encode())
+	wantJSON := bodyShouldBeJSON(node.FetchHeaders)
+	bodyReader, contentType, err := buildRequestBody(node, params, wantJSON)
+	if err != nil {
+		return nil, 0, fmt.Errorf("fetch %s: %w", redactURL(fetchURL), err)
 	}
 
 	req, err := http.NewRequest(node.FetchMethod, fetchURL, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", fetchURL, err)
+		return nil, 0, fmt.Errorf("fetch %s: %w", redactURL(fetchURL), err)
 	}
 
 	req.Header.Set("User-Agent", "Kilnx/1.0")
 	req.Header.Set("Accept", "application/json")
-	if bodyReader != nil {
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 
-	// Apply custom headers
 	for k, v := range node.FetchHeaders {
 		if strings.HasPrefix(v, "env:") {
 			envVar := strings.TrimPrefix(v, "env:")
@@ -70,7 +67,6 @@ func executeFetch(node parser.Node, params map[string]string) ([]database.Row, e
 				continue
 			}
 		}
-		// Resolve :param references in header values
 		for pk, pv := range params {
 			v = strings.ReplaceAll(v, ":"+pk, pv)
 		}
@@ -79,20 +75,137 @@ func executeFetch(node parser.Node, params map[string]string) ([]database.Row, e
 
 	resp, err := fetchClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetch %s %s: %w", node.FetchMethod, fetchURL, err)
+		return nil, 0, fmt.Errorf("fetch %s %s: %w", node.FetchMethod, redactURL(fetchURL), err)
 	}
 	defer resp.Body.Close()
 
-	// Read response (max 2MB)
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
-		return nil, fmt.Errorf("fetch read body: %w", err)
+		return nil, resp.StatusCode, fmt.Errorf("fetch read body: %w", err)
 	}
 
-	fmt.Printf("  fetch %s %s -> %d (%d bytes)\n", node.FetchMethod, fetchURL, resp.StatusCode, len(body))
+	fmt.Printf("  fetch %s %s -> %d (%d bytes)\n", node.FetchMethod, redactURL(fetchURL), resp.StatusCode, len(body))
 
-	// Parse JSON response into rows
-	return parseJSONResponse(body)
+	rows, err := parseJSONResponse(body)
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return rows, resp.StatusCode, nil
+}
+
+// bodyShouldBeJSON returns true if any user-supplied header has Content-Type
+// set to a JSON media type (case-insensitive).
+func bodyShouldBeJSON(headers map[string]string) bool {
+	for k, v := range headers {
+		if strings.EqualFold(k, "Content-Type") && strings.Contains(strings.ToLower(v), "application/json") {
+			return true
+		}
+	}
+	return false
+}
+
+// buildRequestBody resolves :param references in body values and encodes the
+// result either as application/json (when wantJSON) or
+// application/x-www-form-urlencoded. Returns an empty body for GET requests.
+func buildRequestBody(node parser.Node, params map[string]string, wantJSON bool) (io.Reader, string, error) {
+	if len(node.FetchBody) == 0 || node.FetchMethod == "GET" {
+		return nil, "", nil
+	}
+
+	resolved := make(map[string]string, len(node.FetchBody))
+	for k, v := range node.FetchBody {
+		if strings.HasPrefix(v, ":") {
+			paramName := strings.TrimPrefix(v, ":")
+			if got, ok := params[paramName]; ok {
+				v = got
+			}
+		}
+		resolved[k] = v
+	}
+
+	if wantJSON {
+		obj := make(map[string]any, len(resolved))
+		for k, v := range resolved {
+			obj[k] = jsonCoerce(v)
+		}
+		buf, err := json.Marshal(obj)
+		if err != nil {
+			return nil, "", fmt.Errorf("encode json body: %w", err)
+		}
+		return bytes.NewReader(buf), "application/json", nil
+	}
+
+	form := url.Values{}
+	for k, v := range resolved {
+		form.Set(k, v)
+	}
+	return strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", nil
+}
+
+// jsonCoerce tries to emit numbers/bools/null as native JSON types when the
+// value is unambiguous. Anything else stays a string. This lets users pass
+// `body amount: :total` to APIs (Stripe etc.) that require typed numbers.
+func jsonCoerce(v string) any {
+	switch v {
+	case "true":
+		return true
+	case "false":
+		return false
+	case "null":
+		return nil
+	}
+	if jsonNumberRe.MatchString(v) {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			return n
+		}
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return v
+}
+
+// redactURL strips the query string so secrets passed via :param substitution
+// do not end up in stdout/log lines.
+func redactURL(raw string) string {
+	if i := strings.Index(raw, "?"); i >= 0 {
+		return raw[:i] + "?<redacted>"
+	}
+	return raw
+}
+
+// bindFetchResult populates params with `<name>.<key>` entries from the first
+// row of the response, plus `<name>.status_code` and `<name>.ok` so users can
+// branch with `on <name>.ok` / `on <name>.status_code`.
+func bindFetchResult(params map[string]string, name string, rows []database.Row, status int) {
+	if params == nil {
+		return
+	}
+	if len(rows) > 0 {
+		for k, v := range rows[0] {
+			params[name+"."+k] = v
+		}
+	}
+	params[name+".status_code"] = strconv.Itoa(status)
+	params[name+".ok"] = boolStr(status >= 200 && status < 300)
+}
+
+// annotateFetchRows attaches status_code/ok to the first row so the result is
+// usable through renderContext.queries (page render path).
+func annotateFetchRows(rows []database.Row, status int) []database.Row {
+	if len(rows) == 0 {
+		rows = []database.Row{{}}
+	}
+	rows[0]["status_code"] = strconv.Itoa(status)
+	rows[0]["ok"] = boolStr(status >= 200 && status < 300)
+	return rows
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // parseJSONResponse converts JSON into database.Row slices for template use.
@@ -103,7 +216,6 @@ func parseJSONResponse(body []byte) ([]database.Row, error) {
 		return nil, nil
 	}
 
-	// Try array of objects first
 	var arr []map[string]interface{}
 	if err := json.Unmarshal(body, &arr); err == nil {
 		var rows []database.Row
@@ -113,13 +225,11 @@ func parseJSONResponse(body []byte) ([]database.Row, error) {
 		return rows, nil
 	}
 
-	// Try single object
 	var obj map[string]interface{}
 	if err := json.Unmarshal(body, &obj); err == nil {
 		return []database.Row{flattenJSON(obj, "")}, nil
 	}
 
-	// Fallback: wrap raw response
 	return []database.Row{{"_body": string(body)}}, nil
 }
 
@@ -138,9 +248,7 @@ func flattenJSON(obj map[string]interface{}, prefix string) database.Row {
 				row[fk] = fv
 			}
 		case []interface{}:
-			// Store array length
 			row[key+"._count"] = fmt.Sprintf("%d", len(val))
-			// Store first few items as indexed keys
 			for i, item := range val {
 				if i >= 10 {
 					break
