@@ -31,7 +31,7 @@ If set, requests over the limit are held for `delay` seconds before responding. 
 
 | | |
 |---|---|
-| **Spec last touched** | `e1d0f3f` (2026-05-08) |
-| **Source last touched** | `b2cecfb` (2026-05-08) |
+| **Spec last touched** | `5da8498` (2026-05-08) |
+| **Source last touched** | `5da8498` (2026-05-08) |
 | **Source files** | `internal/parser/parser.go` |
 

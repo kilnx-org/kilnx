@@ -10,4 +10,4 @@
 //	go generate ./...
 package parser
 
-//go:generate go run ../../cmd/kilnx-gendocs -o ../../docs/devs/reference
+//go:generate go run ../../cmd/kilnx-gendocs -o ../../docs

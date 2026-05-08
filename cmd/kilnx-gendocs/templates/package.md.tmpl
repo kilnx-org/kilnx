@@ -1,0 +1,58 @@
+# `internal/{{.Name}}`
+
+> {{.Summary}}
+
+| | |
+|---|---|
+| **Import path** | `{{.ImportPath}}` |
+{{- if .SourceSHA}}
+| **Source last touched** | `{{.SourceSHA}}` ({{.SourceDate}}) |
+{{- end}}
+{{- if .DocSHA}}
+| **Doc last touched** | `{{.DocSHA}}` ({{.DocDate}}) |
+{{- end}}
+
+{{if .Stale}}
+> **Implementation touched after doc.go.** Source changed on `{{.SourceDate}}`, but `doc.go` was last edited on `{{.DocDate}}`. The summary above may be out of date.
+{{end}}
+{{- if .Description}}
+## Overview
+
+{{.Description}}
+{{end}}
+## Files
+
+| File | Summary |
+|------|---------|
+{{range .Files}}| [`{{.Name}}`](../../../{{.Path}}) | {{if .Summary}}{{.Summary}}{{else}}_no file-level doc_{{end}} |
+{{end}}
+{{- if .Types}}
+## Types
+{{range .Types}}
+### `{{.Name}}`
+
+```go
+{{.Decl}}
+```
+{{- if .Doc}}
+
+{{.Doc}}
+{{end}}{{end}}{{end}}
+{{- if .Functions}}
+## Functions
+{{range .Functions}}
+### `{{if .Recv}}({{.Recv}}) {{end}}{{.Name}}`
+
+```go
+{{.Signature}}
+```
+{{- if .Doc}}
+
+{{.Doc}}
+{{end}}{{end}}{{end}}
+
+## Notes
+
+<!-- MANUAL-NOTES START -->
+{{if .ManualNotes}}{{.ManualNotes}}{{else}}_Add hand-written gotchas, lifecycle context, and cross-cutting concerns here. Content between the MANUAL-NOTES markers is preserved across regeneration._{{end}}
+<!-- MANUAL-NOTES END -->

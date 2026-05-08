@@ -25,5 +25,5 @@ Written `dynamic fields` (with a space) in source. Used for low-code apps where 
 
 | | |
 |---|---|
-| **Spec last touched** | `e1d0f3f` (2026-05-08) |
+| **Spec last touched** | `5da8498` (2026-05-08) |
 

@@ -25,7 +25,7 @@ Single-field unique constraint. For composite uniqueness, use a model-level `uni
 
 | | |
 |---|---|
-| **Spec last touched** | `e1d0f3f` (2026-05-08) |
-| **Source last touched** | `b2cecfb` (2026-05-08) |
+| **Spec last touched** | `5da8498` (2026-05-08) |
+| **Source last touched** | `5da8498` (2026-05-08) |
 | **Source files** | `internal/parser/parser.go` |
 
