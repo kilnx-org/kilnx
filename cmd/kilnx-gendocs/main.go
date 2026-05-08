@@ -242,7 +242,7 @@ func grepFiles(pattern string, roots []string, suffixFilter string) []string {
 			if suffixFilter != "" && !strings.HasSuffix(path, suffixFilter) {
 				return nil
 			}
-			b, err := os.ReadFile(path)
+			b, err := os.ReadFile(path) //nolint:gosec // path comes from WalkDir over the repo root; gendocs is a build-time tool, not exposed to untrusted input
 			if err != nil {
 				return nil
 			}
@@ -264,7 +264,7 @@ func gitLastTouch(paths []string) (sha, date string) {
 		return "", ""
 	}
 	args := append([]string{"-C", repoRoot, "log", "-1", "--format=%h%x09%cs", "--"}, paths...)
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", args...) //nolint:gosec // args are repo-relative paths from spec/grep, not user input; gendocs is a build-time tool
 	cmd.Stderr = nil
 	out, err := cmd.Output()
 	if err != nil {
