@@ -39,7 +39,7 @@ func Build(kilnxFile, outputPath string) error {
 
 	mainGo := generateMainGo(string(source))
 	mainPath := filepath.Join(buildDir, "main.go")
-	if err := os.WriteFile(mainPath, []byte(mainGo), 0o600); err != nil {
+	if err := os.WriteFile(mainPath, []byte(mainGo), 0o600); err != nil { //nolint:gosec // mainPath is constructed from kilnxRoot (internal lookup) joined with a literal filename, no user-controlled segment
 		return fmt.Errorf("writing main.go: %w", err)
 	}
 

@@ -32,6 +32,6 @@ Numeric fields enforce `value >= n`; string-like fields enforce length >= n. Val
 | | |
 |---|---|
 | **Spec last touched** | `e1d0f3f` (2026-05-08) |
-| **Source last touched** | `b2cecfb` (2026-05-08) |
+| **Source last touched** | `74103b0` (2026-05-08) |
 | **Source files** | `internal/parser/parser.go`, `internal/runtime/forms.go` |
 

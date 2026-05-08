@@ -8,13 +8,17 @@
 #   git commit --no-verify
 set -euo pipefail
 
-triggers='^(internal/spec/|internal/parser/.*_spec\.go$|cmd/kilnx-gendocs/)'
+# Provenance section in generated docs pulls SHAs from any internal/*.go
+# matched by the heuristic dispatch patterns, so any non-test .go file
+# under internal/ (or a gendocs change) potentially shifts a doc page.
+changed=$(git diff --cached --name-only)
+relevant=$(echo "$changed" | grep -E '^(internal/.*\.go|cmd/kilnx-gendocs/)' | grep -vE '_test\.go$' || true)
 
-if ! git diff --cached --name-only | grep -qE "$triggers"; then
+if [ -z "$relevant" ]; then
   exit 0
 fi
 
-echo "[kilnx pre-commit] spec changed, regenerating docs..."
+echo "[kilnx pre-commit] source touched, regenerating docs..."
 go generate ./... >/dev/null
 
 if git diff --quiet -- docs/devs/reference; then
