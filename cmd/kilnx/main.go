@@ -1,7 +1,6 @@
 package main
 
 import (
-	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,15 +11,10 @@ import (
 	"github.com/kilnx-org/kilnx/internal/build"
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/lexer"
-	"github.com/kilnx-org/kilnx/internal/lsp"
-	"github.com/kilnx-org/kilnx/internal/mcp"
 	"github.com/kilnx-org/kilnx/internal/optimizer"
 	"github.com/kilnx-org/kilnx/internal/parser"
 	"github.com/kilnx-org/kilnx/internal/runtime"
 )
-
-//go:embed templates/*.kilnx
-var templatesFS embed.FS
 
 var version = "dev"
 
@@ -87,20 +81,6 @@ func main() {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
-	case "lsp":
-		lsp.Serve()
-	case "mcp":
-		mcp.Serve()
-	case "init":
-		if len(os.Args) < 4 {
-			fmt.Println("Usage: kilnx init <template> <directory>")
-			fmt.Println("Templates: blog, api")
-			os.Exit(1)
-		}
-		if err := cmdInit(os.Args[2], os.Args[3]); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
-		}
 	case "version":
 		fmt.Printf("kilnx %s\n", version)
 	default:
@@ -108,42 +88,6 @@ func main() {
 		printUsage()
 		os.Exit(1)
 	}
-}
-
-func cmdInit(template, dir string) error {
-	valid := map[string]bool{"blog": true, "api": true}
-	if !valid[template] {
-		return fmt.Errorf("unknown template %q. Available: blog, api", template)
-	}
-
-	data, err := templatesFS.ReadFile("templates/" + template + ".kilnx")
-	if err != nil {
-		return fmt.Errorf("reading template: %w", err)
-	}
-
-	outPath := filepath.Join(dir, "app.kilnx")
-	if _, err := os.Stat(outPath); err == nil {
-		return fmt.Errorf("%s already exists", outPath)
-	}
-
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("creating directory: %w", err)
-	}
-
-	projectName := filepath.Base(dir)
-	content := strings.ReplaceAll(string(data), "{{PROJECT_NAME}}", projectName)
-
-	if err := os.WriteFile(outPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("writing file: %w", err)
-	}
-
-	fmt.Printf("Created %s template in %s/\n", template, dir)
-	fmt.Printf("  %s\n", outPath)
-	fmt.Println()
-	fmt.Println("Next steps:")
-	fmt.Printf("  cd %s\n", dir)
-	fmt.Println("  kilnx run app.kilnx")
-	return nil
 }
 
 func cmdCheck(filename, dbURL string) error {
@@ -623,7 +567,6 @@ func printUsage() {
 	fmt.Println("Usage: kilnx <command> [arguments]")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("  init <template> <dir>   Create a new project from a template")
 	fmt.Println("  run <file.kilnx>        Start the server (auto-migrates)")
 	fmt.Println("  check <file.kilnx>      Run static analysis")
 	fmt.Println("  build <file.kilnx> [-o] Compile to standalone binary")
@@ -632,7 +575,5 @@ func printUsage() {
 	fmt.Println("          --status        Show migration history and pending changes")
 	fmt.Println("          --allow-dataloss  Skip data-loss protection check")
 	fmt.Println("  test <file.kilnx>       Run declarative tests")
-	fmt.Println("  lsp                     Start Language Server Protocol server")
-	fmt.Println("  mcp                     Start Model Context Protocol server")
 	fmt.Println("  version                 Print version")
 }
