@@ -32,3 +32,11 @@ model order
   index (user_id, created_at)
 ```
 
+## Provenance
+
+| | |
+|---|---|
+| **Spec last touched** | `e1d0f3f` (2026-05-08) |
+| **Source last touched** | `b2cecfb` (2026-05-08) |
+| **Source files** | `internal/parser/parser.go` |
+

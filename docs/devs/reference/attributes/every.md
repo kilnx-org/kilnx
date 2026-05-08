@@ -28,3 +28,11 @@ Accepts a duration like `5s`, `1m`, `1h`, `24h` or a cron expression (in `schedu
 - [`stream`](../keywords/stream.md)
 - [`schedule`](../keywords/schedule.md)
 
+## Provenance
+
+| | |
+|---|---|
+| **Spec last touched** | `e1d0f3f` (2026-05-08) |
+| **Source last touched** | `b2cecfb` (2026-05-08) |
+| **Source files** | `internal/parser/parser.go` |
+

@@ -21,3 +21,11 @@ Typically used for `updated_at: timestamp auto_update` to track last-modified ti
 
 - [`model`](../keywords/model.md)
 
+## Provenance
+
+| | |
+|---|---|
+| **Spec last touched** | `e1d0f3f` (2026-05-08) |
+| **Source last touched** | `b2cecfb` (2026-05-08) |
+| **Source files** | `internal/parser/parser.go` |
+

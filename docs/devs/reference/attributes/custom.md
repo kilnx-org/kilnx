@@ -27,3 +27,11 @@ Resolves at parse time from a path that may contain `{placeholder}` segments.
 
 - [`model`](../keywords/model.md)
 
+## Provenance
+
+| | |
+|---|---|
+| **Spec last touched** | `e1d0f3f` (2026-05-08) |
+| **Source last touched** | `b2cecfb` (2026-05-08) |
+| **Source files** | `internal/parser/parser.go` |
+

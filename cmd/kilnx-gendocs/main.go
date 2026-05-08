@@ -11,9 +11,13 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"text/template"
+	"time"
 
 	"github.com/kilnx-org/kilnx/internal/spec"
 
@@ -25,14 +29,36 @@ import (
 //go:embed templates/*.md.tmpl
 var templatesFS embed.FS
 
+// repoRoot is the absolute path to the repo top-level. Resolved at startup
+// so provenance lookups work regardless of `go generate` working dir.
+var repoRoot string
+
 type indexCtx struct {
 	Keywords   []spec.Entity
 	Attributes []spec.Entity
 }
 
+// entityCtx wraps a spec.Entity with provenance data sourced from `git log`.
+// SpecSHA/Date track the spec file (where the entity is registered);
+// SourceSHA/Date track the implementation file(s) found heuristically by
+// grepping for `case "<name>":` and `Value == "<name>"` patterns. Stale
+// is true when source was touched after spec — a hint that Description
+// may be out of date.
+type entityCtx struct {
+	spec.Entity
+	SpecSHA     string
+	SpecDate    string
+	SourceSHA   string
+	SourceDate  string
+	SourceFiles []string
+	Stale       bool
+}
+
 func main() {
 	out := flag.String("o", "docs/devs/reference", "output directory")
 	flag.Parse()
+
+	repoRoot = resolveRepoRoot()
 
 	tmpl, err := loadTemplates()
 	if err != nil {
@@ -51,14 +77,14 @@ func main() {
 
 	for _, e := range keywords {
 		path := filepath.Join(*out, "keywords", e.Name+".md")
-		if err := render(tmpl, "keyword.md.tmpl", path, e); err != nil {
+		if err := render(tmpl, "keyword.md.tmpl", path, buildCtx(e)); err != nil {
 			log.Fatalf("render %s: %v", e.Name, err)
 		}
 		fmt.Println("wrote", path)
 	}
 	for _, e := range attributes {
 		path := filepath.Join(*out, "attributes", e.Name+".md")
-		if err := render(tmpl, "attribute.md.tmpl", path, e); err != nil {
+		if err := render(tmpl, "attribute.md.tmpl", path, buildCtx(e)); err != nil {
 			log.Fatalf("render %s: %v", e.Name, err)
 		}
 		fmt.Println("wrote", path)
@@ -70,6 +96,142 @@ func main() {
 		log.Fatalf("render index: %v", err)
 	}
 	fmt.Println("wrote", indexPath)
+}
+
+// buildCtx enriches a spec.Entity with provenance: the commit that last
+// touched its spec registration and the commit that last touched its
+// implementation source. Falls back gracefully if not run inside a git
+// checkout (so external builds still produce docs).
+func buildCtx(e spec.Entity) entityCtx {
+	ctx := entityCtx{Entity: e}
+
+	if specFile := findSpecFile(e.Name); specFile != "" {
+		if rel, err := filepath.Rel(repoRoot, specFile); err == nil {
+			specFile = rel
+		}
+		ctx.SpecSHA, ctx.SpecDate = gitLastTouch([]string{specFile})
+	}
+
+	ctx.SourceFiles = findSourceFiles(e.Name)
+	if len(ctx.SourceFiles) > 0 {
+		ctx.SourceSHA, ctx.SourceDate = gitLastTouch(ctx.SourceFiles)
+	}
+
+	if ctx.SpecDate != "" && ctx.SourceDate != "" {
+		spec, err1 := time.Parse("2006-01-02", ctx.SpecDate)
+		src, err2 := time.Parse("2006-01-02", ctx.SourceDate)
+		if err1 == nil && err2 == nil && src.After(spec) {
+			ctx.Stale = true
+		}
+	}
+
+	return ctx
+}
+
+// findSpecFile locates the *_spec.go file that registers an entity by
+// grepping for its Name field. Returns "" if not found.
+func findSpecFile(name string) string {
+	pattern := fmt.Sprintf(`Name:\s*"%s"`, regexp.QuoteMeta(name))
+	matches := grepFiles(pattern, []string{filepath.Join(repoRoot, "internal", "parser")}, "_spec.go")
+	if len(matches) == 0 {
+		return ""
+	}
+	sort.Strings(matches)
+	return matches[0]
+}
+
+// findSourceFiles locates implementation files for an entity by grepping
+// for the dispatch patterns Kilnx uses to recognize keywords:
+//   - `case "<name>":` in switch statements
+//   - `Value == "<name>"` in token comparisons
+//   - `Value: "<name>"` in struct literals
+//
+// Excludes *_test.go and *_spec.go (those describe, not implement).
+func findSourceFiles(name string) []string {
+	q := regexp.QuoteMeta(name)
+	pattern := fmt.Sprintf(`case "%s":|Value == "%s"|Value: "%s"`, q, q, q)
+	matches := grepFiles(pattern, []string{filepath.Join(repoRoot, "internal")}, "")
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if strings.HasSuffix(m, "_test.go") || strings.HasSuffix(m, "_spec.go") {
+			continue
+		}
+		rel, err := filepath.Rel(repoRoot, m)
+		if err == nil {
+			m = rel
+		}
+		out = append(out, m)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// grepFiles returns absolute repo paths of .go files in roots whose
+// content matches the regex. Pure-Go scan keeps the gendocs binary
+// independent of grep flavor.
+func grepFiles(pattern string, roots []string, suffixFilter string) []string {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, root := range roots {
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") {
+				return nil
+			}
+			if suffixFilter != "" && !strings.HasSuffix(path, suffixFilter) {
+				return nil
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			if re.Match(b) {
+				out = append(out, path)
+			}
+			return nil
+		})
+	}
+	return out
+}
+
+// gitLastTouch returns the short SHA and committer date (YYYY-MM-DD) of
+// the most recent commit that modified any of the given paths. Paths
+// may be absolute or repo-relative. Returns empty strings if git fails
+// (e.g. running outside a checkout).
+func gitLastTouch(paths []string) (sha, date string) {
+	if len(paths) == 0 || repoRoot == "" {
+		return "", ""
+	}
+	args := append([]string{"-C", repoRoot, "log", "-1", "--format=%h%x09%cs", "--"}, paths...)
+	cmd := exec.Command("git", args...)
+	cmd.Stderr = nil
+	out, err := cmd.Output()
+	if err != nil {
+		return "", ""
+	}
+	line := strings.TrimSpace(string(out))
+	parts := strings.SplitN(line, "\t", 2)
+	if len(parts) != 2 {
+		return "", ""
+	}
+	return parts[0], parts[1]
+}
+
+// resolveRepoRoot finds the repo top-level via `git rev-parse`. Falls
+// back to the current working dir if git is unavailable.
+func resolveRepoRoot() string {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err == nil {
+		return strings.TrimSpace(string(out))
+	}
+	wd, _ := os.Getwd()
+	return wd
 }
 
 func loadTemplates() (*template.Template, error) {

@@ -54,3 +54,11 @@ fragment badge(status, color="blue")
 - [`action`](action.md)
 - [`html`](../attributes/html.md)
 
+## Provenance
+
+| | |
+|---|---|
+| **Spec last touched** | `e1d0f3f` (2026-05-08) |
+| **Source last touched** | `b2cecfb` (2026-05-08) |
+| **Source files** | `internal/parser/parser.go` |
+

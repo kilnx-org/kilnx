@@ -27,3 +27,9 @@ Also accepted as `reset_password` or `reset-password`.
 
 - [`auth`](../keywords/auth.md)
 
+## Provenance
+
+| | |
+|---|---|
+| **Spec last touched** | `e1d0f3f` (2026-05-08) |
+

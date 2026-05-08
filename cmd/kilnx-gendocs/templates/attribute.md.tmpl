@@ -52,3 +52,20 @@
 
 {{range .SeeAlso}}- [`{{.}}`]({{seeAlsoPath . "attributes"}})
 {{end}}{{end}}
+{{- if or .SpecSHA .SourceSHA}}
+## Provenance
+{{if .Stale}}
+> ⚠ **Implementation touched after spec.** Source code changed on `{{.SourceDate}}`, but this entity's spec was last edited on `{{.SpecDate}}`. The description may be out of date.
+{{end}}
+| | |
+|---|---|
+{{- if .SpecSHA}}
+| **Spec last touched** | `{{.SpecSHA}}` ({{.SpecDate}}) |
+{{- end}}
+{{- if .SourceSHA}}
+| **Source last touched** | `{{.SourceSHA}}` ({{.SourceDate}}) |
+{{- end}}
+{{- if .SourceFiles}}
+| **Source files** | {{range $i, $f := .SourceFiles}}{{if $i}}, {{end}}`{{$f}}`{{end}} |
+{{- end}}
+{{end}}

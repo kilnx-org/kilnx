@@ -31,3 +31,11 @@ When used in `log`: Inside a `log` block: which requests to log. One of `all`, `
 - [`limit`](../keywords/limit.md)
 - [`log`](../keywords/log.md)
 
+## Provenance
+
+| | |
+|---|---|
+| **Spec last touched** | `e1d0f3f` (2026-05-08) |
+| **Source last touched** | `b2cecfb` (2026-05-08) |
+| **Source files** | `internal/parser/parser.go` |
+

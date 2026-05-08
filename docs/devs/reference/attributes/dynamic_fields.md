@@ -21,3 +21,9 @@ Written `dynamic fields` (with a space) in source. Used for low-code apps where 
 
 - [`model`](../keywords/model.md)
 
+## Provenance
+
+| | |
+|---|---|
+| **Spec last touched** | `e1d0f3f` (2026-05-08) |
+

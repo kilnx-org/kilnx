@@ -27,3 +27,11 @@ Typically pulled from an env var. The matching user is treated as having every r
 
 - [`auth`](../keywords/auth.md)
 
+## Provenance
+
+| | |
+|---|---|
+| **Spec last touched** | `e1d0f3f` (2026-05-08) |
+| **Source last touched** | `b2cecfb` (2026-05-08) |
+| **Source files** | `internal/parser/parser.go` |
+

@@ -17,3 +17,9 @@ slow-query: <duration>
 
 - [`log`](../keywords/log.md)
 
+## Provenance
+
+| | |
+|---|---|
+| **Spec last touched** | `e1d0f3f` (2026-05-08) |
+
