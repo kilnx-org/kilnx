@@ -1,0 +1,54 @@
+# `{{.Name}}`
+
+> {{.Summary}}
+
+| | |
+|---|---|
+| **Kind** | Attribute |
+| **Since** | `{{.Since}}` |
+{{- if .Required}}
+| **Required** | yes |
+{{- end}}
+{{- if .Repeatable}}
+| **Repeatable** | yes |
+{{- end}}
+{{- if .Default}}
+| **Default** | `{{.Default}}` |
+{{- end}}
+
+## Syntax
+
+```
+{{.Syntax}}
+```
+{{if .Args}}
+## Arguments
+
+| Name | Type | Required |
+|------|------|----------|
+{{range .Args}}| `{{.Name}}` | `{{.Type}}` | {{if .Required}}yes{{else}}no{{end}} |
+{{end}}{{end}}
+{{- if .Description}}
+## Description
+
+{{.Description}}
+{{end}}
+{{- if .ParentScope}}
+## Used in
+
+{{range .ParentScope}}- [`{{.}}`](../keywords/{{.}}.md)
+{{end}}{{end}}
+{{- if .Examples}}
+## Examples
+{{range .Examples}}
+### {{.Title}}
+
+```kilnx
+{{.Code}}
+```
+{{end}}{{end}}
+{{- if .SeeAlso}}
+## See also
+
+{{range .SeeAlso}}- [`{{.}}`]({{seeAlsoPath . "attributes"}})
+{{end}}{{end}}

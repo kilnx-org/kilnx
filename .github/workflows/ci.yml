@@ -113,6 +113,28 @@ jobs:
       - name: Check formatting (gofumpt + goimports)
         run: golangci-lint fmt --diff
 
+  validate-docs:
+    name: Validate generated docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Regenerate docs
+        run: go run ./cmd/kilnx-gendocs -o /tmp/kilnx-docs-fresh
+
+      - name: Diff against committed docs
+        run: |
+          if ! diff -r docs/devs/reference /tmp/kilnx-docs-fresh > /tmp/docs-diff.txt; then
+            echo "::error::docs/devs/reference is out of sync with internal/spec."
+            echo "Run 'go generate ./...' locally and commit the result."
+            cat /tmp/docs-diff.txt
+            exit 1
+          fi
+
   docker:
     name: Docker Build
     runs-on: ubuntu-latest

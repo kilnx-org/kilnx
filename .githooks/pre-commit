@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Kilnx pre-commit hook: regenerates reference docs when spec data changes.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# Skip ad-hoc:
+#   git commit --no-verify
+set -euo pipefail
+
+triggers='^(internal/spec/|internal/parser/.*_spec\.go$|cmd/kilnx-gendocs/)'
+
+if ! git diff --cached --name-only | grep -qE "$triggers"; then
+  exit 0
+fi
+
+echo "[kilnx pre-commit] spec changed, regenerating docs..."
+go generate ./... >/dev/null
+
+if git diff --quiet -- docs/devs/reference; then
+  exit 0
+fi
+
+echo "[kilnx pre-commit] docs/devs/reference updated, re-staging..."
+git add docs/devs/reference
