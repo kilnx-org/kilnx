@@ -55,7 +55,7 @@ func TestCLI_Check(t *testing.T) {
   html
     <h1>Hello</h1>
 `
-	if err := os.WriteFile(kilnxFile, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(kilnxFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,4 +68,3 @@ func TestCLI_Check(t *testing.T) {
 		t.Logf("check output: %s", out)
 	}
 }
-

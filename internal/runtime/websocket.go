@@ -311,13 +311,14 @@ func readWSFrame(reader *bufio.Reader) ([]byte, byte, error) {
 	masked := (header[1] & 0x80) != 0
 	length := int(header[1] & 0x7F)
 
-	if length == 126 {
+	switch length {
+	case 126:
 		ext := make([]byte, 2)
 		if _, err := io.ReadFull(reader, ext); err != nil {
 			return nil, 0, err
 		}
 		length = int(binary.BigEndian.Uint16(ext))
-	} else if length == 127 {
+	case 127:
 		ext := make([]byte, 8)
 		if _, err := io.ReadFull(reader, ext); err != nil {
 			return nil, 0, err

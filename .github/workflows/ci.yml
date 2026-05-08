@@ -104,17 +104,14 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Check formatting
-        run: |
-          UNFORMATTED=$(gofmt -l .)
-          if [ -n "$UNFORMATTED" ]; then
-            echo "Files not formatted:"
-            echo "$UNFORMATTED"
-            exit 1
-          fi
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.11.4
+          only-new-issues: true
 
-      - name: Vet
-        run: go vet ./...
+      - name: Check formatting (gofumpt + goimports)
+        run: golangci-lint fmt --diff
 
   docker:
     name: Docker Build

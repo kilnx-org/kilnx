@@ -16,9 +16,10 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // Session stores authenticated user data

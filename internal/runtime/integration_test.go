@@ -212,8 +212,8 @@ func TestSendEmailWithTemplate(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)
 
-	_ = os.MkdirAll("templates", 0755)
-	_ = os.WriteFile("templates/welcome.html", []byte("Hello {name}!"), 0644)
+	_ = os.MkdirAll("templates", 0o755)
+	_ = os.WriteFile("templates/welcome.html", []byte("Hello {name}!"), 0o644)
 
 	srv := newFakeSMTPServer(false)
 	srv.start()
@@ -249,8 +249,8 @@ func TestSendEmailWithAttachment_AllowedPath(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)
 
-	_ = os.MkdirAll("uploads", 0755)
-	_ = os.WriteFile("uploads/report.pdf", []byte("fake pdf content"), 0644)
+	_ = os.MkdirAll("uploads", 0o755)
+	_ = os.WriteFile("uploads/report.pdf", []byte("fake pdf content"), 0o644)
 
 	srv := newFakeSMTPServer(false)
 	srv.start()
@@ -288,7 +288,7 @@ func TestSendEmailWithAttachment_DisallowedPath(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)
 
-	_ = os.WriteFile("/tmp/secret.txt", []byte("secret"), 0644)
+	_ = os.WriteFile("/tmp/secret.txt", []byte("secret"), 0o644)
 	defer os.Remove("/tmp/secret.txt")
 
 	err := SendEmailWithAttachment("user@example.com", "Bad", "body", "/tmp/secret.txt")

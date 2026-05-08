@@ -2,8 +2,9 @@ package runtime
 
 import (
 	"fmt"
-	"github.com/kilnx-org/kilnx/internal/database"
 	"testing"
+
+	"github.com/kilnx-org/kilnx/internal/database"
 )
 
 func TestCheckQuery7(t *testing.T) {

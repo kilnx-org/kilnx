@@ -26,9 +26,11 @@ type ogData struct {
 	FetchedAt   time.Time
 }
 
-var ogTagRe = regexp.MustCompile(`<meta\s+(?:property|name)="(og:[^"]+|twitter:[^"]+)"\s+content="([^"]*)"`)
-var ogTagRe2 = regexp.MustCompile(`<meta\s+content="([^"]*)"\s+(?:property|name)="(og:[^"]+|twitter:[^"]+)"`)
-var titleTagRe = regexp.MustCompile(`(?i)<title[^>]*>([^<]+)</title>`)
+var (
+	ogTagRe    = regexp.MustCompile(`<meta\s+(?:property|name)="(og:[^"]+|twitter:[^"]+)"\s+content="([^"]*)"`)
+	ogTagRe2   = regexp.MustCompile(`<meta\s+content="([^"]*)"\s+(?:property|name)="(og:[^"]+|twitter:[^"]+)"`)
+	titleTagRe = regexp.MustCompile(`(?i)<title[^>]*>([^<]+)</title>`)
+)
 
 // fetchOGData fetches Open Graph metadata from a URL
 func fetchOGData(url string) *ogData {
@@ -140,12 +142,12 @@ func renderUnfurl(og *ogData) string {
 	b.WriteString(`<div style="border-left:3px solid #3f3f46;margin:6px 0;padding:8px 12px;border-radius:0 6px 6px 0;background:rgba(255,255,255,0.03);max-width:400px">`)
 
 	if og.SiteName != "" {
-		b.WriteString(fmt.Sprintf(`<div style="font-size:11px;color:#9a9b9e;margin-bottom:2px">%s</div>`, html.EscapeString(og.SiteName)))
+		fmt.Fprintf(&b, `<div style="font-size:11px;color:#9a9b9e;margin-bottom:2px">%s</div>`, html.EscapeString(og.SiteName))
 	}
 
 	if og.Title != "" {
-		b.WriteString(fmt.Sprintf(`<a href="%s" target="_blank" rel="noopener" style="color:#1d9bd1;font-size:14px;font-weight:600;text-decoration:none;display:block;margin-bottom:2px">%s</a>`,
-			html.EscapeString(og.URL), html.EscapeString(og.Title)))
+		fmt.Fprintf(&b, `<a href="%s" target="_blank" rel="noopener" style="color:#1d9bd1;font-size:14px;font-weight:600;text-decoration:none;display:block;margin-bottom:2px">%s</a>`,
+			html.EscapeString(og.URL), html.EscapeString(og.Title))
 	}
 
 	if og.Description != "" {
@@ -153,12 +155,12 @@ func renderUnfurl(og *ogData) string {
 		if len(desc) > 200 {
 			desc = desc[:200] + "..."
 		}
-		b.WriteString(fmt.Sprintf(`<div style="font-size:13px;color:#9a9b9e;line-height:1.4">%s</div>`, html.EscapeString(desc)))
+		fmt.Fprintf(&b, `<div style="font-size:13px;color:#9a9b9e;line-height:1.4">%s</div>`, html.EscapeString(desc))
 	}
 
 	if og.Image != "" {
-		b.WriteString(fmt.Sprintf(`<img src="%s" style="max-width:100%%;max-height:200px;border-radius:4px;margin-top:6px;display:block" loading="lazy">`,
-			html.EscapeString(og.Image)))
+		fmt.Fprintf(&b, `<img src="%s" style="max-width:100%%;max-height:200px;border-radius:4px;margin-top:6px;display:block" loading="lazy">`,
+			html.EscapeString(og.Image))
 	}
 
 	b.WriteString(`</div>`)

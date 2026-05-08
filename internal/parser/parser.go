@@ -2653,9 +2653,10 @@ func (p *parserState) parseRateLimit() RateLimit {
 						p.advance()
 						if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
 							val := p.advance().Value
-							if val == "minute" || val == "hour" || val == "second" {
+							switch val {
+							case "minute", "hour", "second":
 								rl.Window = val
-							} else if val == "user" || val == "ip" {
+							case "user", "ip":
 								rl.Per = val
 							}
 						}
