@@ -2,13 +2,13 @@ package runtime
 
 import (
 	"fmt"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
-	"net/http/httptest"
-	"net/url"
-	"strings"
 )
 
 func TestCheckQuery6(t *testing.T) {

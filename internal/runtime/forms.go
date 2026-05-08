@@ -426,7 +426,9 @@ func extractFormData(r *http.Request, config *parser.AppConfig) map[string]strin
 					filePath := filepath.Join(uploadsDir, fileName)
 
 					// Create uploads directory if needed
-					os.MkdirAll(uploadsDir, 0755)
+					if err := os.MkdirAll(uploadsDir, 0o750); err != nil {
+						continue
+					}
 
 					dst, err := os.Create(filePath)
 					if err != nil {

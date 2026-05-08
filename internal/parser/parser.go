@@ -9,6 +9,8 @@ import (
 	"github.com/kilnx-org/kilnx/internal/lexer"
 )
 
+// App is the root AST node holding every top-level declaration parsed
+// from a .kilnx source file.
 type App struct {
 	Models          []Model
 	Pages           []Page
@@ -32,17 +34,22 @@ type App struct {
 	CustomManifests map[string]*CustomFieldManifest // model name -> custom field definitions
 }
 
+// Test is a named scenario from a `test` block, executed as an end-to-end
+// flow against the running app.
 type Test struct {
 	Name  string
 	Steps []TestStep
 }
 
+// TestStep is a single instruction inside a Test, such as visiting a URL,
+// filling a field, or asserting a value.
 type TestStep struct {
 	Action string // "visit", "fill", "submit", "expect", "as"
 	Target string // field name, URL, or selector
 	Value  string // value to fill or expected value
 }
 
+// AppConfig holds top-level application settings from a `config` block.
 type AppConfig struct {
 	Name            string   // app display name for the topbar
 	Database        string   // env var or default path
@@ -56,6 +63,7 @@ type AppConfig struct {
 	CORSOrigins     []string // allowed CORS origins (empty = same-origin only)
 }
 
+// LogConfig configures runtime logging behaviour from a `log` block.
 type LogConfig struct {
 	Level       string // "debug", "info", "warn", "error"
 	SlowQueryMs int    // log queries slower than this (ms)
@@ -64,17 +72,22 @@ type LogConfig struct {
 	Stacktrace  bool // log errors with stacktrace
 }
 
+// Webhook is a `webhook` declaration: an HTTP endpoint that receives
+// signed events from an external service and dispatches them by name.
 type Webhook struct {
 	Path      string
 	SecretEnv string         // env var name for signature verification
 	Events    []WebhookEvent // on event handlers
 }
 
+// WebhookEvent is one `on <event>` handler inside a Webhook.
 type WebhookEvent struct {
 	Name string // e.g., "payment_intent.succeeded"
 	Body []Node // actions to execute
 }
 
+// Socket is a `socket` declaration: a bidirectional WebSocket endpoint
+// with connect, message, and disconnect handlers.
 type Socket struct {
 	Path            string
 	Auth            bool
@@ -85,6 +98,8 @@ type Socket struct {
 	OnDisconnect    []Node
 }
 
+// RateLimit is a top-level `limit` rule that throttles requests matching
+// a path pattern.
 type RateLimit struct {
 	PathPattern string // e.g., "/api/*", "/login"
 	Requests    int    // max requests
@@ -94,6 +109,8 @@ type RateLimit struct {
 	Message     string // custom message on exceeded
 }
 
+// Schedule is a `schedule` declaration: a body of nodes executed on a
+// recurring interval or cron expression.
 type Schedule struct {
 	Name         string
 	IntervalSecs int    // parsed from "every 24h", "every 1m", etc.
@@ -101,12 +118,16 @@ type Schedule struct {
 	Body         []Node // query, send email, etc.
 }
 
+// Job is a `job` declaration: an asynchronous unit of work invoked via
+// enqueue nodes.
 type Job struct {
 	Name       string
 	Body       []Node // query, send email, etc.
 	MaxRetries int    // from "retry N" declaration (default 3)
 }
 
+// Stream is a `stream` declaration: a polling SSE endpoint that re-runs
+// a SQL query on each tick and pushes results to clients.
 type Stream struct {
 	Path            string
 	Auth            bool
@@ -117,17 +138,22 @@ type Stream struct {
 	EventName       string // SSE event name (default: "message")
 }
 
+// Permission is a single role-based access rule from a `permissions` block.
 type Permission struct {
 	Role  string   // e.g., "admin", "editor", "viewer"
 	Rules []string // e.g., "all", "read post", "write post where author = current_user"
 }
 
+// Layout is a named HTML shell, referenced by Page.Layout, that wraps
+// page content with shared chrome.
 type Layout struct {
 	Name        string
 	HTMLContent string // raw HTML with {page.title}, {page.content}, {nav}
 	Queries     []Node // queries to execute when rendering the layout
 }
 
+// AuthConfig configures the built-in authentication subsystem from an
+// `auth` block. All fields have defaults if left empty.
 type AuthConfig struct {
 	Table        string // user table name (default: "user")
 	Identity     string // identity field (default: "email")
@@ -163,6 +189,8 @@ type RequiresClause struct {
 	LimitScope  string // for RateLimit: "ip", "user", "tenant"
 }
 
+// Model is a `model` declaration: a database table with typed fields,
+// optional tenant scoping, and composite indexes.
 type Model struct {
 	Name string
 	// Tenant references another model. Rows of this model are scoped to
@@ -226,8 +254,11 @@ type CustomFieldManifest struct {
 	Fields    []CustomFieldDef
 }
 
+// FieldType is the data type of a Field declared on a Model.
 type FieldType string
 
+// Field type constants used in Field.Type. Each value matches the
+// keyword written in source (e.g. `name: text required`).
 const (
 	FieldText      FieldType = "text"
 	FieldEmail     FieldType = "email"
@@ -252,6 +283,8 @@ const (
 	FieldComputed  FieldType = "computed"
 )
 
+// Field is one column on a Model, with type and optional modifiers
+// (required, unique, default, min/max, computed expression, ...).
 type Field struct {
 	Name         string
 	Type         FieldType
@@ -268,12 +301,17 @@ type Field struct {
 	ComputedExpr string   // expression for computed field (e.g. "quantity * unit_price")
 }
 
+// FragmentArg is one named argument accepted by a component-style
+// fragment (e.g. `fragment badge(status="default")`).
 type FragmentArg struct {
 	Name         string
 	HasDefault   bool   // true if `=` was provided in the source (even with empty string)
 	DefaultValue string // value when HasDefault is true; ignored otherwise
 }
 
+// Page is a routable handler. The same struct represents pages, actions,
+// fragments, and API endpoints; the field set used and the App slice it
+// lives on distinguish them.
 type Page struct {
 	Path            string
 	Layout          string
@@ -286,8 +324,12 @@ type Page struct {
 	FragmentArgs    []FragmentArg // for component fragments (e.g. fragment badge(status)); nil for path-based
 }
 
+// NodeType discriminates which kind of body statement a Node represents.
+// The active fields of Node depend on this value.
 type NodeType int
 
+// Node kinds. Each constant corresponds to a body statement keyword
+// (query, redirect, validate, ...).
 const (
 	NodeText        NodeType = iota
 	NodeQuery                // query users: select name, email from user
@@ -304,6 +346,8 @@ const (
 	NodeLLM                  // llm varname: model\n  history: SQL\n  system: prompt
 )
 
+// Node is one statement inside a Page, Action, Schedule, or similar
+// body. NodeType selects which fields are meaningful; the rest are zero.
 type Node struct {
 	Type          NodeType
 	Value         string
@@ -339,11 +383,16 @@ type Node struct {
 	LLMHistorySQL string            // for llm: SQL to fetch message history
 }
 
+// Validation is one field-level rule set inside a `validate` block.
 type Validation struct {
 	Field string
 	Rules []string // required, is email, min N, max N
 }
 
+// Parse builds an App AST from a token stream and the original source.
+// The source is retained for error context and for line-based extraction
+// of SQL, HTML, and computed expressions. A non-nil error is returned
+// when one or more parse errors are encountered.
 func Parse(tokens []lexer.Token, source string) (*App, error) {
 	lines := strings.Split(source, "\n")
 	p := &parserState{tokens: tokens, pos: 0, lines: lines}
@@ -2653,9 +2702,10 @@ func (p *parserState) parseRateLimit() RateLimit {
 						p.advance()
 						if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
 							val := p.advance().Value
-							if val == "minute" || val == "hour" || val == "second" {
+							switch val {
+							case "minute", "hour", "second":
 								rl.Window = val
-							} else if val == "user" || val == "ip" {
+							case "user", "ip":
 								rl.Per = val
 							}
 						}

@@ -50,11 +50,15 @@ var helveticaBoldWidths = [256]int{
 	611, 611, 611, 611, 611, 611, 611, 584, 611, 611, 611, 611, 611, 556, 611, 556,
 }
 
+// HelveticaMetrics holds the glyph widths for the standard PDF core font
+// Helvetica under WinAnsiEncoding.
 var HelveticaMetrics = FontMetrics{
 	Name:   "Helvetica",
 	Widths: helveticaWidths,
 }
 
+// HelveticaBoldMetrics holds the glyph widths for the standard PDF core font
+// Helvetica-Bold under WinAnsiEncoding.
 var HelveticaBoldMetrics = FontMetrics{
 	Name:   "Helvetica-Bold",
 	Widths: helveticaBoldWidths,

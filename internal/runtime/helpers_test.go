@@ -1119,8 +1119,8 @@ func TestLoadEmailTemplate(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)
 
-	os.MkdirAll("templates", 0755)
-	os.WriteFile("templates/welcome.html", []byte("Hello {name}!"), 0644)
+	os.MkdirAll("templates", 0o755)
+	os.WriteFile("templates/welcome.html", []byte("Hello {name}!"), 0o644)
 
 	got := LoadEmailTemplate("welcome", map[string]string{"name": "Alice"})
 	if got != "Hello Alice!" {
@@ -1128,7 +1128,7 @@ func TestLoadEmailTemplate(t *testing.T) {
 	}
 
 	// Escaping
-	os.WriteFile("templates/alert.html", []byte("{msg}"), 0644)
+	os.WriteFile("templates/alert.html", []byte("{msg}"), 0o644)
 	got2 := LoadEmailTemplate("alert", map[string]string{"msg": "<script>"})
 	if got2 != "&lt;script&gt;" {
 		t.Errorf("got %q, want escaped HTML", got2)
@@ -1376,7 +1376,7 @@ func TestResolveManifest_DynamicPath(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)
 
-	os.WriteFile("tenant_acme.kilnx", []byte(`field revenue: number`), 0644)
+	os.WriteFile("tenant_acme.kilnx", []byte(`field revenue: number`), 0o644)
 
 	s := &Server{}
 	model := &parser.Model{Name: "deal", CustomFieldsFile: "tenant_{:org}.kilnx"}
@@ -1435,7 +1435,7 @@ func TestResolveManifest_DynamicPath_Cached(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)
 
-	os.WriteFile("cached.kilnx", []byte(`field name: text`), 0644)
+	os.WriteFile("cached.kilnx", []byte(`field name: text`), 0o644)
 
 	s := &Server{}
 	model := &parser.Model{Name: "deal", CustomFieldsFile: "cached.kilnx"}
@@ -1773,7 +1773,7 @@ func TestResolveManifest_ParseError(t *testing.T) {
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)
 
-	os.WriteFile("bad.kilnx", []byte(`invalid content!!!`), 0644)
+	os.WriteFile("bad.kilnx", []byte(`invalid content!!!`), 0o644)
 
 	manifest := &parser.CustomFieldManifest{ModelName: "deal"}
 	s := &Server{}

@@ -104,17 +104,41 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Check formatting
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11.4
+          only-new-issues: true
+
+      - name: Check formatting (gofumpt + goimports)
+        run: golangci-lint fmt --diff
+
+  validate-docs:
+    name: Validate generated docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Regenerate docs
+        run: go run ./cmd/kilnx-gendocs -o /tmp/kilnx-docs-fresh
+
+      - name: Diff against committed docs
         run: |
-          UNFORMATTED=$(gofmt -l .)
-          if [ -n "$UNFORMATTED" ]; then
-            echo "Files not formatted:"
-            echo "$UNFORMATTED"
+          if ! diff -r docs/devs/reference /tmp/kilnx-docs-fresh > /tmp/docs-diff.txt; then
+            echo "::error::docs/devs/reference is out of sync with internal/spec."
+            echo "Run 'go generate ./...' locally and commit the result."
+            cat /tmp/docs-diff.txt
             exit 1
           fi
 
-      - name: Vet
-        run: go vet ./...
+      - name: Check for stale entity descriptions
+        run: go run ./cmd/kilnx-gendocs -check-stale -o /tmp/kilnx-docs-stale-check
 
   docker:
     name: Docker Build

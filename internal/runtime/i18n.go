@@ -12,6 +12,9 @@ type I18n struct {
 	detectLanguages bool // whether to detect language from request headers/params
 }
 
+// NewI18n returns an I18n with the given lang->key->value map. If detect is
+// true the user's language is resolved from request headers and params,
+// otherwise defaultLang is always used. Empty defaultLang falls back to "en".
 func NewI18n(translations map[string]map[string]string, defaultLang string, detect bool) *I18n {
 	if defaultLang == "" {
 		defaultLang = "en"

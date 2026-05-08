@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Kilnx pre-commit hook: regenerates reference docs when spec data changes.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+#
+# Skip ad-hoc:
+#   git commit --no-verify
+set -euo pipefail
+
+# Provenance section in generated docs pulls SHAs from any internal/*.go
+# matched by the heuristic dispatch patterns, so any non-test .go file
+# under internal/ (or a gendocs change) potentially shifts a doc page.
+changed=$(git diff --cached --name-only)
+relevant=$(echo "$changed" | grep -E '^(internal/.*\.go|cmd/kilnx-gendocs/)' | grep -vE '_test\.go$' || true)
+
+if [ -z "$relevant" ]; then
+  exit 0
+fi
+
+echo "[kilnx pre-commit] source touched, regenerating docs..."
+go generate ./... >/dev/null
+
+if git diff --quiet -- docs/devs/reference; then
+  exit 0
+fi
+
+echo "[kilnx pre-commit] docs/devs/reference updated, re-staging..."
+git add docs/devs/reference

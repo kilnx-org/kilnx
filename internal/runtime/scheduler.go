@@ -167,6 +167,8 @@ type JobQueue struct {
 	mu     sync.RWMutex
 }
 
+// NewJobQueue returns a JobQueue that knows about the job definitions in
+// server's app. Call Start to begin processing.
 func NewJobQueue(server *Server) *JobQueue {
 	jq := &JobQueue{
 		server: server,
@@ -181,6 +183,8 @@ func NewJobQueue(server *Server) *JobQueue {
 	return jq
 }
 
+// Start recovers any jobs left in the executing state from a previous run
+// and launches the background poller goroutine.
 func (jq *JobQueue) Start() {
 	jq.recoverOrphanedJobs()
 	go jq.pollQueue()

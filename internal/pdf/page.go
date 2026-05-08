@@ -6,8 +6,11 @@ type PageSize struct {
 	Height float64
 }
 
+// Predefined page sizes in points (1pt = 1/72 inch).
 var (
-	A4     = PageSize{Width: 595.28, Height: 841.89}
+	// A4 is the ISO A4 page size (210x297mm).
+	A4 = PageSize{Width: 595.28, Height: 841.89}
+	// Letter is the US Letter page size (8.5x11in).
 	Letter = PageSize{Width: 612, Height: 792}
 )
 

@@ -12,6 +12,9 @@ import (
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
+// WatchAndServe loads the Kilnx app at filename, starts the scheduler and
+// job queue, watches the source file (and its imports) for changes to
+// trigger hot reload, and serves HTTP on port. Blocks until the server exits.
 func WatchAndServe(filename string, db *database.DB, port int) error {
 	app, err := loadApp(filename)
 	if err != nil {

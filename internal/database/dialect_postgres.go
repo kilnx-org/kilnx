@@ -11,28 +11,36 @@ import (
 // PostgresDialect implements Dialect for PostgreSQL via pgx.
 type PostgresDialect struct{}
 
+// DriverName returns "pgx".
 func (PostgresDialect) DriverName() string { return "pgx" }
 
+// DSN passes the URL through unchanged; pgx accepts postgres:// URLs directly.
 func (PostgresDialect) DSN(url string) string {
 	// pgx accepts standard postgres:// URLs directly
 	return url
 }
 
+// InitStatements returns nil; PostgreSQL needs no per-connection setup.
 func (PostgresDialect) InitStatements() []string {
 	// PostgreSQL has foreign keys enabled by default and WAL is the default
 	// journal mode. No init statements needed.
 	return nil
 }
 
+// Placeholder returns "$N" for the given 1-based index.
 func (PostgresDialect) Placeholder(index int) string {
 	return fmt.Sprintf("$%d", index)
 }
 
+// TableExistsSQL returns a query that counts matching rows in
+// information_schema.tables for the public schema.
 func (PostgresDialect) TableExistsSQL() string {
 	return `SELECT COUNT(*) FROM information_schema.tables
 		WHERE table_schema = 'public' AND table_name = $1`
 }
 
+// ListTablesSQL returns a query for user tables in the public schema,
+// excluding kilnx-internal tables.
 func (PostgresDialect) ListTablesSQL() string {
 	return `SELECT table_name FROM information_schema.tables
 		WHERE table_schema = 'public'
@@ -40,6 +48,9 @@ func (PostgresDialect) ListTablesSQL() string {
 		  AND table_name NOT LIKE '\_%\_field\_defs' ESCAPE '\'`
 }
 
+// ColumnsSQL returns a query for the column names of the given public-schema
+// table, ordered by ordinal position. The table name is interpolated literally,
+// so callers must validate it.
 func (PostgresDialect) ColumnsSQL(table string) string {
 	return fmt.Sprintf(
 		`SELECT column_name FROM information_schema.columns
@@ -47,10 +58,12 @@ func (PostgresDialect) ColumnsSQL(table string) string {
 		 ORDER BY ordinal_position`, table)
 }
 
+// AutoIncrementPK returns the PostgreSQL BIGSERIAL primary key definition.
 func (PostgresDialect) AutoIncrementPK() string {
 	return "id BIGSERIAL PRIMARY KEY"
 }
 
+// FieldToSQLType maps a parser.Field type to a PostgreSQL column type.
 func (d PostgresDialect) FieldToSQLType(f parser.Field) string {
 	switch f.Type {
 	case parser.FieldText, parser.FieldEmail, parser.FieldRichtext,
@@ -81,6 +94,8 @@ func (d PostgresDialect) FieldToSQLType(f parser.Field) string {
 	}
 }
 
+// FieldToDefault returns a " DEFAULT ..." clause for the field, or "" if none.
+// Auto fields use NOW(), CURRENT_DATE, gen_random_uuid(), or FALSE depending on type.
 func (d PostgresDialect) FieldToDefault(f parser.Field) string {
 	if f.Auto && f.Type == parser.FieldTimestamp {
 		return " DEFAULT NOW()"
@@ -114,9 +129,14 @@ func (d PostgresDialect) FieldToDefault(f parser.Field) string {
 	return ""
 }
 
-func (PostgresDialect) BoolTrue() string  { return "TRUE" }
+// BoolTrue returns the SQL literal "TRUE".
+func (PostgresDialect) BoolTrue() string { return "TRUE" }
+
+// BoolFalse returns the SQL literal "FALSE".
 func (PostgresDialect) BoolFalse() string { return "FALSE" }
 
+// AutoUpdateTriggerDDL returns a CREATE FUNCTION + CREATE TRIGGER pair that sets
+// the given field to NOW() before each UPDATE on the given table.
 func (PostgresDialect) AutoUpdateTriggerDDL(table, field string) []string {
 	fnName := fmt.Sprintf("_kilnx_upd_%s_%s_fn", table, field)
 	trigName := fmt.Sprintf("_kilnx_upd_%s_%s", table, field)
@@ -132,6 +152,9 @@ func (PostgresDialect) AutoUpdateTriggerDDL(table, field string) []string {
 	}
 }
 
+// InternalTableDDL returns the CREATE TABLE IF NOT EXISTS statements for
+// kilnx-managed tables (sessions, password resets, migrations, jobs, flags,
+// rate limits) using PostgreSQL types.
 func (PostgresDialect) InternalTableDDL() []string {
 	return []string{
 		`CREATE TABLE IF NOT EXISTS _kilnx_sessions (

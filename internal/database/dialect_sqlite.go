@@ -11,14 +11,18 @@ import (
 // SqliteDialect implements Dialect for SQLite via modernc.org/sqlite.
 type SqliteDialect struct{}
 
+// DriverName returns "sqlite".
 func (SqliteDialect) DriverName() string { return "sqlite" }
 
+// DSN strips the "sqlite://" or "file:" prefix from url to get the file path.
 func (SqliteDialect) DSN(url string) string {
 	dsn := strings.TrimPrefix(url, "sqlite://")
 	dsn = strings.TrimPrefix(dsn, "file:")
 	return dsn
 }
 
+// InitStatements returns PRAGMA statements that enable WAL journaling and
+// foreign keys; both are run on every new connection.
 func (SqliteDialect) InitStatements() []string {
 	return []string{
 		"PRAGMA journal_mode=WAL",
@@ -26,12 +30,17 @@ func (SqliteDialect) InitStatements() []string {
 	}
 }
 
+// Placeholder always returns "?" for SQLite.
 func (SqliteDialect) Placeholder(_ int) string { return "?" }
 
+// TableExistsSQL returns a query that counts entries in sqlite_master
+// matching the given table name.
 func (SqliteDialect) TableExistsSQL() string {
 	return "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?"
 }
 
+// ListTablesSQL returns a query for user tables, excluding kilnx-internal
+// tables and SQLite's own metadata tables.
 func (SqliteDialect) ListTablesSQL() string {
 	return `SELECT name FROM sqlite_master
 		WHERE type='table'
@@ -40,14 +49,20 @@ func (SqliteDialect) ListTablesSQL() string {
 		  AND name NOT LIKE 'sqlite\_%' ESCAPE '\'`
 }
 
+// ColumnsSQL returns a query for column names of the given table via
+// pragma_table_info. The table name is interpolated literally; callers must
+// validate it.
 func (SqliteDialect) ColumnsSQL(table string) string {
 	return fmt.Sprintf(`SELECT name FROM pragma_table_info("%s")`, table)
 }
 
+// AutoIncrementPK returns the SQLite INTEGER PRIMARY KEY AUTOINCREMENT
+// definition.
 func (SqliteDialect) AutoIncrementPK() string {
 	return "id INTEGER PRIMARY KEY AUTOINCREMENT"
 }
 
+// FieldToSQLType maps a parser.Field type to a SQLite column type.
 func (d SqliteDialect) FieldToSQLType(f parser.Field) string {
 	switch f.Type {
 	case parser.FieldText, parser.FieldEmail, parser.FieldRichtext,
@@ -71,6 +86,9 @@ func (d SqliteDialect) FieldToSQLType(f parser.Field) string {
 	}
 }
 
+// FieldToDefault returns a " DEFAULT ..." clause for the field, or "" if none.
+// Auto fields use CURRENT_TIMESTAMP, date('now'), a synthesized UUID expression,
+// or 0, depending on type.
 func (d SqliteDialect) FieldToDefault(f parser.Field) string {
 	if f.Auto && f.Type == parser.FieldTimestamp {
 		return " DEFAULT CURRENT_TIMESTAMP"
@@ -104,9 +122,14 @@ func (d SqliteDialect) FieldToDefault(f parser.Field) string {
 	return ""
 }
 
-func (SqliteDialect) BoolTrue() string  { return "1" }
+// BoolTrue returns the SQL literal "1".
+func (SqliteDialect) BoolTrue() string { return "1" }
+
+// BoolFalse returns the SQL literal "0".
 func (SqliteDialect) BoolFalse() string { return "0" }
 
+// AutoUpdateTriggerDDL returns a CREATE TRIGGER IF NOT EXISTS statement that
+// updates the given field to CURRENT_TIMESTAMP after each UPDATE on the table.
 func (SqliteDialect) AutoUpdateTriggerDDL(table, field string) []string {
 	return []string{
 		fmt.Sprintf(
@@ -116,6 +139,9 @@ func (SqliteDialect) AutoUpdateTriggerDDL(table, field string) []string {
 	}
 }
 
+// InternalTableDDL returns the CREATE TABLE IF NOT EXISTS statements for
+// kilnx-managed tables (sessions, password resets, migrations, jobs, flags,
+// rate limits) using SQLite types.
 func (SqliteDialect) InternalTableDDL() []string {
 	return []string{
 		`CREATE TABLE IF NOT EXISTS _kilnx_sessions (

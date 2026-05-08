@@ -496,9 +496,10 @@ func findJoinClauseEnd(sql string, start int) int {
 	depth := 0
 	i := start
 	for i < len(sql) {
-		if sql[i] == '(' {
+		switch sql[i] {
+		case '(':
 			depth++
-		} else if sql[i] == ')' {
+		case ')':
 			if depth > 0 {
 				depth--
 			}

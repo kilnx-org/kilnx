@@ -141,15 +141,15 @@ func SendEmailWithAttachment(to, subject, body, attachPath string) error {
 	var msg strings.Builder
 	to = sanitizeEmailAddress(to)
 	cfg.From = sanitizeEmailAddress(cfg.From)
-	msg.WriteString(fmt.Sprintf("From: %s\r\n", cfg.From))
-	msg.WriteString(fmt.Sprintf("To: %s\r\n", to))
-	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+	fmt.Fprintf(&msg, "From: %s\r\n", cfg.From)
+	fmt.Fprintf(&msg, "To: %s\r\n", to)
+	fmt.Fprintf(&msg, "Subject: %s\r\n", subject)
 	msg.WriteString("MIME-Version: 1.0\r\n")
-	msg.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\n", boundary))
+	fmt.Fprintf(&msg, "Content-Type: multipart/mixed; boundary=\"%s\"\r\n", boundary)
 	msg.WriteString("\r\n")
 
 	// Body part
-	msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	fmt.Fprintf(&msg, "--%s\r\n", boundary)
 	msg.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
 	msg.WriteString("Content-Transfer-Encoding: 7bit\r\n")
 	msg.WriteString("\r\n")
@@ -168,15 +168,15 @@ func SendEmailWithAttachment(to, subject, body, attachPath string) error {
 		contentType = "application/pdf"
 	}
 
-	msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
-	msg.WriteString(fmt.Sprintf("Content-Type: %s; name=\"%s\"\r\n", contentType, fileName))
+	fmt.Fprintf(&msg, "--%s\r\n", boundary)
+	fmt.Fprintf(&msg, "Content-Type: %s; name=\"%s\"\r\n", contentType, fileName)
 	msg.WriteString("Content-Transfer-Encoding: base64\r\n")
-	msg.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=\"%s\"\r\n", fileName))
+	fmt.Fprintf(&msg, "Content-Disposition: attachment; filename=\"%s\"\r\n", fileName)
 	msg.WriteString("\r\n")
 	msg.WriteString(base64.StdEncoding.EncodeToString(fileData))
 	msg.WriteString("\r\n")
 
-	msg.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+	fmt.Fprintf(&msg, "--%s--\r\n", boundary)
 
 	addr := cfg.Host + ":" + cfg.Port
 

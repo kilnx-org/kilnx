@@ -127,7 +127,7 @@ func renderSSERows(rows []database.Row) string {
 	for _, row := range rows {
 		b.WriteString("<div class=\"kilnx-sse-item\">")
 		for _, val := range row {
-			b.WriteString(fmt.Sprintf("<span>%s</span> ", html.EscapeString(val)))
+			fmt.Fprintf(&b, "<span>%s</span> ", html.EscapeString(val))
 		}
 		b.WriteString("</div>")
 	}

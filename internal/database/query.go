@@ -8,7 +8,9 @@ import (
 	"time"
 )
 
-// Row is a single result row as a map of column name to string value
+// Row is a single result row as a map of column name to string value.
+// All values are stringified via fmt for uniform consumption by the runtime;
+// NULL columns become "".
 type Row map[string]string
 
 // QueryRows executes a SELECT query and returns all rows as maps

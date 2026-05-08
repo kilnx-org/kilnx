@@ -652,9 +652,10 @@ func splitLogical(condition, keyword string) []string {
 	for i := 0; i < len(condition); i++ {
 		c := condition[i]
 		if c == '"' || c == '\'' {
-			if inQuote == 0 {
+			switch inQuote {
+			case 0:
 				inQuote = c
-			} else if inQuote == c {
+			case c:
 				inQuote = 0
 			}
 			continue
@@ -731,9 +732,10 @@ func splitCondition(condition string) (string, string, string) {
 	for i := 0; i < len(condition); i++ {
 		c := condition[i]
 		if c == '"' || c == '\'' {
-			if inQuote == 0 {
+			switch inQuote {
+			case 0:
 				inQuote = c
-			} else if inQuote == c {
+			case c:
 				inQuote = 0
 			}
 			continue
@@ -1438,7 +1440,7 @@ func expandPluralization(content string, ctx *renderContext, params map[string]s
 			}
 			mod10 := n % 10
 			mod100 := n % 100
-			isFew := mod10 >= 3 && mod10 <= 6 && !(mod100 >= 13 && mod100 <= 16)
+			isFew := mod10 >= 3 && mod10 <= 6 && (mod100 < 13 || mod100 > 16)
 			isMany := mod10 == 0 || (mod10 >= 5 && mod10 <= 9) || (mod100 >= 11 && mod100 <= 14)
 			for _, part := range splitPluralSpec(pluralSpec) {
 				part = strings.TrimSpace(part)

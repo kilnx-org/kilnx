@@ -17,6 +17,8 @@ type Logger struct {
 	config *parser.LogConfig
 }
 
+// NewLogger returns a Logger using config, falling back to sensible defaults
+// (info level, 100ms slow-query threshold, errors logged) when config is nil.
 func NewLogger(config *parser.LogConfig) *Logger {
 	if config == nil {
 		config = &parser.LogConfig{
@@ -101,6 +103,8 @@ type loggingResponseWriter struct {
 	statusCode int
 }
 
+// WriteHeader records the status code so LoggingMiddleware can report it,
+// then forwards to the underlying ResponseWriter.
 func (lw *loggingResponseWriter) WriteHeader(code int) {
 	lw.statusCode = code
 	lw.ResponseWriter.WriteHeader(code)

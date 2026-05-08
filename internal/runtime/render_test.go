@@ -769,7 +769,6 @@ func TestGoDateFormat_HMS(t *testing.T) {
 	if got != "15:04:05" {
 		t.Errorf("expected 15:04:05, got %q", got)
 	}
-
 }
 
 func TestGoDateFormat_Full(t *testing.T) {

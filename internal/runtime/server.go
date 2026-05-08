@@ -23,6 +23,10 @@ var staticFS embed.FS
 
 var interpolateRe = regexp.MustCompile(`\{(\^*[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}`)
 
+// Server is the runtime HTTP server hosting a parsed Kilnx App. It owns the
+// database executor, session store, job queue, rate limiter, logger and
+// i18n table, and routes requests to page, action, fragment and API
+// handlers.
 type Server struct {
 	app                *parser.App
 	db                 database.Executor
@@ -41,6 +45,9 @@ type Server struct {
 	scheduleStop       chan struct{}
 }
 
+// NewServer wires app and db into a Server listening on port. It builds the
+// session store, job queue, rate limiter, logger, tenant map, fragment
+// component index and i18n table from app's config.
 func NewServer(app *parser.App, db database.Executor, port int) *Server {
 	secret := ""
 	if app.Config != nil {
@@ -85,6 +92,8 @@ func NewServer(app *parser.App, db database.Executor, port int) *Server {
 	return s
 }
 
+// Reload swaps in a newly parsed app for hot-reload, refreshing superuser
+// identity and the fragment component index under the server's write lock.
 func (s *Server) Reload(app *parser.App) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -104,6 +113,7 @@ func (s *Server) Reload(app *parser.App) {
 	s.fragmentComponents = fragmentComponents
 }
 
+// StartJobQueue starts the background job queue poller.
 func (s *Server) StartJobQueue() {
 	s.jobQueue.Start()
 }
@@ -114,6 +124,8 @@ func (s *Server) getApp() *parser.App {
 	return s.app
 }
 
+// Start binds the HTTP listener and serves the request mux wrapped with the
+// logging middleware. It blocks until the listener returns.
 func (s *Server) Start() error {
 	mux := s.buildHandler()
 	addr := fmt.Sprintf(":%d", s.port)
@@ -539,7 +551,7 @@ func (s *Server) renderPage(p parser.Page, allPages []parser.Page, r *http.Reque
 		case parser.NodeText:
 			text := s.i18n.TranslateAll(node.Value, r)
 			text = interpolate(text, ctx)
-			body.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
+			fmt.Fprintf(&body, "<p>%s</p>\n", html.EscapeString(text))
 		}
 	}
 
@@ -689,7 +701,7 @@ func renderNav(pages []parser.Page, currentPath string, session *Session, appNam
 	nav.WriteString("  <header class=\"kilnx-topbar\">\n")
 	nav.WriteString("    <div class=\"kilnx-topbar-left\">\n")
 	if appName != "" {
-		nav.WriteString(fmt.Sprintf("      <span class=\"kilnx-app-name\">%s</span>\n", html.EscapeString(appName)))
+		fmt.Fprintf(&nav, "      <span class=\"kilnx-app-name\">%s</span>\n", html.EscapeString(appName))
 	}
 	nav.WriteString("      <nav class=\"kilnx-nav\">\n")
 	for _, p := range pages {
@@ -714,17 +726,17 @@ func renderNav(pages []parser.Page, currentPath string, session *Session, appNam
 				label = strings.ToUpper(label[:1]) + label[1:]
 			}
 		}
-		nav.WriteString(fmt.Sprintf("        <a href=\"%s\"%s>%s</a>\n", p.Path, class, html.EscapeString(label)))
+		fmt.Fprintf(&nav, "        <a href=\"%s\"%s>%s</a>\n", p.Path, class, html.EscapeString(label))
 	}
 	nav.WriteString("      </nav>\n")
 	nav.WriteString("    </div>\n")
 	// Auth links
 	if session != nil {
 		nav.WriteString("    <div class=\"kilnx-topbar-right\">\n")
-		nav.WriteString(fmt.Sprintf("      <span class=\"kilnx-user\">%s</span>\n",
-			html.EscapeString(session.Identity)))
+		fmt.Fprintf(&nav, "      <span class=\"kilnx-user\">%s</span>\n",
+			html.EscapeString(session.Identity))
 		csrf := generateCSRFToken()
-		nav.WriteString(fmt.Sprintf("      <form method=\"POST\" action=\"%s\" style=\"display:inline;margin:0\"><input type=\"hidden\" name=\"_csrf\" value=\"%s\"><button type=\"submit\" class=\"kilnx-logout\">Logout</button></form>\n", html.EscapeString(logoutPath), csrf))
+		fmt.Fprintf(&nav, "      <form method=\"POST\" action=\"%s\" style=\"display:inline;margin:0\"><input type=\"hidden\" name=\"_csrf\" value=\"%s\"><button type=\"submit\" class=\"kilnx-logout\">Logout</button></form>\n", html.EscapeString(logoutPath), csrf)
 		nav.WriteString("    </div>\n")
 	}
 	nav.WriteString("  </header>\n")
@@ -868,7 +880,7 @@ func (s *Server) renderFragment(frag parser.Page, r *http.Request) string {
 		case parser.NodeText:
 			text := s.i18n.TranslateAll(node.Value, r)
 			text = interpolate(text, ctx)
-			body.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
+			fmt.Fprintf(&body, "<p>%s</p>\n", html.EscapeString(text))
 
 		case parser.NodeHTML:
 			htmlContent := s.i18n.TranslateAll(node.HTMLContent, r)
@@ -942,7 +954,7 @@ func (s *Server) renderFragmentWithParams(frag parser.Page, params map[string]st
 
 		case parser.NodeText:
 			text := interpolate(node.Value, ctx)
-			body.WriteString(fmt.Sprintf("<p>%s</p>\n", html.EscapeString(text)))
+			fmt.Fprintf(&body, "<p>%s</p>\n", html.EscapeString(text))
 
 		case parser.NodeHTML:
 			htmlContent := renderHTML(node.HTMLContent, ctx)
@@ -1005,7 +1017,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 						w.WriteHeader(http.StatusUnprocessableEntity)
 						var errorHTML strings.Builder
 						for _, e := range errors {
-							errorHTML.WriteString(fmt.Sprintf("<div class=\"kilnx-alert kilnx-alert-error\">%s</div>", html.EscapeString(e)))
+							fmt.Fprintf(&errorHTML, "<div class=\"kilnx-alert kilnx-alert-error\">%s</div>", html.EscapeString(e))
 						}
 						w.Write([]byte(errorHTML.String()))
 						return // tx.Rollback via defer
@@ -1023,7 +1035,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				}
 				var errorHTML strings.Builder
 				for _, e := range errors {
-					errorHTML.WriteString(fmt.Sprintf("<div class=\"kilnx-alert kilnx-alert-error\">%s</div>", html.EscapeString(e)))
+					fmt.Fprintf(&errorHTML, "<div class=\"kilnx-alert kilnx-alert-error\">%s</div>", html.EscapeString(e))
 				}
 				w.Write([]byte(errorHTML.String()))
 				return // tx.Rollback via defer
@@ -1452,7 +1464,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				result.WriteString("{{each _result}}")
 				for _, row := range rows {
 					for key := range row {
-						result.WriteString(fmt.Sprintf("<span class=\"%s\">{%s}</span> ", key, key))
+						fmt.Fprintf(&result, "<span class=\"%s\">{%s}</span> ", key, key)
 					}
 					break // only need first row for template structure
 				}
@@ -1592,7 +1604,7 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 				w.WriteHeader(http.StatusUnprocessableEntity)
 				var errorHTML strings.Builder
 				for _, e := range errors {
-					errorHTML.WriteString(fmt.Sprintf("<div class=\"kilnx-alert kilnx-alert-error\">%s</div>", html.EscapeString(e)))
+					fmt.Fprintf(&errorHTML, "<div class=\"kilnx-alert kilnx-alert-error\">%s</div>", html.EscapeString(e))
 				}
 				w.Write([]byte(errorHTML.String()))
 				return
@@ -1743,13 +1755,13 @@ func (s *Server) resolveManifest(model *parser.Model, app *parser.App, session *
 	if model.CustomFieldsFile != "" {
 		if !strings.Contains(model.CustomFieldsFile, "{") {
 			// Static path: already loaded into app.CustomManifests at startup
-			base, _ = app.CustomManifests[model.Name]
+			base = app.CustomManifests[model.Name]
 		} else {
 			// Dynamic path: resolve placeholder and load on demand
 			resolved := resolveTenantPlaceholder(model.CustomFieldsFile, session, pathParams, r)
 			if resolved == "" || strings.Contains(resolved, "{") {
 				// Placeholder couldn't be resolved; fall back to static manifest
-				base, _ = app.CustomManifests[model.Name]
+				base = app.CustomManifests[model.Name]
 			} else if strings.HasSuffix(resolved, ".kilnx") && !strings.Contains(resolved, "..") {
 				if cached, ok := s.manifestCache.Load(resolved); ok {
 					base = cached.(*parser.CustomFieldManifest)
@@ -1757,7 +1769,7 @@ func (s *Server) resolveManifest(model *parser.Model, app *parser.App, session *
 					raw, err := os.ReadFile(resolved)
 					if err != nil {
 						if model.CustomFieldsFallback != "" && !strings.Contains(model.CustomFieldsFallback, "{") {
-							base, _ = app.CustomManifests[model.Name]
+							base = app.CustomManifests[model.Name]
 						}
 					} else {
 						m, err := parser.ParseManifest(string(raw), model.Name)

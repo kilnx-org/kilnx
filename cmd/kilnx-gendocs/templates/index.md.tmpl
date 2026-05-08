@@ -1,0 +1,17 @@
+# Reference
+
+Generated from `internal/spec/entities.go`. Do not edit by hand.
+
+## Keywords
+
+| Name | Summary |
+|------|---------|
+{{range .Keywords}}| [`{{.Name}}`](keywords/{{.Name}}.md) | {{.Summary}} |
+{{end}}
+
+## Attributes
+
+| Name | Summary | Used in |
+|------|---------|---------|
+{{range .Attributes}}| [`{{.Name}}`](attributes/{{.Name}}.md) | {{.Summary}} | {{range $i, $p := .ParentScope}}{{if $i}}, {{end}}`{{$p}}`{{end}} |
+{{end}}

@@ -32,12 +32,14 @@ func Build(kilnxFile, outputPath string) error {
 
 	// Create a temporary build entry point inside the kilnx tree
 	buildDir := filepath.Join(kilnxRoot, "cmd", "_build")
-	os.MkdirAll(buildDir, 0755)
+	if err := os.MkdirAll(buildDir, 0o750); err != nil {
+		return fmt.Errorf("creating build dir: %w", err)
+	}
 	defer os.RemoveAll(buildDir)
 
 	mainGo := generateMainGo(string(source))
 	mainPath := filepath.Join(buildDir, "main.go")
-	if err := os.WriteFile(mainPath, []byte(mainGo), 0644); err != nil {
+	if err := os.WriteFile(mainPath, []byte(mainGo), 0o600); err != nil { //nolint:gosec // mainPath is constructed from kilnxRoot (internal lookup) joined with a literal filename, no user-controlled segment
 		return fmt.Errorf("writing main.go: %w", err)
 	}
 
