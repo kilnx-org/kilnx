@@ -100,24 +100,36 @@ func buildPackageCtx(name, outDir string) (packageCtx, error) {
 	importPath := "github.com/kilnx-org/kilnx/internal/" + name
 
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, pkgDir, func(fi os.FileInfo) bool {
-		n := fi.Name()
-		return strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go")
-	}, parser.ParseComments)
+	entries, err := os.ReadDir(pkgDir)
 	if err != nil {
-		return packageCtx{}, fmt.Errorf("parse: %w", err)
+		return packageCtx{}, fmt.Errorf("read dir: %w", err)
 	}
-	if len(pkgs) == 0 {
+	var files []*ast.File
+	filePaths := map[*ast.File]string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		n := e.Name()
+		if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		abs := filepath.Join(pkgDir, n)
+		f, err := parser.ParseFile(fset, abs, nil, parser.ParseComments)
+		if err != nil {
+			return packageCtx{}, fmt.Errorf("parse %s: %w", n, err)
+		}
+		files = append(files, f)
+		filePaths[f] = abs
+	}
+	if len(files) == 0 {
 		return packageCtx{}, fmt.Errorf("no go files in %s", pkgDir)
 	}
 
-	var astPkg *ast.Package
-	for _, p := range pkgs {
-		astPkg = p
-		break
+	docPkg, err := doc.NewFromFiles(fset, files, importPath, doc.AllDecls)
+	if err != nil {
+		return packageCtx{}, fmt.Errorf("doc: %w", err)
 	}
-
-	docPkg := doc.New(astPkg, importPath, doc.AllDecls)
 
 	ctx := packageCtx{
 		Name:       name,
@@ -126,7 +138,7 @@ func buildPackageCtx(name, outDir string) (packageCtx, error) {
 	}
 	ctx.Description = paragraphsAfterFirst(docPkg.Doc)
 
-	ctx.Files = collectFiles(astPkg, fset)
+	ctx.Files = collectFiles(files, filePaths)
 	ctx.Types = collectTypes(docPkg, fset)
 	ctx.Functions = collectFuncs(docPkg, fset)
 
@@ -157,9 +169,10 @@ func buildPackageCtx(name, outDir string) (packageCtx, error) {
 	return ctx, nil
 }
 
-func collectFiles(pkg *ast.Package, fset *token.FileSet) []fileSummary {
+func collectFiles(files []*ast.File, paths map[*ast.File]string) []fileSummary {
 	var out []fileSummary
-	for absPath, file := range pkg.Files {
+	for _, file := range files {
+		absPath := paths[file]
 		base := filepath.Base(absPath)
 		if base == "doc.go" {
 			continue
