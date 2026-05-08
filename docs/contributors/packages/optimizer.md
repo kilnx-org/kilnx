@@ -6,7 +6,7 @@
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/optimizer` |
 | **Source last touched** | `5da8498` (2026-05-08) |
-| **Doc last touched** | `d2d0978` (2026-05-08) |
+| **Doc last touched** | `4479336` (2026-05-08) |
 
 
 ## Overview
