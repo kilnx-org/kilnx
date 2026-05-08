@@ -1,0 +1,29 @@
+# `min`
+
+> Minimum value (numeric) or length (string).
+
+| | |
+|---|---|
+| **Kind** | Attribute |
+| **Since** | `0.1.0` |
+
+## Syntax
+
+```
+<field>: <type> min <n>
+```
+
+## Arguments
+
+| Name | Type | Required |
+|------|------|----------|
+| `n` | `int` | yes |
+
+## Description
+
+Numeric fields enforce `value >= n`; string-like fields enforce length >= n. Validation happens at `validate` time and at the runtime layer.
+
+## Used in
+
+- [`model`](../keywords/model.md)
+

@@ -56,28 +56,6 @@ func init() {
 	})
 
 	spec.Register(spec.Entity{
-		Name:        "layout",
-		Kind:        spec.KindAttribute,
-		Summary:     "Render the page inside a named layout.",
-		Description: "References a top-level `layout` block by name. The page's HTML is rendered inside the layout's `{{ content }}` slot.",
-		Syntax:      "layout <name>",
-		Args: []spec.Arg{
-			{Name: "name", Type: "identifier", Required: true},
-		},
-		ParentScope: []string{"page"},
-		Since:       "0.1.0",
-		Examples: []spec.Example{
-			{
-				Title: "Use the app layout",
-				Code: `page /dashboard layout app
-  html
-    <h1>Dashboard</h1>`,
-			},
-		},
-		SeeAlso: []string{"title"},
-	})
-
-	spec.Register(spec.Entity{
 		Name:        "title",
 		Kind:        spec.KindAttribute,
 		Summary:     "Set the HTML document title.",

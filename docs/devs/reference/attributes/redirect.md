@@ -39,5 +39,5 @@ action /logout method POST
 
 ## See also
 
-- [`action`](action.md)
+- [`action`](../keywords/action.md)
 

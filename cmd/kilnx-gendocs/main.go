@@ -74,7 +74,8 @@ func main() {
 
 func loadTemplates() (*template.Template, error) {
 	t := template.New("").Funcs(template.FuncMap{
-		"seeAlsoPath": seeAlsoPath,
+		"seeAlsoPath": seeAlsoPath, // alias for back-compat in templates
+		"entityPath":  seeAlsoPath,
 	})
 	entries, err := fs.ReadDir(templatesFS, "templates")
 	if err != nil {

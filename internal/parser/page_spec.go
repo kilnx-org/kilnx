@@ -19,7 +19,7 @@ func init() {
 		Args: []spec.Arg{
 			{Name: "path", Type: "path", Required: true},
 		},
-		Children:   []string{"method", "requires", "layout", "title", "redirect"},
+		Children:   []string{"method", "requires", "title", "redirect"},
 		Repeatable: true,
 		Since:      "0.1.0",
 		Examples: []spec.Example{
@@ -37,6 +37,6 @@ func init() {
     <h1>{{ .user_count }} users</h1>`,
 			},
 		},
-		SeeAlso: []string{"action", "fragment", "api", "layout"},
+		SeeAlso: []string{"action", "fragment", "api", "layout", "stream"},
 	})
 }

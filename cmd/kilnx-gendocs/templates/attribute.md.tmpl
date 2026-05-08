@@ -36,7 +36,7 @@
 {{- if .ParentScope}}
 ## Used in
 
-{{range .ParentScope}}- [`{{.}}`](../keywords/{{.}}.md)
+{{range .ParentScope}}- [`{{.}}`]({{entityPath . "attributes"}})
 {{end}}{{end}}
 {{- if .Examples}}
 ## Examples

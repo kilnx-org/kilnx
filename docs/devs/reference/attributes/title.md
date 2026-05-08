@@ -39,5 +39,5 @@ page / title "Home"
 
 ## See also
 
-- [`layout`](layout.md)
+- [`layout`](../keywords/layout.md)
 

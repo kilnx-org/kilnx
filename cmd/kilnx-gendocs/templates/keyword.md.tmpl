@@ -28,9 +28,9 @@
 {{.Description}}
 {{end}}
 {{- if .Children}}
-## Attributes
+## Children
 
-{{range .Children}}- [`{{.}}`](../attributes/{{.}}.md)
+{{range .Children}}- [`{{.}}`]({{entityPath . "keywords"}})
 {{end}}{{end}}
 {{- if .Examples}}
 ## Examples

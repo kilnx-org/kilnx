@@ -25,20 +25,15 @@ func TestSpec_RequiredFields(t *testing.T) {
 	}
 }
 
-func TestSpec_ChildrenExistAsAttributes(t *testing.T) {
+func TestSpec_ChildrenAreRegistered(t *testing.T) {
 	all := spec.All()
 	for name, e := range all {
 		if e.Kind != spec.KindKeyword {
 			continue
 		}
 		for _, child := range e.Children {
-			c, ok := all[child]
-			if !ok {
+			if _, ok := all[child]; !ok {
 				t.Errorf("%s: child %q is not registered", name, child)
-				continue
-			}
-			if c.Kind != spec.KindAttribute {
-				t.Errorf("%s: child %q must be an attribute, got %s", name, child, c.Kind)
 			}
 		}
 	}
@@ -63,42 +58,18 @@ func TestSpec_ParentScopeExistsAsKeyword(t *testing.T) {
 	}
 }
 
-func TestSpec_AttributeReverseConsistency(t *testing.T) {
-	all := spec.All()
-	for name, attr := range all {
-		if attr.Kind != spec.KindAttribute {
-			continue
-		}
-		for _, parentName := range attr.ParentScope {
-			parent, ok := all[parentName]
-			if !ok {
-				continue
-			}
-			found := false
-			for _, child := range parent.Children {
-				if child == name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("attribute %q lists %q in ParentScope, but %q.Children does not include %q",
-					name, parentName, parentName, name)
-			}
-		}
-	}
-}
-
-func TestSpec_PageHasExpectedChildren(t *testing.T) {
+// Page must surface its direct sub-fields as children. Body nodes (html,
+// query, etc.) reach page via ParentScope and are unioned in by ChildrenOf,
+// so we only assert the direct attrs here.
+func TestSpec_PageHasDirectChildren(t *testing.T) {
 	children := spec.ChildrenOf("page")
-	want := map[string]bool{"method": true, "requires": true, "layout": true, "title": true, "redirect": true}
+	got := map[string]bool{}
 	for _, c := range children {
-		if !want[c.Name] {
-			t.Errorf("unexpected child of page: %q", c.Name)
-		}
-		delete(want, c.Name)
+		got[c.Name] = true
 	}
-	for missing := range want {
-		t.Errorf("missing expected child of page: %q", missing)
+	for _, want := range []string{"method", "requires", "title", "redirect"} {
+		if !got[want] {
+			t.Errorf("page is missing expected child %q", want)
+		}
 	}
 }

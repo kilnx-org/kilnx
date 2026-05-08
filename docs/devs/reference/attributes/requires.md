@@ -47,5 +47,5 @@ page /admin requires admin
 ## See also
 
 - [`method`](method.md)
-- [`permissions`](permissions.md)
+- [`permissions`](../keywords/permissions.md)
 

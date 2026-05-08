@@ -24,11 +24,10 @@ page <path> [layout <name>] [title <text>] [requires <clause>] [method <verb>]
 
 A `page` declares a URL path that the Kilnx runtime serves over HTTP. Its body contains the rendered view (HTML, fragments) and optional data-loading directives (queries, redirects, validations).
 
-## Attributes
+## Children
 
 - [`method`](../attributes/method.md)
 - [`requires`](../attributes/requires.md)
-- [`layout`](../attributes/layout.md)
 - [`title`](../attributes/title.md)
 - [`redirect`](../attributes/redirect.md)
 
@@ -56,5 +55,6 @@ page /dashboard layout app title "Dashboard" requires auth
 - [`action`](action.md)
 - [`fragment`](fragment.md)
 - [`api`](api.md)
-- [`layout`](../attributes/layout.md)
+- [`layout`](layout.md)
+- [`stream`](stream.md)
 
