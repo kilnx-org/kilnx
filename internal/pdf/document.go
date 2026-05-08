@@ -1,6 +1,7 @@
 package pdf
 
-// Document represents a PDF document being built
+// Document is a minimal PDF builder (no external deps). Build a document by
+// adding pages via [Document.AddPage] and serialize it with [Document.Render].
 type Document struct {
 	title    string
 	footer   string

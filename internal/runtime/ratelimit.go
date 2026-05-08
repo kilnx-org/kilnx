@@ -14,6 +14,9 @@ type rateLimitEntry struct {
 	expiresAt time.Time
 }
 
+// RateLimiter applies path-scoped fixed-window rate limits keyed by IP or
+// user. Entries expire on a background sweep; auth endpoints get sane
+// defaults when the developer hasn't configured them.
 type RateLimiter struct {
 	mu      sync.Mutex
 	entries map[string]*rateLimitEntry
@@ -30,6 +33,9 @@ var defaultAuthRateLimits = []parser.RateLimit{
 	{PathPattern: "/forgot-password", Requests: 10, Window: "minute", Per: "ip", Message: "Too many password reset attempts"},
 }
 
+// NewRateLimiter returns a RateLimiter applying rules plus implicit defaults
+// for auth endpoints (login, register, forgot-password) and starts a
+// background goroutine that prunes expired entries.
 func NewRateLimiter(rules []parser.RateLimit) *RateLimiter {
 	rl := &RateLimiter{
 		entries: make(map[string]*rateLimitEntry),

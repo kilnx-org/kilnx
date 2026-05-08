@@ -5,6 +5,8 @@ import (
 	"unicode"
 )
 
+// TokenType identifies the lexical category of a Token (keyword, string,
+// indent, etc.). Values are defined as the Token* constants below.
 type TokenType int
 
 const (
@@ -27,6 +29,8 @@ const (
 	TokenEOF                           // end of file
 )
 
+// Token is a single lexical unit emitted by [Tokenize]. Line and Column
+// are 1-based positions in the original source.
 type Token struct {
 	Type   TokenType
 	Value  string
@@ -67,10 +71,14 @@ var fieldConstraints = map[string]bool{
 	"auto_update": true,
 }
 
+// IsFieldType reports whether s is a recognized model field type keyword
+// (e.g. text, int, timestamp, reference).
 func IsFieldType(s string) bool {
 	return fieldTypes[s]
 }
 
+// IsFieldConstraint reports whether s is a recognized field constraint
+// keyword (e.g. required, unique, default, min, max).
 func IsFieldConstraint(s string) bool {
 	return fieldConstraints[s]
 }
@@ -138,6 +146,10 @@ func StripComments(source string) string {
 	return strings.Join(lines, "\n")
 }
 
+// Tokenize transforms .kilnx source text into a token stream. Leading
+// whitespace drives INDENT/DEDENT tokens, and a trailing TokenEOF is
+// always appended. Run [StripComments] on the source first to remove
+// '#' comments.
 func Tokenize(source string) []Token {
 	var tokens []Token
 	lines := strings.Split(source, "\n")

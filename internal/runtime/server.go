@@ -23,6 +23,10 @@ var staticFS embed.FS
 
 var interpolateRe = regexp.MustCompile(`\{(\^*[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}`)
 
+// Server is the runtime HTTP server hosting a parsed Kilnx App. It owns the
+// database executor, session store, job queue, rate limiter, logger and
+// i18n table, and routes requests to page, action, fragment and API
+// handlers.
 type Server struct {
 	app                *parser.App
 	db                 database.Executor
@@ -41,6 +45,9 @@ type Server struct {
 	scheduleStop       chan struct{}
 }
 
+// NewServer wires app and db into a Server listening on port. It builds the
+// session store, job queue, rate limiter, logger, tenant map, fragment
+// component index and i18n table from app's config.
 func NewServer(app *parser.App, db database.Executor, port int) *Server {
 	secret := ""
 	if app.Config != nil {
@@ -85,6 +92,8 @@ func NewServer(app *parser.App, db database.Executor, port int) *Server {
 	return s
 }
 
+// Reload swaps in a newly parsed app for hot-reload, refreshing superuser
+// identity and the fragment component index under the server's write lock.
 func (s *Server) Reload(app *parser.App) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -104,6 +113,7 @@ func (s *Server) Reload(app *parser.App) {
 	s.fragmentComponents = fragmentComponents
 }
 
+// StartJobQueue starts the background job queue poller.
 func (s *Server) StartJobQueue() {
 	s.jobQueue.Start()
 }
@@ -114,6 +124,8 @@ func (s *Server) getApp() *parser.App {
 	return s.app
 }
 
+// Start binds the HTTP listener and serves the request mux wrapped with the
+// logging middleware. It blocks until the listener returns.
 func (s *Server) Start() error {
 	mux := s.buildHandler()
 	addr := fmt.Sprintf(":%d", s.port)

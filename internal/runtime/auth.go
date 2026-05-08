@@ -39,6 +39,9 @@ type SessionStore struct {
 	secret   string // used for HMAC signing of session cookie values
 }
 
+// NewSessionStore returns a SessionStore that signs cookies with secret and
+// runs a background goroutine to expire stale sessions. If secret is empty a
+// random fallback is generated and a warning is logged to stderr.
 func NewSessionStore(secret string) *SessionStore {
 	ss := &SessionStore{sessions: make(map[string]*Session), secret: secret}
 	if ss.secret == "" {
@@ -101,6 +104,8 @@ func (ss *SessionStore) SetDB(db database.Executor) {
 	ss.loadFromDB()
 }
 
+// Create issues a new 24h session for user, persists it to SQLite if a DB is
+// attached, and returns the session ID.
 func (ss *SessionStore) Create(user database.Row, identityField string) string {
 	id := generateSessionID()
 	expiresAt := time.Now().Add(24 * time.Hour)
@@ -135,6 +140,7 @@ func (ss *SessionStore) Create(user database.Row, identityField string) string {
 	return id
 }
 
+// Get returns the session for id, or nil if missing or expired.
 func (ss *SessionStore) Get(id string) *Session {
 	ss.mu.RLock()
 	defer ss.mu.RUnlock()
@@ -145,6 +151,7 @@ func (ss *SessionStore) Get(id string) *Session {
 	return sess
 }
 
+// Delete removes the session from memory and from the persistence DB.
 func (ss *SessionStore) Delete(id string) {
 	ss.mu.Lock()
 	delete(ss.sessions, id)

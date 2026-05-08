@@ -13,6 +13,9 @@ import (
 
 var identifierRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
+// DB is a thin wrapper around *sql.DB that selects between SQLite and Postgres
+// at runtime via a Dialect. It also exposes named-parameter execution helpers
+// and an optional slow-query callback.
 type DB struct {
 	conn        *sql.DB
 	dialect     Dialect
@@ -22,7 +25,8 @@ type DB struct {
 // Dialect returns the dialect used by this database connection.
 func (db *DB) Dialect() Dialect { return db.dialect }
 
-// TxHandle wraps a sql.Tx with named parameter support
+// TxHandle wraps a *sql.Tx with named-parameter execution and idempotent
+// commit/rollback. It is created by [DB.BeginTxHandle].
 type TxHandle struct {
 	tx        *sql.Tx
 	dialect   Dialect
@@ -99,10 +103,13 @@ func Open(url string) (*DB, error) {
 	return &DB{conn: conn, dialect: dialect}, nil
 }
 
+// Close closes the underlying *sql.DB connection pool.
 func (db *DB) Close() error {
 	return db.conn.Close()
 }
 
+// Conn returns the underlying *sql.DB for callers that need direct access
+// (e.g. to start raw transactions or run driver-specific queries).
 func (db *DB) Conn() *sql.DB {
 	return db.conn
 }
