@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/kilnx-org/kilnx/internal/optimizer"
 	"github.com/kilnx-org/kilnx/internal/parser"
 	"github.com/kilnx-org/kilnx/internal/runtime"
+	"github.com/kilnx-org/kilnx/internal/spec"
 )
 
 var version = "dev"
@@ -78,6 +80,11 @@ func main() {
 			}
 		}
 		if err := cmdCheck(os.Args[2], dbURL); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+	case "docs":
+		if err := cmdDocs(os.Args[2:]); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -575,5 +582,122 @@ func printUsage() {
 	fmt.Println("          --status        Show migration history and pending changes")
 	fmt.Println("          --allow-dataloss  Skip data-loss protection check")
 	fmt.Println("  test <file.kilnx>       Run declarative tests")
+	fmt.Println("  docs <name>             Show spec for a keyword/attribute")
+	fmt.Println("       --list             List all keywords and attributes")
+	fmt.Println("       --search <query>   Find entities matching a substring")
 	fmt.Println("  version                 Print version")
+}
+
+func cmdDocs(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: kilnx docs <name> | --list | --search <query>")
+	}
+
+	switch args[0] {
+	case "--list", "-l":
+		printDocsList()
+		return nil
+	case "--search", "-s":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: kilnx docs --search <query>")
+		}
+		printDocsSearch(args[1])
+		return nil
+	}
+
+	name := args[0]
+	e, ok := spec.Get(name)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "no entity named %q\n", name)
+		fmt.Fprintln(os.Stderr, "Run 'kilnx docs --list' for available names, or 'kilnx docs --search <query>' to search.")
+		os.Exit(1)
+	}
+	printDocsEntity(e)
+	return nil
+}
+
+func printDocsList() {
+	keywords := spec.ByKind(spec.KindKeyword)
+	attributes := spec.ByKind(spec.KindAttribute)
+
+	fmt.Println("Keywords:")
+	for _, e := range keywords {
+		fmt.Printf("  %-20s %s\n", e.Name, e.Summary)
+	}
+	fmt.Println()
+	fmt.Println("Attributes:")
+	for _, e := range attributes {
+		fmt.Printf("  %-20s %s\n", e.Name, e.Summary)
+	}
+}
+
+func printDocsSearch(query string) {
+	q := strings.ToLower(query)
+	all := spec.All()
+	names := make([]string, 0, len(all))
+	for name := range all {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	matched := 0
+	for _, name := range names {
+		e := all[name]
+		hay := strings.ToLower(e.Name + " " + e.Summary + " " + e.Description)
+		if !strings.Contains(hay, q) {
+			continue
+		}
+		fmt.Printf("%s (%s) — %s\n", e.Name, strings.ToLower(e.Kind.String()), e.Summary)
+		matched++
+	}
+	if matched == 0 {
+		fmt.Fprintf(os.Stderr, "no matches for %q\n", query)
+		os.Exit(1)
+	}
+}
+
+func printDocsEntity(e spec.Entity) {
+	fmt.Printf("%s: %s\n", strings.ToLower(e.Kind.String()), e.Name)
+	if e.Summary != "" {
+		fmt.Printf("\n%s\n", e.Summary)
+	}
+	if e.Description != "" {
+		fmt.Printf("\n%s\n", strings.TrimSpace(e.Description))
+	}
+	if e.Syntax != "" {
+		fmt.Printf("\nSyntax:\n  %s\n", e.Syntax)
+	}
+	if len(e.ParentScope) > 0 {
+		fmt.Printf("\nValid in: %s\n", strings.Join(e.ParentScope, ", "))
+	}
+	if len(e.Children) > 0 {
+		fmt.Printf("Accepts attributes: %s\n", strings.Join(e.Children, ", "))
+	}
+	if e.Required {
+		fmt.Println("Required: yes")
+	}
+	if e.Repeatable {
+		fmt.Println("Repeatable: yes")
+	}
+	if e.Default != "" {
+		fmt.Printf("Default: %s\n", e.Default)
+	}
+	if e.Since != "" {
+		fmt.Printf("Since: %s\n", e.Since)
+	}
+	if len(e.Examples) > 0 {
+		fmt.Println("\nExamples:")
+		for _, ex := range e.Examples {
+			if ex.Title != "" {
+				fmt.Printf("  # %s\n", ex.Title)
+			}
+			for _, line := range strings.Split(strings.TrimSpace(ex.Code), "\n") {
+				fmt.Printf("  %s\n", line)
+			}
+			fmt.Println()
+		}
+	}
+	if len(e.SeeAlso) > 0 {
+		fmt.Printf("See also: %s\n", strings.Join(e.SeeAlso, ", "))
+	}
 }
