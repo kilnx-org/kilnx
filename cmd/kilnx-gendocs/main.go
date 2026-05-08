@@ -56,6 +56,7 @@ type entityCtx struct {
 
 func main() {
 	out := flag.String("o", "docs/devs/reference", "output directory")
+	checkStale := flag.Bool("check-stale", false, "exit 1 if any entity's source was touched after its spec")
 	flag.Parse()
 
 	repoRoot = resolveRepoRoot()
@@ -75,27 +76,82 @@ func main() {
 	keywords := spec.ByKind(spec.KindKeyword)
 	attributes := spec.ByKind(spec.KindAttribute)
 
-	for _, e := range keywords {
-		path := filepath.Join(*out, "keywords", e.Name+".md")
-		if err := render(tmpl, "keyword.md.tmpl", path, buildCtx(e)); err != nil {
+	augmentSeeAlso(keywords, attributes)
+
+	var stale []string
+	render := func(kind string, e spec.Entity) {
+		ctx := buildCtx(e)
+		if ctx.Stale {
+			stale = append(stale, fmt.Sprintf("%s %q (source %s on %s, spec %s on %s)",
+				kind, e.Name, ctx.SourceSHA, ctx.SourceDate, ctx.SpecSHA, ctx.SpecDate))
+		}
+		path := filepath.Join(*out, kind+"s", e.Name+".md")
+		if err := writeTemplate(tmpl, kind+".md.tmpl", path, ctx); err != nil {
 			log.Fatalf("render %s: %v", e.Name, err)
 		}
 		fmt.Println("wrote", path)
 	}
+	for _, e := range keywords {
+		render("keyword", e)
+	}
 	for _, e := range attributes {
-		path := filepath.Join(*out, "attributes", e.Name+".md")
-		if err := render(tmpl, "attribute.md.tmpl", path, buildCtx(e)); err != nil {
-			log.Fatalf("render %s: %v", e.Name, err)
-		}
-		fmt.Println("wrote", path)
+		render("attribute", e)
 	}
 
 	indexPath := filepath.Join(*out, "index.md")
 	idx := indexCtx{Keywords: keywords, Attributes: attributes}
-	if err := render(tmpl, "index.md.tmpl", indexPath, idx); err != nil {
+	if err := writeTemplate(tmpl, "index.md.tmpl", indexPath, idx); err != nil {
 		log.Fatalf("render index: %v", err)
 	}
 	fmt.Println("wrote", indexPath)
+
+	if *checkStale && len(stale) > 0 {
+		fmt.Fprintln(os.Stderr, "stale entities (source touched after spec):")
+		for _, line := range stale {
+			fmt.Fprintln(os.Stderr, "  -", line)
+		}
+		fmt.Fprintln(os.Stderr, "\nReview the description against current behavior and update the *_spec.go file.")
+		os.Exit(1)
+	}
+}
+
+// augmentSeeAlso makes SeeAlso bidirectional: if A.SeeAlso contains B,
+// B's rendered page also lists A. Mutates the entries of the supplied
+// slices in place. Self-references and duplicates are filtered.
+func augmentSeeAlso(groups ...[]spec.Entity) {
+	reverse := map[string]map[string]bool{}
+	for _, g := range groups {
+		for _, e := range g {
+			for _, target := range e.SeeAlso {
+				if target == e.Name {
+					continue
+				}
+				if reverse[target] == nil {
+					reverse[target] = map[string]bool{}
+				}
+				reverse[target][e.Name] = true
+			}
+		}
+	}
+	for _, g := range groups {
+		for i := range g {
+			existing := map[string]bool{}
+			for _, s := range g[i].SeeAlso {
+				existing[s] = true
+			}
+			added := make([]string, 0, len(reverse[g[i].Name]))
+			for ref := range reverse[g[i].Name] {
+				if !existing[ref] {
+					added = append(added, ref)
+				}
+			}
+			if len(added) == 0 {
+				continue
+			}
+			sort.Strings(added)
+			g[i].SeeAlso = append(g[i].SeeAlso, added...)
+		}
+	}
 }
 
 // buildCtx enriches a spec.Entity with provenance: the commit that last
@@ -278,7 +334,7 @@ func seeAlsoPath(target, fromDir string) string {
 	return "../" + targetDir + "/" + target + ".md"
 }
 
-func render(tmpl *template.Template, name, path string, data any) error {
+func writeTemplate(tmpl *template.Template, name, path string, data any) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err

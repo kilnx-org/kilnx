@@ -39,6 +39,10 @@ socket /chat/:room
     broadcast to :room fragment chat-message
 ```
 
+## See also
+
+- [`socket`](../keywords/socket.md)
+
 ## Provenance
 
 | | |

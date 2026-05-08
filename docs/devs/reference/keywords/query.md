@@ -50,6 +50,7 @@ page /users
 - [`page`](page.md)
 - [`action`](action.md)
 - [`fragment`](fragment.md)
+- [`model`](model.md)
 
 ## Provenance
 

@@ -52,6 +52,30 @@ automatically when you stage changes that touch the spec. CI also runs
 the generator and fails the PR if `docs/devs/reference/` is out of sync
 with the spec.
 
+### Provenance and staleness detection
+
+Each generated reference page includes a **Provenance** section showing:
+
+- **Spec last touched**: short SHA + date of the commit that last edited
+  the entity's `*_spec.go` registration.
+- **Source last touched**: short SHA + date of the commit that last
+  edited any implementation file matching the entity. Source files are
+  detected heuristically by grepping `internal/` for the dispatch
+  patterns Kilnx uses (`case "<name>":`, `Value == "<name>"`,
+  `Value: "<name>"`), excluding `_test.go` and `_spec.go`.
+- **Source files**: the matched implementation paths.
+
+If the source was touched **after** the spec, the page renders a
+**Stale** warning, suggesting that `Description` may no longer reflect
+behavior. CI runs `kilnx-gendocs --check-stale` and fails the PR when
+any entity is stale: review the description against current behavior
+and update the `*_spec.go` file.
+
+Because source detection is heuristic, when introducing a new dispatch
+pattern (a new way the parser/runtime branches on a keyword name),
+extend the regex in `cmd/kilnx-gendocs/main.go` (`findSourceFiles`) so
+provenance keeps tracking it.
+
 ## Reporting Issues
 
 Open an issue on [GitHub](https://github.com/kilnx-org/kilnx/issues) with a minimal `.kilnx` file that reproduces the problem.

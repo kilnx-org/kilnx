@@ -48,6 +48,8 @@ page /admin requires admin
 
 - [`method`](method.md)
 - [`permissions`](../keywords/permissions.md)
+- [`auth`](../keywords/auth.md)
+- [`limit`](../keywords/limit.md)
 
 ## Provenance
 

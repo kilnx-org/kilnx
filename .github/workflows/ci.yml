@@ -118,6 +118,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -134,6 +136,9 @@ jobs:
             cat /tmp/docs-diff.txt
             exit 1
           fi
+
+      - name: Check for stale entity descriptions
+        run: go run ./cmd/kilnx-gendocs -check-stale -o /tmp/kilnx-docs-stale-check
 
   docker:
     name: Docker Build

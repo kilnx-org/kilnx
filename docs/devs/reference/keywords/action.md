@@ -46,6 +46,8 @@ action /users/create method POST requires auth
 - [`page`](page.md)
 - [`fragment`](fragment.md)
 - [`api`](api.md)
+- [`query`](query.md)
+- [`redirect`](../attributes/redirect.md)
 
 ## Provenance
 

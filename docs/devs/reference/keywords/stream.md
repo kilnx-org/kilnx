@@ -45,6 +45,7 @@ stream /notifications requires auth
 
 - [`socket`](socket.md)
 - [`page`](page.md)
+- [`schedule`](schedule.md)
 
 ## Provenance
 

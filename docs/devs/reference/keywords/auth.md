@@ -50,6 +50,7 @@ auth
 
 - [`permissions`](permissions.md)
 - [`requires`](../attributes/requires.md)
+- [`model`](model.md)
 
 ## Provenance
 

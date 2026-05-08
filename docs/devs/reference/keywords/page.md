@@ -57,6 +57,7 @@ page /dashboard layout app title "Dashboard" requires auth
 - [`api`](api.md)
 - [`layout`](layout.md)
 - [`stream`](stream.md)
+- [`query`](query.md)
 
 ## Provenance
 

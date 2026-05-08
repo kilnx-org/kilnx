@@ -53,6 +53,8 @@ fragment badge(status, color="blue")
 - [`page`](page.md)
 - [`action`](action.md)
 - [`html`](../attributes/html.md)
+- [`api`](api.md)
+- [`query`](query.md)
 
 ## Provenance
 

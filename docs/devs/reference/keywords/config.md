@@ -43,6 +43,10 @@ config
   uploads: ./uploads max 10
 ```
 
+## See also
+
+- [`translations`](translations.md)
+
 ## Provenance
 
 | | |

@@ -38,6 +38,11 @@ page /
     <h1>Welcome, {current_user.name}!</h1>
 ```
 
+## See also
+
+- [`fragment`](../keywords/fragment.md)
+- [`layout`](../keywords/layout.md)
+
 ## Provenance
 
 | | |

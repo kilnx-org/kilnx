@@ -43,6 +43,11 @@ action /users/create method POST
     respond fragment ".form" query: SELECT * FROM user WHERE id = :id
 ```
 
+## See also
+
+- [`socket`](../keywords/socket.md)
+- [`webhook`](../keywords/webhook.md)
+
 ## Provenance
 
 | | |

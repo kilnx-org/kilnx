@@ -45,6 +45,7 @@ page /dashboard layout main title "Dashboard"
 
 - [`page`](page.md)
 - [`html`](../attributes/html.md)
+- [`title`](../attributes/title.md)
 
 ## Provenance
 
