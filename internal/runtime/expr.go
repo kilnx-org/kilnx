@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -11,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"crypto/rand"
 
 	"golang.org/x/crypto/bcrypt"
 )
