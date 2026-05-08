@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   declarative-tests:
-    name: Declarative Tests
+    name: Kilnx Declarative Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

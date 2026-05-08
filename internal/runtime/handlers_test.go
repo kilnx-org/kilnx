@@ -2447,6 +2447,9 @@ func TestHandleAction_DefaultRedirectNonLocal(t *testing.T) {
 }
 
 func TestHandleAction_FetchNodeError(t *testing.T) {
+	// Transport-level fetch failures (DNS, connection refused, timeout)
+	// abort the action with 502 and roll back the implicit transaction.
+	// Silent failure used to commit partial state, masking real outages.
 	s := newTestServer(nil)
 	csrf := generateCSRFToken()
 	form := url.Values{"_csrf": {csrf}}
@@ -2462,8 +2465,8 @@ func TestHandleAction_FetchNodeError(t *testing.T) {
 		},
 	}
 	s.handleAction(rec, req, action, s.getApp())
-	if rec.Code != http.StatusSeeOther {
-		t.Errorf("code = %d, want 303", rec.Code)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("code = %d, want 502", rec.Code)
 	}
 }
 

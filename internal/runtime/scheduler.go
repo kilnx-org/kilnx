@@ -422,18 +422,15 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 			if fetchName == "" {
 				fetchName = "_fetch"
 			}
-			rows, err := executeFetch(node, params)
+			rows, status, err := executeFetch(node, params)
 			if err != nil {
-				fmt.Printf("  fetch error: %v\n", err)
-			} else {
-				ctx.queries[fetchName] = rows
-				// Make fetch results available as params for subsequent nodes
-				if len(rows) > 0 {
-					for k, v := range rows[0] {
-						params["fetch."+k] = v
-					}
-				}
+				// Transport-level failure aborts the schedule/job invocation
+				// so retries / dead-letter handling can kick in upstream.
+				return fmt.Errorf("fetch %s: %w", fetchName, err)
 			}
+			annotated := annotateFetchRows(rows, status)
+			ctx.queries[fetchName] = annotated
+			bindFetchResult(params, fetchName, rows, status)
 
 		case parser.NodeSendEmail:
 			recipient := resolveEmailRecipient(node.EmailTo, params)

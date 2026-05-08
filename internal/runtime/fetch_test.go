@@ -23,7 +23,7 @@ func TestExecuteFetch_EnvHeaderEmpty(t *testing.T) {
 		FetchMethod:  "GET",
 		FetchHeaders: map[string]string{"X-Token": "env:NONEXISTENT_ENV_VAR"},
 	}
-	rows, err := executeFetch(node, nil)
+	rows, _, err := executeFetch(node, nil)
 	if err != nil {
 		t.Fatalf("executeFetch failed: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestExecuteFetch_EnvHeaderSet(t *testing.T) {
 		FetchMethod:  "GET",
 		FetchHeaders: map[string]string{"X-Token": "env:FETCH_TEST_TOKEN"},
 	}
-	rows, err := executeFetch(node, nil)
+	rows, _, err := executeFetch(node, nil)
 	if err != nil {
 		t.Fatalf("executeFetch failed: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestExecuteFetch_BodyParamResolution(t *testing.T) {
 		FetchMethod: "POST",
 		FetchBody:   map[string]string{"name": ":user_name"},
 	}
-	rows, err := executeFetch(node, map[string]string{"user_name": "Alice"})
+	rows, _, err := executeFetch(node, map[string]string{"user_name": "Alice"})
 	if err != nil {
 		t.Fatalf("executeFetch failed: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestExecuteFetch_HeaderParamResolution(t *testing.T) {
 		FetchMethod:  "GET",
 		FetchHeaders: map[string]string{"X-User": ":user_name"},
 	}
-	rows, err := executeFetch(node, map[string]string{"user_name": "Alice"})
+	rows, _, err := executeFetch(node, map[string]string{"user_name": "Alice"})
 	if err != nil {
 		t.Fatalf("executeFetch failed: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestExecuteFetch_GetIgnoresBody(t *testing.T) {
 		FetchMethod: "GET",
 		FetchBody:   map[string]string{"key": "value"},
 	}
-	rows, err := executeFetch(node, nil)
+	rows, _, err := executeFetch(node, nil)
 	if err != nil {
 		t.Fatalf("executeFetch failed: %v", err)
 	}
