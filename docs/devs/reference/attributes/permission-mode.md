@@ -1,0 +1,30 @@
+# `permission-mode`
+
+> Tool-use permission policy: `plan`, `acceptEdits`, or `bypassPermissions`.
+
+| | |
+|---|---|
+| **Kind** | Attribute |
+| **Since** | `0.2.0` |
+| **Default** | `plan` |
+
+## Syntax
+
+```
+permission-mode: <mode>
+```
+
+## Arguments
+
+| Name | Type | Required |
+|------|------|----------|
+| `mode` | `enum` | yes |
+
+## Description
+
+Default `plan` (no side effects until user confirms). `acceptEdits` auto-approves file edits inside `cwd`. `bypassPermissions` skips all prompts (dangerous; analyzer warns).
+
+## Used in
+
+- [`agent`](../keywords/agent.md)
+

@@ -1,0 +1,35 @@
+# `response`
+
+> Single-shot / chat / streaming Messages API call.
+
+| | |
+|---|---|
+| **Kind** | Keyword |
+| **Since** | `0.2.0` |
+
+## Syntax
+
+```
+response
+```
+
+## Description
+
+Block-form attribute inside `llm`. Children: `history` (SQL that yields message rows), `stream` (CSS selector to enable streaming via hyperstream envelopes), `stream-swap` (hyperstream swap style).
+
+## Children
+
+- [`history`](../attributes/history.md)
+- [`stream-swap`](../attributes/stream-swap.md)
+
+## See also
+
+- [`llm`](llm.md)
+
+## Provenance
+
+| | |
+|---|---|
+| **Source last touched** | `5da8498` (2026-05-08) |
+| **Source files** | `internal/parser/parser.go` |
+

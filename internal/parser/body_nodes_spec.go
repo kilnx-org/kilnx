@@ -118,20 +118,8 @@ func init() {
     <p>{weather.summary}</p>`}},
 	})
 
-	spec.Register(spec.Entity{
-		Name: "llm", Kind: spec.KindAttribute,
-		Summary: "Call a Large Language Model with optional history and system prompt.",
-		Description: "Sub-keywords: `history: <SQL>` (rows become messages), `system: <text>` " +
-			"(system prompt). The named result is bound for use in subsequent nodes. " +
-			"Model providers are configured via env vars at runtime.",
-		Syntax:      "llm [<name>:] <model>",
-		ParentScope: bodyParents,
-		Since:       "0.1.0",
-		Examples: []spec.Example{{Title: "Customer support chat", Code: `action /chat method POST
-  llm chat: claude-sonnet-4-6
-    history: SELECT role, content FROM message WHERE conversation_id = :id ORDER BY created
-    system: You are a helpful customer support agent`}},
-	})
+	// `llm` is registered in llm_spec.go as a KindKeyword body block with
+	// discriminated `response` / `agent` children (v0.2.0 redesign).
 
 	spec.Register(spec.Entity{
 		Name: "respond", Kind: spec.KindAttribute,

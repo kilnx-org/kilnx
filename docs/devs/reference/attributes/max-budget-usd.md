@@ -1,0 +1,30 @@
+# `max-budget-usd`
+
+> Hard cost cap in USD per agent invocation.
+
+| | |
+|---|---|
+| **Kind** | Attribute |
+| **Since** | `0.2.0` |
+| **Required** | yes |
+
+## Syntax
+
+```
+max-budget-usd: <float>
+```
+
+## Arguments
+
+| Name | Type | Required |
+|------|------|----------|
+| `value` | `float` | yes |
+
+## Description
+
+Required by the analyzer. The subprocess is killed once total token cost crosses this threshold.
+
+## Used in
+
+- [`agent`](../keywords/agent.md)
+

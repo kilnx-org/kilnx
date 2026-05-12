@@ -31,6 +31,7 @@ after editing any *_spec.go file, run:
 | [`job_spec.go`](../../../internal/parser/job_spec.go) | _no file-level doc_ |
 | [`layout_spec.go`](../../../internal/parser/layout_spec.go) | _no file-level doc_ |
 | [`limit_spec.go`](../../../internal/parser/limit_spec.go) | _no file-level doc_ |
+| [`llm_spec.go`](../../../internal/parser/llm_spec.go) | _no file-level doc_ |
 | [`log_spec.go`](../../../internal/parser/log_spec.go) | _no file-level doc_ |
 | [`model_spec.go`](../../../internal/parser/model_spec.go) | _no file-level doc_ |
 | [`page_spec.go`](../../../internal/parser/page_spec.go) | _no file-level doc_ |
@@ -306,7 +307,24 @@ type Node struct {
 	FetchBody	map[string]string	// for fetch: POST body params
 	LLMModel	string			// for llm: model name (e.g. claude-sonnet-4-6)
 	LLMSystem	string			// for llm: system prompt
-	LLMHistorySQL	string			// for llm: SQL to fetch message history
+	LLMTemperature	float64			// for llm: sampling temperature (0 = unset)
+	LLMMaxTokens	int			// for llm: max output tokens (0 = default)
+	LLMMode		string			// for llm: "response" or "agent"
+
+	// response-mode fields
+	LLMHistorySQL	string	// for llm response: SQL yielding message rows
+	LLMStreamTarget	string	// for llm response: CSS selector enabling hyperstream
+	LLMStreamSwap	string	// for llm response: hyperstream swap style (default "append")
+
+	// agent-mode fields
+	LLMAgentCwd		string		// for llm agent: working directory (resolved vs workspace-root)
+	LLMAgentTools		[]string	// for llm agent: allowed tool names
+	LLMAgentMaxTurns	int		// for llm agent: forced-stop turn limit
+	LLMAgentBudget		float64		// for llm agent: cost cap in USD (required by analyzer)
+	LLMAgentPermissionMode	string		// for llm agent: plan|acceptEdits|bypassPermissions
+	LLMAgentMCP		[]string	// for llm agent: MCP server names from config
+	LLMAgentPool		int		// for llm agent: reserved; runtime ignores in v0.2.x
+	LLMAgentPoolIdleTTL	string		// for llm agent: reserved; runtime ignores in v0.2.x
 }
 ```
 
@@ -551,6 +569,15 @@ func extractPaginate(sql string) (string, int)
 extractPaginate checks for "paginate N" at the end of SQL and strips it.
 Returns the cleaned SQL and the page size (0 if no pagination).
 
+### `extractValueAfterColon`
+
+```go
+func extractValueAfterColon(lines []string, lineNum int) string
+```
+
+extractValueAfterColon returns the trimmed text following the first ':'
+on the given source line. Returns "" when the line has no colon.
+
 ### `firstRoleValue`
 
 ```go
@@ -619,6 +646,15 @@ func resolveEnvValue(raw string) string
 
 resolveEnvValue handles "env VAR_NAME default VALUE" syntax.
 Returns the resolved value.
+
+### `splitCSVList`
+
+```go
+func splitCSVList(s string) []string
+```
+
+splitCSVList splits "a, b, c" into ["a","b","c"], trimming each entry
+and dropping empties.
 
 ### `splitClauseText`
 
@@ -876,17 +912,36 @@ parseJob parses:
 	  send email to :requested_by
 	    subject: "Your report is ready"
 
+### `(parserState) parseLLMModeChildren`
+
+```go
+func (p *parserState) parseLLMModeChildren(node *Node, mode string)
+```
+
+parseLLMModeChildren consumes the indented body of `response` or `agent`
+up to its matching dedent.
+
 ### `(parserState) parseLLMNode`
 
 ```go
 func (p *parserState) parseLLMNode() Node
 ```
 
-parseLLMNode parses:
+parseLLMNode parses the v0.2 `llm` keyword block:
 
-	llm varname: model-name
-	  history: SELECT papel, conteudo FROM mensagem WHERE conversa_id = :id ORDER BY criada ASC
-	  system: You are a helpful assistant...
+	llm <name>
+	  model: claude-sonnet-4-6
+	  system: You are helpful
+	  temperature: 0.7
+	  max-tokens: 1024
+	  response                              # OR `agent`
+	    history: SELECT papel, conteudo FROM mensagem WHERE conversa_id = :id ORDER BY criada
+	    stream: #chat-msgs
+	    stream-swap: append
+
+Exactly one of `response` or `agent` must appear; the analyzer enforces
+exclusivity. Old v0.1 shape (`llm name: model` with inline `history`/`system`)
+is no longer accepted.
 
 ### `(parserState) parseLayout`
 

@@ -378,9 +378,26 @@ type Node struct {
 	FetchMethod   string            // for fetch: GET, POST, PUT, DELETE
 	FetchHeaders  map[string]string // for fetch: request headers
 	FetchBody     map[string]string // for fetch: POST body params
-	LLMModel      string            // for llm: model name (e.g. claude-sonnet-4-6)
-	LLMSystem     string            // for llm: system prompt
-	LLMHistorySQL string            // for llm: SQL to fetch message history
+	LLMModel       string  // for llm: model name (e.g. claude-sonnet-4-6)
+	LLMSystem      string  // for llm: system prompt
+	LLMTemperature float64 // for llm: sampling temperature (0 = unset)
+	LLMMaxTokens   int     // for llm: max output tokens (0 = default)
+	LLMMode        string  // for llm: "response" or "agent"
+
+	// response-mode fields
+	LLMHistorySQL   string // for llm response: SQL yielding message rows
+	LLMStreamTarget string // for llm response: CSS selector enabling hyperstream
+	LLMStreamSwap   string // for llm response: hyperstream swap style (default "append")
+
+	// agent-mode fields
+	LLMAgentCwd            string   // for llm agent: working directory (resolved vs workspace-root)
+	LLMAgentTools          []string // for llm agent: allowed tool names
+	LLMAgentMaxTurns       int      // for llm agent: forced-stop turn limit
+	LLMAgentBudget         float64  // for llm agent: cost cap in USD (required by analyzer)
+	LLMAgentPermissionMode string   // for llm agent: plan|acceptEdits|bypassPermissions
+	LLMAgentMCP            []string // for llm agent: MCP server names from config
+	LLMAgentPool           int      // for llm agent: reserved; runtime ignores in v0.2.x
+	LLMAgentPoolIdleTTL    string   // for llm agent: reserved; runtime ignores in v0.2.x
 }
 
 // Validation is one field-level rule set inside a `validate` block.
@@ -3594,76 +3611,196 @@ func (p *parserState) parseFetchNode() Node {
 	return node
 }
 
-// parseLLMNode parses:
+// parseLLMNode parses the v0.2 `llm` keyword block:
 //
-//	llm varname: model-name
-//	  history: SELECT papel, conteudo FROM mensagem WHERE conversa_id = :id ORDER BY criada ASC
-//	  system: You are a helpful assistant...
+//	llm <name>
+//	  model: claude-sonnet-4-6
+//	  system: You are helpful
+//	  temperature: 0.7
+//	  max-tokens: 1024
+//	  response                              # OR `agent`
+//	    history: SELECT papel, conteudo FROM mensagem WHERE conversa_id = :id ORDER BY criada
+//	    stream: #chat-msgs
+//	    stream-swap: append
+//
+// Exactly one of `response` or `agent` must appear; the analyzer enforces
+// exclusivity. Old v0.1 shape (`llm name: model` with inline `history`/`system`)
+// is no longer accepted.
 func (p *parserState) parseLLMNode() Node {
 	node := Node{Type: NodeLLM}
 
-	llmLine := p.current().Line
 	p.advance() // consume "llm"
 
-	// varname (optional, before colon)
+	// llm <name>  — name is required, no colon, no model on this line
 	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-		next := p.peek()
-		if next.Type == lexer.TokenColon {
-			node.Name = p.advance().Value
-			p.advance() // consume ':'
-		}
-	}
-
-	// model name on same line
-	if llmLine >= 1 && llmLine <= len(p.lines) {
-		line := strings.TrimSpace(p.lines[llmLine-1])
-		if colonIdx := strings.LastIndex(line, ":"); colonIdx >= 0 {
-			node.LLMModel = strings.TrimSpace(line[colonIdx+1:])
-		}
+		node.Name = p.advance().Value
 	}
 
 	p.skipToEndOfLine()
 	p.skipNewlines()
 
-	if p.current().Type == lexer.TokenIndent {
-		p.advance()
-		for !p.isEOF() {
-			if p.current().Type == lexer.TokenDedent {
-				p.advance()
-				break
-			}
-			if p.current().Type == lexer.TokenNewline {
-				p.advance()
-				continue
-			}
-			tok := p.current()
-			if tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword {
-				keyLine := tok.Line
-				key := tok.Value
-				p.advance()
-				if p.current().Type == lexer.TokenColon {
-					p.advance()
-				}
-				if keyLine >= 1 && keyLine <= len(p.lines) {
-					rawLine := strings.TrimSpace(p.lines[keyLine-1])
-					val := ""
-					if colonIdx := strings.Index(rawLine, ":"); colonIdx >= 0 {
-						val = strings.TrimSpace(rawLine[colonIdx+1:])
-					}
-					switch key {
-					case "history":
-						node.LLMHistorySQL = val
-					case "system":
-						node.LLMSystem = val
-					}
-				}
-			}
+	if p.current().Type != lexer.TokenIndent {
+		return node
+	}
+	p.advance() // consume indent
+
+	for !p.isEOF() {
+		if p.current().Type == lexer.TokenDedent {
+			p.advance()
+			break
+		}
+		if p.current().Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		tok := p.current()
+		if tok.Type != lexer.TokenIdentifier && tok.Type != lexer.TokenKeyword {
+			p.advance()
+			continue
+		}
+
+		key := tok.Value
+		keyLine := tok.Line
+
+		switch key {
+		case "response", "agent":
+			// discriminated mode block; consume header then sub-body
+			node.LLMMode = key
+			p.advance() // consume mode keyword
 			p.skipToEndOfLine()
 			p.skipNewlines()
+			if p.current().Type == lexer.TokenIndent {
+				p.advance()
+				p.parseLLMModeChildren(&node, key)
+			}
+			continue
 		}
+
+		// flat scalar children of `llm`
+		p.advance() // consume key identifier
+		if p.current().Type == lexer.TokenColon {
+			p.advance()
+		}
+		val := extractValueAfterColon(p.lines, keyLine)
+		switch key {
+		case "model":
+			node.LLMModel = val
+		case "system":
+			node.LLMSystem = val
+		case "temperature":
+			if f, err := strconv.ParseFloat(val, 64); err == nil {
+				node.LLMTemperature = f
+			}
+		case "max-tokens", "max_tokens":
+			if n, err := strconv.Atoi(val); err == nil {
+				node.LLMMaxTokens = n
+			}
+		}
+		p.skipToEndOfLine()
+		p.skipNewlines()
 	}
 
 	return node
+}
+
+// parseLLMModeChildren consumes the indented body of `response` or `agent`
+// up to its matching dedent.
+func (p *parserState) parseLLMModeChildren(node *Node, mode string) {
+	for !p.isEOF() {
+		if p.current().Type == lexer.TokenDedent {
+			p.advance()
+			return
+		}
+		if p.current().Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		tok := p.current()
+		if tok.Type != lexer.TokenIdentifier && tok.Type != lexer.TokenKeyword {
+			p.advance()
+			continue
+		}
+
+		key := tok.Value
+		keyLine := tok.Line
+		p.advance()
+		if p.current().Type == lexer.TokenColon {
+			p.advance()
+		}
+		val := extractValueAfterColon(p.lines, keyLine)
+
+		switch mode {
+		case "response":
+			switch key {
+			case "history":
+				node.LLMHistorySQL = val
+			case "stream":
+				node.LLMStreamTarget = val
+			case "stream-swap", "stream_swap":
+				node.LLMStreamSwap = val
+			}
+		case "agent":
+			switch key {
+			case "cwd":
+				node.LLMAgentCwd = val
+			case "tools":
+				node.LLMAgentTools = splitCSVList(val)
+			case "max-turns", "max_turns":
+				if n, err := strconv.Atoi(val); err == nil {
+					node.LLMAgentMaxTurns = n
+				}
+			case "max-budget-usd", "max_budget_usd":
+				if f, err := strconv.ParseFloat(val, 64); err == nil {
+					node.LLMAgentBudget = f
+				}
+			case "permission-mode", "permission_mode":
+				node.LLMAgentPermissionMode = val
+			case "mcp":
+				node.LLMAgentMCP = splitCSVList(val)
+			case "pool":
+				if n, err := strconv.Atoi(val); err == nil {
+					node.LLMAgentPool = n
+				}
+			case "pool-idle-ttl", "pool_idle_ttl":
+				node.LLMAgentPoolIdleTTL = val
+			}
+		}
+		p.skipToEndOfLine()
+		p.skipNewlines()
+	}
+}
+
+// extractValueAfterColon returns the trimmed text following the first ':'
+// on the given source line. Returns "" when the line has no colon.
+func extractValueAfterColon(lines []string, lineNum int) string {
+	if lineNum < 1 || lineNum > len(lines) {
+		return ""
+	}
+	raw := strings.TrimSpace(lines[lineNum-1])
+	idx := strings.Index(raw, ":")
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(raw[idx+1:])
+}
+
+// splitCSVList splits "a, b, c" into ["a","b","c"], trimming each entry
+// and dropping empties.
+func splitCSVList(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // peek returns the next token without advancing
