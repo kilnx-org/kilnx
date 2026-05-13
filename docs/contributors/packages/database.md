@@ -6,10 +6,8 @@
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/database` |
 | **Source last touched** | `965a64b` (2026-05-13) |
-| **Doc last touched** | `5da8498` (2026-05-08) |
+| **Doc last touched** | `b549e17` (2026-05-13) |
 
-
-> **Implementation touched after doc.go.** Source changed on `2026-05-13`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
