@@ -147,6 +147,7 @@ jobs:
           fi
 
       - name: Check for stale entries
+        if: github.event_name == 'push'
         run: go run ./cmd/kilnx-gendocs -check-stale -o /tmp/kilnx-docs-stale-check
 
   docker:
