@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"44444444-5555-4666-8777-888888888888"}
+{"type":"stream_event","session_id":"44444444-5555-4666-8777-888888888888","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu_1","name":"Read"}}}
+{"type":"stream_event","session_id":"44444444-5555-4666-8777-888888888888","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"done"}}}
+{"type":"assistant","session_id":"44444444-5555-4666-8777-888888888888","message":{"id":"m1","content":[{"type":"tool_use","id":"tu_1","name":"Read","input":{}},{"type":"text","text":"done"}]}}
+{"type":"user","session_id":"44444444-5555-4666-8777-888888888888","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"ok"}]}}
+{"type":"result","subtype":"success","session_id":"44444444-5555-4666-8777-888888888888","stop_reason":"end_turn","total_cost_usd":0.002,"duration_ms":20,"result":"done"}

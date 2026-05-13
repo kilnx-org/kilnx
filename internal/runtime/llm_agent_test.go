@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -134,6 +136,179 @@ func TestExecuteLLMAgent_CwdEscape(t *testing.T) {
 	_, err := executeLLMAgent(context.Background(), node, app, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "escapes workspace-root") {
 		t.Fatalf("expected escape error, got %v", err)
+	}
+}
+
+func TestExecuteLLMAgent_StreamingHyperstream(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	t.Setenv("KILNX_CLAUDE_BIN", fakeClaudeBin(t, "testdata/agent_streams/streaming.jsonl"))
+
+	app := &parser.App{Config: &parser.AppConfig{WorkspaceRoot: t.TempDir()}}
+	node := parser.Node{
+		Type:             parser.NodeLLM,
+		Name:             "task",
+		LLMMode:          "agent",
+		LLMAgentBudget:   0.1,
+		LLMStreamTarget:  "#out",
+		LLMStreamSwap:    "append",
+	}
+	rec := httptest.NewRecorder()
+	res, err := executeLLMAgent(context.Background(), node, app, map[string]string{"prompt": "hi"}, rec)
+	if err != nil {
+		t.Fatalf("agent run: %v", err)
+	}
+	if res.Text != "chunk-one chunk-two" {
+		t.Errorf("text = %q", res.Text)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Errorf("content-type = %q", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "<hs-partial") {
+		t.Errorf("body missing hs-partial envelope: %q", body)
+	}
+	if !strings.Contains(body, "chunk-") {
+		t.Errorf("body missing streamed text: %q", body)
+	}
+	if !strings.Contains(body, `final="true"`) {
+		t.Errorf("body missing final envelope: %q", body)
+	}
+}
+
+func TestExecuteLLMAgent_MaxTurnsExceeded(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	t.Setenv("KILNX_CLAUDE_BIN", fakeClaudeBin(t, "testdata/agent_streams/max_turns.jsonl"))
+
+	app := &parser.App{Config: &parser.AppConfig{WorkspaceRoot: t.TempDir()}}
+	node := parser.Node{
+		Type:             parser.NodeLLM,
+		LLMMode:          "agent",
+		LLMAgentBudget:   0.1,
+		LLMAgentMaxTurns: 2,
+	}
+	_, err := executeLLMAgent(context.Background(), node, app, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "max turns") {
+		t.Fatalf("expected max turns error, got %v", err)
+	}
+}
+
+func TestExecuteLLMAgent_ShowToolsChannel(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	t.Setenv("KILNX_CLAUDE_BIN", fakeClaudeBin(t, "testdata/agent_streams/tools.jsonl"))
+
+	app := &parser.App{Config: &parser.AppConfig{WorkspaceRoot: t.TempDir()}}
+	node := parser.Node{
+		Type:              parser.NodeLLM,
+		Name:              "task",
+		LLMMode:           "agent",
+		LLMAgentBudget:    0.1,
+		LLMStreamTarget:   "#out",
+		LLMAgentShowTools: true,
+	}
+	rec := httptest.NewRecorder()
+	_, err := executeLLMAgent(context.Background(), node, app, nil, rec)
+	if err != nil {
+		t.Fatalf("agent run: %v", err)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "tool_use:Read") {
+		t.Errorf("body missing tool_use payload: %q", body)
+	}
+	if !strings.Contains(body, "tool_result") {
+		t.Errorf("body missing tool_result payload: %q", body)
+	}
+}
+
+func TestWriteMCPConfig_StdioHappy(t *testing.T) {
+	app := &parser.App{
+		MCPServers: []parser.MCPServer{{
+			Name:    "filesystem",
+			Command: "npx",
+			Args:    []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp/x"},
+			Env:     map[string]string{"FOO": "bar"},
+		}},
+	}
+	node := parser.Node{LLMAgentMCP: []string{"filesystem"}}
+	path, cleanup, err := writeMCPConfig(node, app)
+	if err != nil {
+		t.Fatalf("writeMCPConfig: %v", err)
+	}
+	defer cleanup()
+	if path == "" {
+		t.Fatal("empty path")
+	}
+	buf, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read mcp config: %v", err)
+	}
+	var doc struct {
+		MCPServers map[string]struct {
+			Command string            `json:"command"`
+			Args    []string          `json:"args"`
+			Env     map[string]string `json:"env"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(buf, &doc); err != nil {
+		t.Fatalf("unmarshal: %v (raw=%s)", err, string(buf))
+	}
+	srv, ok := doc.MCPServers["filesystem"]
+	if !ok {
+		t.Fatalf("filesystem missing in %s", string(buf))
+	}
+	if srv.Command != "npx" {
+		t.Errorf("command = %q", srv.Command)
+	}
+	if len(srv.Args) != 3 || srv.Args[0] != "-y" {
+		t.Errorf("args = %v", srv.Args)
+	}
+	if srv.Env["FOO"] != "bar" {
+		t.Errorf("env = %v", srv.Env)
+	}
+}
+
+func TestWriteMCPConfig_HTTPTransport(t *testing.T) {
+	app := &parser.App{
+		MCPServers: []parser.MCPServer{{
+			Name:      "remote",
+			URL:       "https://mcp.example.com/sse",
+			Transport: "sse",
+		}},
+	}
+	node := parser.Node{LLMAgentMCP: []string{"remote"}}
+	path, cleanup, err := writeMCPConfig(node, app)
+	if err != nil {
+		t.Fatalf("writeMCPConfig: %v", err)
+	}
+	defer cleanup()
+	buf, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	s := string(buf)
+	if !strings.Contains(s, `"url":"https://mcp.example.com/sse"`) {
+		t.Errorf("missing url: %s", s)
+	}
+	if !strings.Contains(s, `"type":"sse"`) {
+		t.Errorf("missing type: %s", s)
+	}
+}
+
+func TestResolveAgentCwd_DeclaredInsideRoot(t *testing.T) {
+	root := t.TempDir()
+	app := &parser.App{Config: &parser.AppConfig{WorkspaceRoot: root}}
+	target := filepath.Join(root, "project-x")
+	node := parser.Node{LLMAgentCwd: target}
+	got, cleanup, err := resolveAgentCwd(node, app, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	defer cleanup()
+	realTarget, _ := filepath.EvalSymlinks(target)
+	if got != realTarget {
+		t.Errorf("got %q want %q", got, realTarget)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Errorf("declared cwd not created: %v", err)
 	}
 }
 
