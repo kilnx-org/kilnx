@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/database` |
-| **Source last touched** | `34a4269` (2026-05-13) |
+| **Source last touched** | `965a64b` (2026-05-13) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
 
