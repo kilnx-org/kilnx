@@ -5,8 +5,8 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/database` |
-| **Source last touched** | `965a64b` (2026-05-13) |
-| **Doc last touched** | `b549e17` (2026-05-13) |
+| **Source last touched** | `69981b8` (2026-05-13) |
+| **Doc last touched** | `44eea80` (2026-05-13) |
 
 
 ## Overview

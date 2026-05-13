@@ -137,6 +137,10 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkFragmentComponents(app)...)
 	diags = append(diags, checkTranslationParams(app)...)
 	diags = append(diags, checkActionAttributes(app)...)
+	diags = append(diags, checkLLMAgentRequired(app)...)
+	diags = append(diags, checkLLMAgentReservedAttrs(app)...)
+	diags = append(diags, checkLLMAgentWorkspaceRoot(app)...)
+	diags = append(diags, checkLLMAgentMCPRefs(app)...)
 
 	return diags
 }
@@ -259,7 +263,8 @@ func checkAuthPages(app *parser.App) []Diagnostic {
 					"auth block is declared but required page '%s' is missing; "+
 						"declare `page %s` so the app controls the UI "+
 						"(the runtime only owns the POST side of auth routes)",
-					path, path),
+					path, path,
+				),
 				Context: "auth",
 			})
 		}
@@ -831,7 +836,8 @@ func checkNamedParamsExtra(sql string, tokens []sqlToken, path string, modelName
 						"named parameter ':%s' will not be provided by the form. "+
 							"The model field is '%s' (form sends ':%s', database column is '%s'). "+
 							"Use ':%s' instead",
-						param, fieldName, fieldName, param, fieldName),
+						param, fieldName, fieldName, param, fieldName,
+					),
 					Context: context,
 				})
 				continue
@@ -844,7 +850,8 @@ func checkNamedParamsExtra(sql string, tokens []sqlToken, path string, modelName
 				Message: fmt.Sprintf(
 					"named parameter ':%s' is not a form field or URL parameter. "+
 						"Did you mean ':%s'?",
-					param, suggestion),
+					param, suggestion,
+				),
 				Context: context,
 			})
 		} else {
@@ -857,7 +864,8 @@ func checkNamedParamsExtra(sql string, tokens []sqlToken, path string, modelName
 				Message: fmt.Sprintf(
 					"named parameter ':%s' is not a model field or URL parameter. "+
 						"Available: %s",
-					param, strings.Join(avail, ", ")),
+					param, strings.Join(avail, ", "),
+				),
 				Context: context,
 			})
 		}

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -109,10 +110,20 @@ func cmdCheck(filename, dbURL string) error {
 		if err != nil {
 			return fmt.Errorf("opening DB for check: %w", err)
 		}
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 		diags = analyzer.AnalyzeWithDB(app, db)
 	} else {
 		diags = analyzer.Analyze(app)
+	}
+
+	if analyzer.HasLLMAgentBlock(app) {
+		if _, err := exec.LookPath("claude"); err != nil {
+			diags = append(diags, analyzer.Diagnostic{
+				Level:   "warning",
+				Message: "`claude` CLI not found on PATH; `kilnx run` will refuse to start until installed",
+				Context: "startup",
+			})
+		}
 	}
 
 	if len(diags) == 0 {
@@ -136,6 +147,12 @@ func cmdRun(filename string) error {
 	if diags := analyzer.Analyze(app); len(diags) > 0 {
 		if printDiagnostics(diags) {
 			return fmt.Errorf("static analysis found errors, not starting server")
+		}
+	}
+
+	if analyzer.HasLLMAgentBlock(app) {
+		if _, err := exec.LookPath("claude"); err != nil {
+			return fmt.Errorf("kilnx: `claude` CLI not found on PATH (required by llm ... agent blocks; install Claude Code v2.x)")
 		}
 	}
 

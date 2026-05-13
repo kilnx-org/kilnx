@@ -840,7 +840,8 @@ func fieldDefsTableDDL(modelName string, isPostgres bool) string {
 			"  \"tenant_id\" TEXT,\n"+
 			"  \"sort_order\" INTEGER DEFAULT 0\n"+
 			")",
-		modelName, pkDef, boolType, boolDefault)
+		modelName, pkDef, boolType, boolDefault,
+	)
 }
 
 func (db *DB) fieldToColumnDef(f parser.Field) string {

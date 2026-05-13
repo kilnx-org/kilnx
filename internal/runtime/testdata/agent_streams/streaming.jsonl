@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"22222222-3333-4444-8555-666666666666","cwd":"/tmp","model":"claude-sonnet-4-6"}
+{"type":"stream_event","session_id":"22222222-3333-4444-8555-666666666666","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"chunk-"}}}
+{"type":"stream_event","session_id":"22222222-3333-4444-8555-666666666666","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"one "}}}
+{"type":"stream_event","session_id":"22222222-3333-4444-8555-666666666666","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"chunk-two"}}}
+{"type":"assistant","session_id":"22222222-3333-4444-8555-666666666666","message":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"chunk-one chunk-two"}],"stop_reason":"end_turn"}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"22222222-3333-4444-8555-666666666666","stop_reason":"end_turn","total_cost_usd":0.005,"duration_ms":42,"result":"chunk-one chunk-two"}

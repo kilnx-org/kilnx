@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","session_id":"11111111-2222-4333-8444-555555555555","cwd":"/tmp","model":"claude-sonnet-4-6"}
+{"type":"stream_event","session_id":"11111111-2222-4333-8444-555555555555","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}
+{"type":"stream_event","session_id":"11111111-2222-4333-8444-555555555555","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello "}}}
+{"type":"stream_event","session_id":"11111111-2222-4333-8444-555555555555","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"world"}}}
+{"type":"stream_event","session_id":"11111111-2222-4333-8444-555555555555","event":{"type":"content_block_stop","index":0}}
+{"type":"assistant","session_id":"11111111-2222-4333-8444-555555555555","message":{"id":"msg_01","type":"message","role":"assistant","content":[{"type":"text","text":"Hello world"}],"stop_reason":"end_turn"}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"11111111-2222-4333-8444-555555555555","stop_reason":"end_turn","total_cost_usd":0.0023,"duration_ms":1234,"result":"Hello world"}

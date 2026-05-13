@@ -7,6 +7,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ## [Unreleased]
 
 ### Added
+- `llm ... agent` runtime (P3): the `agent` discriminator now spawns the `claude` CLI (Claude Code v2.x) as a subprocess and consumes its `stream-json` output. Exposes `:<name>.text`, `:<name>.session_id`, `:<name>.cost_usd`, `:<name>.duration_ms`, `:<name>.stop_reason` to downstream nodes for manual persistence. Honours `permission-mode` (default `plan`), `tools`, `max-budget-usd` (required), `max-turns` (enforced in runtime since CLI lacks the flag), `cwd` (contained inside `config workspace-root` via `EvalSymlinks` prefix check; tmpdir created and removed when omitted), `resume: :session_id` for conversation continuation, and `mcp:` to mount top-level `mcp <name>` server declarations via a per-request `--mcp-config` file. `show-tools: true` opt-in surfaces tool_use/tool_result frames on a separate hyperstream channel when streaming.
+- Top-level `mcp <name>` keyword: declares MCP servers (stdio or http/sse transport) reachable by `llm ... agent` blocks. Children: `command`, `args`, `env`, `url`, `transport`.
+- `config workspace-root`: filesystem root for agent `cwd` resolution. Required by analyzer whenever any `llm ... agent` block exists.
+- `kilnx run` startup check refuses to start when an agent block is declared and the `claude` CLI is not on PATH. `kilnx check` reports the same condition as a warning.
 - `fetch` results bind under the user-chosen name (`fetch payment: ...` exposes `:payment.*`); previous releases hardcoded the `fetch.` prefix, silently overwriting multiple fetches in the same action.
 - Every `fetch` exposes `:<name>.status_code` and `:<name>.ok` (true for 2xx) so actions can branch with `on payment.ok` without inspecting response shape.
 - `fetch` body is encoded as JSON (with typed numbers and booleans) when the user sets `header Content-Type: application/json`. Required by Stripe, OpenAI, and other JSON-only APIs; legacy form-urlencoded encoding remains the default.

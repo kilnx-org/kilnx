@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anthropics/anthropic-sdk-go"
+
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
@@ -474,21 +476,24 @@ func TestResolveTenantPlaceholder_NilInputs(t *testing.T) {
 // ---------- llm.go ----------
 
 func TestMergeConsecutiveRoles(t *testing.T) {
-	msgs := []anthropicMessage{
-		{Role: "user", Content: "hello"},
-		{Role: "user", Content: "world"},
-		{Role: "assistant", Content: "hi"},
-		{Role: "assistant", Content: "there"},
+	msgs := []anthropic.MessageParam{
+		anthropic.NewUserMessage(anthropic.NewTextBlock("hello")),
+		anthropic.NewUserMessage(anthropic.NewTextBlock("world")),
+		anthropic.NewAssistantMessage(anthropic.NewTextBlock("hi")),
+		anthropic.NewAssistantMessage(anthropic.NewTextBlock("there")),
 	}
 	got := mergeConsecutiveRoles(msgs)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(got))
 	}
-	if got[0].Content != "hello\nworld" {
-		t.Errorf("merged user content = %q, want %q", got[0].Content, "hello\nworld")
+	if got[0].Role != anthropic.MessageParamRoleUser || len(got[0].Content) != 2 {
+		t.Errorf("user merge: role=%s blocks=%d", got[0].Role, len(got[0].Content))
 	}
-	if got[1].Content != "hi\nthere" {
-		t.Errorf("merged assistant content = %q, want %q", got[1].Content, "hi\nthere")
+	if got[1].Role != anthropic.MessageParamRoleAssistant || len(got[1].Content) != 2 {
+		t.Errorf("assistant merge: role=%s blocks=%d", got[1].Role, len(got[1].Content))
+	}
+	if got[0].Content[0].OfText.Text != "hello" || got[0].Content[1].OfText.Text != "world" {
+		t.Errorf("user content blocks unexpected: %+v", got[0].Content)
 	}
 }
 

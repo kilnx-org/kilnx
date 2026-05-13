@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -1268,12 +1269,60 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				querier = s.db
 			}
 			if querier != nil {
-				text, err := executeLLM(node, querier, formData)
-				if err != nil {
-					fmt.Printf("  llm error: %v\n", err)
-					formData[varName] = "Desculpe, ocorreu um erro ao processar sua mensagem."
-				} else {
-					formData[varName] = text
+				switch node.LLMMode {
+				case "response":
+					if node.LLMStreamTarget != "" {
+						// Streaming path hijacks the response writer and emits
+						// hyperstream envelopes. After this returns, no further
+						// HTML / fragments may be written for this request.
+						if tx != nil {
+							_ = tx.Commit()
+							tx = nil
+						}
+						if err := executeLLMStream(r.Context(), w, node, querier, formData); err != nil {
+							fmt.Printf("  llm-stream error: %v\n", err)
+						}
+						return
+					}
+					text, err := executeLLM(r.Context(), node, querier, formData)
+					if err != nil {
+						fmt.Printf("  llm error: %v\n", err)
+						formData[varName] = "Desculpe, ocorreu um erro ao processar sua mensagem."
+					} else {
+						formData[varName] = text
+					}
+				case "agent":
+					if tx != nil {
+						_ = tx.Commit()
+						tx = nil
+					}
+					streaming := node.LLMStreamTarget != ""
+					var aw http.ResponseWriter
+					if streaming {
+						aw = w
+					}
+					res, err := executeLLMAgent(r.Context(), node, s.getApp(), formData, aw)
+					if err != nil {
+						fmt.Printf("  llm-agent error: %v\n", err)
+						if streaming {
+							return
+						}
+						formData[varName] = ""
+						formData[varName+".error"] = err.Error()
+					} else {
+						formData[varName] = res.Text
+						formData[varName+".text"] = res.Text
+						formData[varName+".session_id"] = res.SessionID
+						formData[varName+".cost_usd"] = strconv.FormatFloat(res.CostUSD, 'f', 6, 64)
+						formData[varName+".duration_ms"] = strconv.FormatInt(res.DurationMS, 10)
+						formData[varName+".stop_reason"] = res.StopReason
+					}
+					if streaming {
+						return
+					}
+				default:
+					fmt.Printf("  llm: missing or unknown mode %q (expected response|agent)\n", node.LLMMode)
+					formData[varName] = "Configuração inválida do bloco llm."
 				}
 			}
 

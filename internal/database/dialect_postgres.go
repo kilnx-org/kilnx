@@ -55,7 +55,8 @@ func (PostgresDialect) ColumnsSQL(table string) string {
 	return fmt.Sprintf(
 		`SELECT column_name FROM information_schema.columns
 		 WHERE table_schema = 'public' AND table_name = '%s'
-		 ORDER BY ordinal_position`, table)
+		 ORDER BY ordinal_position`, table,
+	)
 }
 
 // ColumnsInfoSQL returns name, normalized data_type, notnull flag, and a
@@ -70,7 +71,8 @@ func (PostgresDialect) ColumnsInfoSQL(table string) string {
 		        CASE WHEN column_default IS NULL THEN 0 ELSE 1 END
 		 FROM information_schema.columns
 		 WHERE table_schema = 'public' AND table_name = '%s'
-		 ORDER BY ordinal_position`, table)
+		 ORDER BY ordinal_position`, table,
+	)
 }
 
 // UniqueColumnsSQL returns the names of columns covered by a single-column

@@ -134,7 +134,8 @@ func (ss *SessionStore) Create(user database.Row, identityField string) string {
 				"role":       sess.Role,
 				"data":       string(dataJSON),
 				"expires_at": expiresAt.Format(time.RFC3339),
-			})
+			},
+		)
 	}
 
 	return id
@@ -161,7 +162,8 @@ func (ss *SessionStore) Delete(id string) {
 	if ss.db != nil {
 		ss.db.ExecWithParams(
 			`DELETE FROM _kilnx_sessions WHERE token = :token`,
-			map[string]string{"token": id})
+			map[string]string{"token": id},
+		)
 	}
 }
 
@@ -171,7 +173,8 @@ func (ss *SessionStore) loadFromDB() {
 		return
 	}
 	rows, err := ss.db.QueryRows(
-		`SELECT token, user_id, identity, role, data, expires_at FROM _kilnx_sessions WHERE expires_at > datetime('now')`)
+		`SELECT token, user_id, identity, role, data, expires_at FROM _kilnx_sessions WHERE expires_at > datetime('now')`,
+	)
 	if err != nil {
 		return
 	}
@@ -228,7 +231,8 @@ func (ss *SessionStore) cleanupLoop() {
 		if ss.db != nil {
 			ss.db.ExecWithParams(
 				`DELETE FROM _kilnx_sessions WHERE expires_at < :now`,
-				map[string]string{"now": time.Now().Format(time.RFC3339)})
+				map[string]string{"now": time.Now().Format(time.RFC3339)},
+			)
 		}
 	}
 }

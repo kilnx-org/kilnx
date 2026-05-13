@@ -177,7 +177,8 @@ func TestPostgresDialectInternalTableDDL(t *testing.T) {
 
 func TestBindParamsPostgresPlaceholders(t *testing.T) {
 	d := PostgresDialect{}
-	query, args := bindParams(d,
+	query, args := bindParams(
+		d,
 		"SELECT * FROM t WHERE a = :x AND b = :y AND c = :x",
 		map[string]string{"x": "1", "y": "2"},
 	)

@@ -23,7 +23,8 @@ func (s *Server) mergeDBFieldDefs(modelName string, base *parser.CustomFieldMani
 
 	sql := fmt.Sprintf(
 		`SELECT "name","kind","label","required","options","reference_model" FROM "_%s_field_defs" ORDER BY "sort_order","id"`,
-		modelName)
+		modelName,
+	)
 	rows, err := s.db.QueryRows(sql)
 	if err != nil {
 		// Table may not exist yet (migration not run); degrade gracefully.

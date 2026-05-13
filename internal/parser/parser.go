@@ -32,6 +32,19 @@ type App struct {
 	Translations    map[string]map[string]string    // lang -> key -> value
 	NamedQueries    map[string]string               // name -> SQL
 	CustomManifests map[string]*CustomFieldManifest // model name -> custom field definitions
+	MCPServers      []MCPServer                     // top-level mcp <name> blocks
+}
+
+// MCPServer is a top-level `mcp <name>` declaration referenced by name
+// from `llm ... agent` blocks via the `mcp:` attribute. The runtime
+// materialises a temporary `--mcp-config` JSON file per request.
+type MCPServer struct {
+	Name      string
+	Command   string            // stdio transport: executable
+	Args      []string          // stdio transport: argv
+	Env       map[string]string // env passed to the subprocess
+	URL       string            // sse/http transport: endpoint
+	Transport string            // "stdio" (default if command set), "sse", or "http"
 }
 
 // Test is a named scenario from a `test` block, executed as an end-to-end
@@ -61,6 +74,7 @@ type AppConfig struct {
 	DefaultLanguage string   // default i18n language
 	DetectLanguage  string   // "header accept-language" or empty
 	CORSOrigins     []string // allowed CORS origins (empty = same-origin only)
+	WorkspaceRoot   string   // filesystem root for llm agent cwd resolution (P3)
 }
 
 // LogConfig configures runtime logging behaviour from a `log` block.
@@ -349,38 +363,57 @@ const (
 // Node is one statement inside a Page, Action, Schedule, or similar
 // body. NodeType selects which fields are meaningful; the rest are zero.
 type Node struct {
-	Type          NodeType
-	Value         string
-	Name          string            // for query: result var name
-	SQL           string            // for query: the raw SQL
-	SourceModel   string            // primary model this query targets (set by analyzer)
-	Props         map[string]string // for on: condition; for send email: body
-	Paginate      int               // for query: items per page (0 = no pagination)
-	ModelName     string            // for validate: which model to validate against
-	QuerySQL      string            // for respond ... query: pre-fill data
-	Validations   []Validation      // for validate block
-	RespondTarget string            // for respond: CSS selector target
-	RespondSwap   string            // for respond: htmx swap strategy
-	HTMLContent   string            // for html: raw HTML content
-	EmailTo       string            // for send email: recipient (:email or query result)
-	EmailSubject  string            // for send email: subject line
-	EmailTemplate string            // for send email: template name
-	JobName       string            // for enqueue: which job to run
-	JobParams     map[string]string // for enqueue: params to pass to job
-	Children      []Node            // for on: child nodes to execute
-	StatusCode    int               // for respond: HTTP status code
-	BroadcastRoom string            // for broadcast: room name
-	BroadcastFrag string            // for broadcast: fragment reference
-	TemplateName  string            // for generate pdf: template name
-	DataQueryName string            // for generate pdf: data query name
-	EmailAttach   string            // for send email: attachment file path or param
-	FetchURL      string            // for fetch: the URL to request
-	FetchMethod   string            // for fetch: GET, POST, PUT, DELETE
-	FetchHeaders  map[string]string // for fetch: request headers
-	FetchBody     map[string]string // for fetch: POST body params
-	LLMModel      string            // for llm: model name (e.g. claude-sonnet-4-6)
-	LLMSystem     string            // for llm: system prompt
-	LLMHistorySQL string            // for llm: SQL to fetch message history
+	Type           NodeType
+	Value          string
+	Name           string            // for query: result var name
+	SQL            string            // for query: the raw SQL
+	SourceModel    string            // primary model this query targets (set by analyzer)
+	Props          map[string]string // for on: condition; for send email: body
+	Paginate       int               // for query: items per page (0 = no pagination)
+	ModelName      string            // for validate: which model to validate against
+	QuerySQL       string            // for respond ... query: pre-fill data
+	Validations    []Validation      // for validate block
+	RespondTarget  string            // for respond: CSS selector target
+	RespondSwap    string            // for respond: htmx swap strategy
+	HTMLContent    string            // for html: raw HTML content
+	EmailTo        string            // for send email: recipient (:email or query result)
+	EmailSubject   string            // for send email: subject line
+	EmailTemplate  string            // for send email: template name
+	JobName        string            // for enqueue: which job to run
+	JobParams      map[string]string // for enqueue: params to pass to job
+	Children       []Node            // for on: child nodes to execute
+	StatusCode     int               // for respond: HTTP status code
+	BroadcastRoom  string            // for broadcast: room name
+	BroadcastFrag  string            // for broadcast: fragment reference
+	TemplateName   string            // for generate pdf: template name
+	DataQueryName  string            // for generate pdf: data query name
+	EmailAttach    string            // for send email: attachment file path or param
+	FetchURL       string            // for fetch: the URL to request
+	FetchMethod    string            // for fetch: GET, POST, PUT, DELETE
+	FetchHeaders   map[string]string // for fetch: request headers
+	FetchBody      map[string]string // for fetch: POST body params
+	LLMModel       string            // for llm: model name (e.g. claude-sonnet-4-6)
+	LLMSystem      string            // for llm: system prompt
+	LLMTemperature float64           // for llm: sampling temperature (0 = unset)
+	LLMMaxTokens   int               // for llm: max output tokens (0 = default)
+	LLMMode        string            // for llm: "response" or "agent"
+
+	// response-mode fields
+	LLMHistorySQL   string // for llm response: SQL yielding message rows
+	LLMStreamTarget string // for llm response: CSS selector enabling hyperstream
+	LLMStreamSwap   string // for llm response: hyperstream swap style (default "append")
+
+	// agent-mode fields
+	LLMAgentCwd            string   // for llm agent: working directory (resolved vs workspace-root)
+	LLMAgentTools          []string // for llm agent: allowed tool names
+	LLMAgentMaxTurns       int      // for llm agent: forced-stop turn limit
+	LLMAgentBudget         float64  // for llm agent: cost cap in USD (required by analyzer)
+	LLMAgentPermissionMode string   // for llm agent: plan|acceptEdits|bypassPermissions
+	LLMAgentMCP            []string // for llm agent: MCP server names from config
+	LLMAgentPool           int      // for llm agent: reserved; runtime ignores in v0.2.x
+	LLMAgentPoolIdleTTL    string   // for llm agent: reserved; runtime ignores in v0.2.x
+	LLMAgentShowTools      bool     // for llm agent: emit tool_use/tool_result frames on stream
+	LLMAgentResume         string   // for llm agent: session id to resume (supports :param)
 }
 
 // Validation is one field-level rule set inside a `validate` block.
@@ -468,6 +501,14 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 		case "webhook":
 			wh := p.parseWebhook()
 			app.Webhooks = append(app.Webhooks, wh)
+		case "mcp":
+			srv, err := p.parseMCPServer()
+			if err != nil {
+				p.addError(err)
+				p.synchronize()
+				continue
+			}
+			app.MCPServers = append(app.MCPServers, srv)
 		case "socket":
 			sock := p.parseSocket()
 			app.Sockets = append(app.Sockets, sock)
@@ -2497,6 +2538,96 @@ func (p *parserState) parseEnqueueNode() Node {
 	return node
 }
 
+// parseMCPServer parses a top-level `mcp <name>` declaration:
+//
+//	mcp filesystem
+//	  command: npx
+//	  args: -y, @modelcontextprotocol/server-filesystem, /tmp/agents
+//	  env: NODE_ENV=production
+//	  transport: stdio
+//
+// HTTP/SSE form:
+//
+//	mcp remote
+//	  url: https://mcp.example.com/sse
+//	  transport: sse
+func (p *parserState) parseMCPServer() (MCPServer, error) {
+	srv := MCPServer{Env: map[string]string{}}
+
+	// consume "mcp"
+	p.advance()
+
+	// <name>
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		srv.Name = p.advance().Value
+	}
+	if srv.Name == "" {
+		return srv, fmt.Errorf("mcp block requires a name: `mcp <name>`")
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type != lexer.TokenIndent {
+		return srv, nil
+	}
+	p.advance()
+
+	for !p.isEOF() {
+		if p.current().Type == lexer.TokenDedent {
+			p.advance()
+			break
+		}
+		if p.current().Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		if p.current().Type != lexer.TokenIdentifier && p.current().Type != lexer.TokenKeyword {
+			p.advance()
+			continue
+		}
+
+		key := p.current().Value
+		lineNum := p.current().Line
+		p.advance()
+		if p.current().Type == lexer.TokenColon {
+			p.advance()
+		}
+		val := extractValueAfterColon(p.lines, lineNum)
+
+		switch key {
+		case "command":
+			srv.Command = strings.Trim(val, "\"' ")
+		case "args":
+			srv.Args = splitCSVList(val)
+		case "env":
+			for _, pair := range splitCSVList(val) {
+				eq := strings.Index(pair, "=")
+				if eq <= 0 {
+					continue
+				}
+				srv.Env[strings.TrimSpace(pair[:eq])] = strings.TrimSpace(pair[eq+1:])
+			}
+		case "url":
+			srv.URL = strings.Trim(val, "\"' ")
+		case "transport":
+			srv.Transport = strings.TrimSpace(val)
+		}
+		p.skipToEndOfLine()
+	}
+
+	if srv.Transport == "" {
+		if srv.Command != "" {
+			srv.Transport = "stdio"
+		} else if srv.URL != "" {
+			srv.Transport = "sse"
+		}
+	}
+
+	return srv, nil
+}
+
 // parseWebhook parses:
 //
 //	webhook /stripe/payment secret env STRIPE_SECRET
@@ -3126,6 +3257,8 @@ func (p *parserState) parseConfig() AppConfig {
 						cfg.CORSOrigins = append(cfg.CORSOrigins, origin)
 					}
 				}
+			case "workspace-root", "workspace_root":
+				cfg.WorkspaceRoot = strings.Trim(rawVal, "\"' ")
 			}
 
 			p.skipToEndOfLine()
@@ -3594,76 +3727,201 @@ func (p *parserState) parseFetchNode() Node {
 	return node
 }
 
-// parseLLMNode parses:
+// parseLLMNode parses the v0.2 `llm` keyword block:
 //
-//	llm varname: model-name
-//	  history: SELECT papel, conteudo FROM mensagem WHERE conversa_id = :id ORDER BY criada ASC
-//	  system: You are a helpful assistant...
+//	llm <name>
+//	  model: claude-sonnet-4-6
+//	  system: You are helpful
+//	  temperature: 0.7
+//	  max-tokens: 1024
+//	  response                              # OR `agent`
+//	    history: SELECT papel, conteudo FROM mensagem WHERE conversa_id = :id ORDER BY criada
+//	    stream: #chat-msgs
+//	    stream-swap: append
+//
+// Exactly one of `response` or `agent` must appear; the analyzer enforces
+// exclusivity. Old v0.1 shape (`llm name: model` with inline `history`/`system`)
+// is no longer accepted.
 func (p *parserState) parseLLMNode() Node {
 	node := Node{Type: NodeLLM}
 
-	llmLine := p.current().Line
 	p.advance() // consume "llm"
 
-	// varname (optional, before colon)
+	// llm <name>  — name is required, no colon, no model on this line
 	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
-		next := p.peek()
-		if next.Type == lexer.TokenColon {
-			node.Name = p.advance().Value
-			p.advance() // consume ':'
-		}
-	}
-
-	// model name on same line
-	if llmLine >= 1 && llmLine <= len(p.lines) {
-		line := strings.TrimSpace(p.lines[llmLine-1])
-		if colonIdx := strings.LastIndex(line, ":"); colonIdx >= 0 {
-			node.LLMModel = strings.TrimSpace(line[colonIdx+1:])
-		}
+		node.Name = p.advance().Value
 	}
 
 	p.skipToEndOfLine()
 	p.skipNewlines()
 
-	if p.current().Type == lexer.TokenIndent {
-		p.advance()
-		for !p.isEOF() {
-			if p.current().Type == lexer.TokenDedent {
-				p.advance()
-				break
-			}
-			if p.current().Type == lexer.TokenNewline {
-				p.advance()
-				continue
-			}
-			tok := p.current()
-			if tok.Type == lexer.TokenIdentifier || tok.Type == lexer.TokenKeyword {
-				keyLine := tok.Line
-				key := tok.Value
-				p.advance()
-				if p.current().Type == lexer.TokenColon {
-					p.advance()
-				}
-				if keyLine >= 1 && keyLine <= len(p.lines) {
-					rawLine := strings.TrimSpace(p.lines[keyLine-1])
-					val := ""
-					if colonIdx := strings.Index(rawLine, ":"); colonIdx >= 0 {
-						val = strings.TrimSpace(rawLine[colonIdx+1:])
-					}
-					switch key {
-					case "history":
-						node.LLMHistorySQL = val
-					case "system":
-						node.LLMSystem = val
-					}
-				}
-			}
+	if p.current().Type != lexer.TokenIndent {
+		return node
+	}
+	p.advance() // consume indent
+
+	for !p.isEOF() {
+		if p.current().Type == lexer.TokenDedent {
+			p.advance()
+			break
+		}
+		if p.current().Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		tok := p.current()
+		if tok.Type != lexer.TokenIdentifier && tok.Type != lexer.TokenKeyword {
+			p.advance()
+			continue
+		}
+
+		key := tok.Value
+		keyLine := tok.Line
+
+		switch key {
+		case "response", "agent":
+			// discriminated mode block; consume header then sub-body
+			node.LLMMode = key
+			p.advance() // consume mode keyword
 			p.skipToEndOfLine()
 			p.skipNewlines()
+			if p.current().Type == lexer.TokenIndent {
+				p.advance()
+				p.parseLLMModeChildren(&node, key)
+			}
+			continue
 		}
+
+		// flat scalar children of `llm`
+		p.advance() // consume key identifier
+		if p.current().Type == lexer.TokenColon {
+			p.advance()
+		}
+		val := extractValueAfterColon(p.lines, keyLine)
+		switch key {
+		case "model":
+			node.LLMModel = val
+		case "system":
+			node.LLMSystem = val
+		case "temperature":
+			if f, err := strconv.ParseFloat(val, 64); err == nil {
+				node.LLMTemperature = f
+			}
+		case "max-tokens", "max_tokens":
+			if n, err := strconv.Atoi(val); err == nil {
+				node.LLMMaxTokens = n
+			}
+		}
+		p.skipToEndOfLine()
+		p.skipNewlines()
 	}
 
 	return node
+}
+
+// parseLLMModeChildren consumes the indented body of `response` or `agent`
+// up to its matching dedent.
+func (p *parserState) parseLLMModeChildren(node *Node, mode string) {
+	for !p.isEOF() {
+		if p.current().Type == lexer.TokenDedent {
+			p.advance()
+			return
+		}
+		if p.current().Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		tok := p.current()
+		if tok.Type != lexer.TokenIdentifier && tok.Type != lexer.TokenKeyword {
+			p.advance()
+			continue
+		}
+
+		key := tok.Value
+		keyLine := tok.Line
+		p.advance()
+		if p.current().Type == lexer.TokenColon {
+			p.advance()
+		}
+		val := extractValueAfterColon(p.lines, keyLine)
+
+		switch mode {
+		case "response":
+			switch key {
+			case "history":
+				node.LLMHistorySQL = val
+			case "stream":
+				node.LLMStreamTarget = val
+			case "stream-swap", "stream_swap":
+				node.LLMStreamSwap = val
+			}
+		case "agent":
+			switch key {
+			case "cwd":
+				node.LLMAgentCwd = val
+			case "tools":
+				node.LLMAgentTools = splitCSVList(val)
+			case "max-turns", "max_turns":
+				if n, err := strconv.Atoi(val); err == nil {
+					node.LLMAgentMaxTurns = n
+				}
+			case "max-budget-usd", "max_budget_usd":
+				if f, err := strconv.ParseFloat(val, 64); err == nil {
+					node.LLMAgentBudget = f
+				}
+			case "permission-mode", "permission_mode":
+				node.LLMAgentPermissionMode = val
+			case "mcp":
+				node.LLMAgentMCP = splitCSVList(val)
+			case "pool":
+				if n, err := strconv.Atoi(val); err == nil {
+					node.LLMAgentPool = n
+				}
+			case "pool-idle-ttl", "pool_idle_ttl":
+				node.LLMAgentPoolIdleTTL = val
+			case "show-tools", "show_tools":
+				v := strings.ToLower(strings.TrimSpace(val))
+				node.LLMAgentShowTools = v == "true" || v == "yes" || v == "1"
+			case "resume":
+				node.LLMAgentResume = val
+			}
+		}
+		p.skipToEndOfLine()
+		p.skipNewlines()
+	}
+}
+
+// extractValueAfterColon returns the trimmed text following the first ':'
+// on the given source line. Returns "" when the line has no colon.
+func extractValueAfterColon(lines []string, lineNum int) string {
+	if lineNum < 1 || lineNum > len(lines) {
+		return ""
+	}
+	raw := strings.TrimSpace(lines[lineNum-1])
+	idx := strings.Index(raw, ":")
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(raw[idx+1:])
+}
+
+// splitCSVList splits "a, b, c" into ["a","b","c"], trimming each entry
+// and dropping empties.
+func splitCSVList(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // peek returns the next token without advancing

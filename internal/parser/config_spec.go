@@ -16,6 +16,7 @@ func init() {
 			"name", "database", "port", "secret",
 			"static", "uploads",
 			"default_language", "detect_language", "cors",
+			"workspace-root",
 		},
 		Since: "0.1.0",
 		Examples: []spec.Example{
@@ -48,4 +49,15 @@ func init() {
 		e.Since = "0.1.0"
 		spec.Register(e)
 	}
+
+	spec.Register(spec.Entity{
+		Name:        "workspace-root",
+		Kind:        spec.KindAttribute,
+		Summary:     "Filesystem root for agent cwd resolution and tmp dirs.",
+		Description: "Required when any llm agent block declares cwd. All resolved cwd paths must stay inside this prefix after symlink eval.",
+		Syntax:      "workspace-root: <path>",
+		Args:        []spec.Arg{{Name: "path", Type: "path", Required: true}},
+		ParentScope: []string{"config"},
+		Since:       "0.1.3",
+	})
 }

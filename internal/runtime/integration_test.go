@@ -2,21 +2,48 @@ package runtime
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"testing"
-	"time"
+
+	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 
 	"github.com/kilnx-org/kilnx/internal/database"
 	"github.com/kilnx-org/kilnx/internal/parser"
 )
+
+// withTestLLMClient swaps the package-level llmClient with one pointed at
+// the given httptest server URL, disabling retries for predictable tests.
+// Returns a restore func.
+func withTestLLMClient(baseURL string) func() {
+	orig := llmClient
+	llmClient = anthropic.NewClient(
+		option.WithBaseURL(baseURL),
+		option.WithAPIKey("test-key"),
+		option.WithMaxRetries(0),
+	)
+	return func() { llmClient = orig }
+}
+
+// withTestLLMHTTPClient swaps llmClient to use a custom http.Client (for
+// transport-level error simulation) without hitting the network.
+func withTestLLMHTTPClient(c *http.Client) func() {
+	orig := llmClient
+	llmClient = anthropic.NewClient(
+		option.WithHTTPClient(c),
+		option.WithAPIKey("test-key"),
+		option.WithMaxRetries(0),
+	)
+	return func() { llmClient = orig }
+}
 
 // ---------- fake SMTP server ----------
 
@@ -416,7 +443,7 @@ func TestExecuteFetch_NonJSONResponse(t *testing.T) {
 func TestExecuteLLM_MissingAPIKey(t *testing.T) {
 	os.Unsetenv("ANTHROPIC_API_KEY")
 	node := parser.Node{Type: parser.NodeLLM}
-	_, err := executeLLM(node, newMockExecutor(), nil)
+	_, err := executeLLM(context.Background(), node, newMockExecutor(), nil)
 	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY not set") {
 		t.Fatalf("expected missing API key error, got %v", err)
 	}
@@ -427,7 +454,7 @@ func TestExecuteLLM_EmptyHistory(t *testing.T) {
 	defer os.Unsetenv("ANTHROPIC_API_KEY")
 
 	node := parser.Node{Type: parser.NodeLLM}
-	result, err := executeLLM(node, newMockExecutor(), nil)
+	result, err := executeLLM(context.Background(), node, newMockExecutor(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -448,34 +475,26 @@ func TestExecuteLLM_WithHistory(t *testing.T) {
 			t.Errorf("expected x-api-key test-key, got %s", r.Header.Get("x-api-key"))
 		}
 
-		var req anthropicRequest
+		var req map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode error: %v", err)
 		}
-		if len(req.Messages) == 0 {
+		msgs, _ := req["messages"].([]any)
+		if len(msgs) == 0 {
 			t.Error("expected non-empty messages")
 		}
-		if req.System != "You are a test assistant" {
-			t.Errorf("expected system prompt, got %q", req.System)
+		sysBlocks, _ := req["system"].([]any)
+		if len(sysBlocks) != 1 {
+			t.Fatalf("expected 1 system block, got %v", req["system"])
+		}
+		if sb, _ := sysBlocks[0].(map[string]any); sb["text"] != "You are a test assistant" {
+			t.Errorf("expected system prompt, got %v", sb)
 		}
 
-		resp := anthropicResponse{
-			Content: []struct {
-				Text string `json:"text"`
-			}{{Text: "  Resposta do assistente  "}},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+		writeAnthropicMessage(w, "  Resposta do assistente  ")
 	}))
 	defer srv.Close()
-
-	u, _ := url.Parse(srv.URL)
-	origClient := llmClient
-	llmClient = &http.Client{
-		Timeout:   60 * time.Second,
-		Transport: &urlRewritingTransport{host: u.Host},
-	}
-	defer func() { llmClient = origClient }()
+	defer withTestLLMClient(srv.URL)()
 
 	db := newMockExecutor()
 	db.queryRowsWithParamsResults["SELECT papel, conteudo FROM messages"] = []database.Row{
@@ -490,7 +509,7 @@ func TestExecuteLLM_WithHistory(t *testing.T) {
 		LLMHistorySQL: "SELECT papel, conteudo FROM messages",
 	}
 
-	result, err := executeLLM(node, db, nil)
+	result, err := executeLLM(context.Background(), node, db, nil)
 	if err != nil {
 		t.Fatalf("executeLLM failed: %v", err)
 	}
@@ -504,22 +523,18 @@ func TestExecuteLLM_APIError(t *testing.T) {
 	defer os.Unsetenv("ANTHROPIC_API_KEY")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(anthropicResponse{
-			Error: &struct {
-				Message string `json:"message"`
-			}{Message: "invalid model"},
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"type": "error",
+			"error": map[string]any{
+				"type":    "invalid_request_error",
+				"message": "invalid model",
+			},
 		})
 	}))
 	defer srv.Close()
-
-	u, _ := url.Parse(srv.URL)
-	origClient := llmClient
-	llmClient = &http.Client{
-		Timeout:   60 * time.Second,
-		Transport: &urlRewritingTransport{host: u.Host},
-	}
-	defer func() { llmClient = origClient }()
+	defer withTestLLMClient(srv.URL)()
 
 	db := newMockExecutor()
 	db.queryRowsWithParamsResults["SELECT papel, conteudo FROM messages"] = []database.Row{
@@ -531,7 +546,7 @@ func TestExecuteLLM_APIError(t *testing.T) {
 		LLMHistorySQL: "SELECT papel, conteudo FROM messages",
 	}
 
-	_, err := executeLLM(node, db, nil)
+	_, err := executeLLM(context.Background(), node, db, nil)
 	if err == nil || !strings.Contains(err.Error(), "invalid model") {
 		t.Fatalf("expected anthropic error, got %v", err)
 	}
@@ -542,21 +557,17 @@ func TestExecuteLLM_EmptyContent(t *testing.T) {
 	defer os.Unsetenv("ANTHROPIC_API_KEY")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(anthropicResponse{
-			Content: []struct {
-				Text string `json:"text"`
-			}{},
+		writeAnthropicMessageRaw(w, map[string]any{
+			"id":      "msg_1",
+			"type":    "message",
+			"role":    "assistant",
+			"model":   "claude-test",
+			"content": []any{},
+			"usage":   map[string]any{"input_tokens": 1, "output_tokens": 0},
 		})
 	}))
 	defer srv.Close()
-
-	u, _ := url.Parse(srv.URL)
-	origClient := llmClient
-	llmClient = &http.Client{
-		Timeout:   60 * time.Second,
-		Transport: &urlRewritingTransport{host: u.Host},
-	}
-	defer func() { llmClient = origClient }()
+	defer withTestLLMClient(srv.URL)()
 
 	db := newMockExecutor()
 	db.queryRowsWithParamsResults["SELECT papel, conteudo FROM messages"] = []database.Row{
@@ -568,7 +579,7 @@ func TestExecuteLLM_EmptyContent(t *testing.T) {
 		LLMHistorySQL: "SELECT papel, conteudo FROM messages",
 	}
 
-	_, err := executeLLM(node, db, nil)
+	_, err := executeLLM(context.Background(), node, db, nil)
 	if err == nil || !strings.Contains(err.Error(), "empty response") {
 		t.Fatalf("expected empty response error, got %v", err)
 	}
@@ -586,7 +597,7 @@ func TestExecuteLLM_HistoryQueryError(t *testing.T) {
 		LLMHistorySQL: "SELECT papel, conteudo FROM messages",
 	}
 
-	_, err := executeLLM(node, db, nil)
+	_, err := executeLLM(context.Background(), node, db, nil)
 	if err == nil || !strings.Contains(err.Error(), "llm history query") {
 		t.Fatalf("expected history query error, got %v", err)
 	}
@@ -597,26 +608,28 @@ func TestExecuteLLM_HistorySkipEmptyAndSystem(t *testing.T) {
 	defer os.Unsetenv("ANTHROPIC_API_KEY")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req anthropicRequest
+		var req map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		if len(req.Messages) != 1 {
-			t.Errorf("expected 1 message after skipping empty and system, got %d", len(req.Messages))
+		msgs, _ := req["messages"].([]any)
+		if len(msgs) != 1 {
+			t.Errorf("expected 1 message after skipping empty and system, got %d", len(msgs))
 		}
-		if req.Messages[0].Role != "user" || req.Messages[0].Content != "system msg" {
-			t.Errorf("expected user role with system msg, got %+v", req.Messages[0])
+		m0, _ := msgs[0].(map[string]any)
+		if m0["role"] != "user" {
+			t.Errorf("expected user role, got %v", m0["role"])
 		}
-		_ = json.NewEncoder(w).Encode(anthropicResponse{
-			Content: []struct {
-				Text string `json:"text"`
-			}{{Text: "ok"}},
-		})
+		blocks, _ := m0["content"].([]any)
+		if len(blocks) != 1 {
+			t.Fatalf("expected 1 content block, got %v", m0["content"])
+		}
+		b0, _ := blocks[0].(map[string]any)
+		if b0["text"] != "system msg" {
+			t.Errorf("expected text 'system msg', got %v", b0["text"])
+		}
+		writeAnthropicMessage(w, "ok")
 	}))
 	defer srv.Close()
-
-	u, _ := url.Parse(srv.URL)
-	origClient := llmClient
-	llmClient = &http.Client{Transport: &urlRewritingTransport{host: u.Host}}
-	defer func() { llmClient = origClient }()
+	defer withTestLLMClient(srv.URL)()
 
 	db := newMockExecutor()
 	db.queryRowsWithParamsResults["SELECT papel, conteudo FROM messages"] = []database.Row{
@@ -629,7 +642,7 @@ func TestExecuteLLM_HistorySkipEmptyAndSystem(t *testing.T) {
 		LLMHistorySQL: "SELECT papel, conteudo FROM messages",
 	}
 
-	result, err := executeLLM(node, db, nil)
+	result, err := executeLLM(context.Background(), node, db, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -642,11 +655,7 @@ func TestExecuteLLM_NetworkError(t *testing.T) {
 	os.Setenv("ANTHROPIC_API_KEY", "test-key")
 	defer os.Unsetenv("ANTHROPIC_API_KEY")
 
-	origClient := llmClient
-	llmClient = &http.Client{
-		Transport: &failingTransport{},
-	}
-	defer func() { llmClient = origClient }()
+	defer withTestLLMHTTPClient(&http.Client{Transport: &failingTransport{}})()
 
 	db := newMockExecutor()
 	db.queryRowsWithParamsResults["SELECT papel, conteudo FROM messages"] = []database.Row{
@@ -658,9 +667,9 @@ func TestExecuteLLM_NetworkError(t *testing.T) {
 		LLMHistorySQL: "SELECT papel, conteudo FROM messages",
 	}
 
-	_, err := executeLLM(node, db, nil)
-	if err == nil || !strings.Contains(err.Error(), "llm http") {
-		t.Fatalf("expected network error, got %v", err)
+	_, err := executeLLM(context.Background(), node, db, nil)
+	if err == nil || !strings.Contains(err.Error(), "anthropic") {
+		t.Fatalf("expected network error wrapped by anthropic, got %v", err)
 	}
 }
 
@@ -673,13 +682,7 @@ func TestExecuteLLM_InvalidJSONResponse(t *testing.T) {
 		w.Write([]byte("not json"))
 	}))
 	defer srv.Close()
-
-	u, _ := url.Parse(srv.URL)
-	origClient := llmClient
-	llmClient = &http.Client{
-		Transport: &urlRewritingTransport{host: u.Host},
-	}
-	defer func() { llmClient = origClient }()
+	defer withTestLLMClient(srv.URL)()
 
 	db := newMockExecutor()
 	db.queryRowsWithParamsResults["SELECT papel, conteudo FROM messages"] = []database.Row{
@@ -691,10 +694,31 @@ func TestExecuteLLM_InvalidJSONResponse(t *testing.T) {
 		LLMHistorySQL: "SELECT papel, conteudo FROM messages",
 	}
 
-	_, err := executeLLM(node, db, nil)
-	if err == nil || !strings.Contains(err.Error(), "llm parse") {
-		t.Fatalf("expected parse error, got %v", err)
+	_, err := executeLLM(context.Background(), node, db, nil)
+	if err == nil || !strings.Contains(err.Error(), "anthropic") {
+		t.Fatalf("expected parse error wrapped by anthropic, got %v", err)
 	}
+}
+
+// writeAnthropicMessage writes a minimal valid Messages API response with a
+// single text block of the given content.
+func writeAnthropicMessage(w http.ResponseWriter, text string) {
+	writeAnthropicMessageRaw(w, map[string]any{
+		"id":    "msg_1",
+		"type":  "message",
+		"role":  "assistant",
+		"model": "claude-test",
+		"content": []any{
+			map[string]any{"type": "text", "text": text},
+		},
+		"stop_reason": "end_turn",
+		"usage":       map[string]any{"input_tokens": 1, "output_tokens": 1},
+	})
+}
+
+func writeAnthropicMessageRaw(w http.ResponseWriter, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 type failingTransport struct{}
