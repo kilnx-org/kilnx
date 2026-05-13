@@ -127,27 +127,28 @@ func TestLLMOldShapeRejected(t *testing.T) {
     history: SELECT 1
     system: You are helpful
 `
-	app, err := parseAllowErrors(t, src)
-	if err != nil {
-		// Either error or empty model/mode is acceptable as a v0.2 rejection.
-		return
-	}
-	if len(app.Actions) == 0 {
-		return
+	app := parse(t, src)
+	if len(app.Actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(app.Actions))
 	}
 	body := app.Actions[0].Body
-	for _, n := range body {
-		if n.Type != NodeLLM {
-			continue
+	var llm *Node
+	for i := range body {
+		if body[i].Type == NodeLLM {
+			llm = &body[i]
+			break
 		}
-		// Old shape inline model after colon should NOT populate LLMModel
-		// (only the child `model:` line should).
-		if n.LLMModel == "claude-sonnet-4-6" {
-			t.Errorf("v0.2 parser must not accept inline model after colon; got LLMModel=%q", n.LLMModel)
-		}
-		// No mode declared means response/agent missing — analyzer would catch.
-		if n.LLMMode != "" {
-			t.Errorf("expected empty LLMMode when no response/agent block; got %q", n.LLMMode)
-		}
+	}
+	if llm == nil {
+		t.Fatalf("expected a NodeLLM in body, found none")
+	}
+	// v0.2 parser must ignore inline model after colon — only the child
+	// `model:` line populates LLMModel.
+	if llm.LLMModel != "" {
+		t.Errorf("LLMModel: want %q, got %q", "", llm.LLMModel)
+	}
+	// No response/agent block ⇒ LLMMode must remain empty (analyzer catches).
+	if llm.LLMMode != "" {
+		t.Errorf("LLMMode: want %q, got %q", "", llm.LLMMode)
 	}
 }

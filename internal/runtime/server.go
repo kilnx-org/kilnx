@@ -1268,12 +1268,34 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				querier = s.db
 			}
 			if querier != nil {
-				text, err := executeLLM(node, querier, formData)
-				if err != nil {
-					fmt.Printf("  llm error: %v\n", err)
-					formData[varName] = "Desculpe, ocorreu um erro ao processar sua mensagem."
-				} else {
-					formData[varName] = text
+				switch node.LLMMode {
+				case "response":
+					if node.LLMStreamTarget != "" {
+						// Streaming path hijacks the response writer and emits
+						// hyperstream envelopes. After this returns, no further
+						// HTML / fragments may be written for this request.
+						if tx != nil {
+							_ = tx.Commit()
+							tx = nil
+						}
+						if err := executeLLMStream(r.Context(), w, node, querier, formData); err != nil {
+							fmt.Printf("  llm-stream error: %v\n", err)
+						}
+						return
+					}
+					text, err := executeLLM(r.Context(), node, querier, formData)
+					if err != nil {
+						fmt.Printf("  llm error: %v\n", err)
+						formData[varName] = "Desculpe, ocorreu um erro ao processar sua mensagem."
+					} else {
+						formData[varName] = text
+					}
+				case "agent":
+					fmt.Printf("  llm agent mode not yet implemented\n")
+					formData[varName] = "Modo agent ainda não implementado."
+				default:
+					fmt.Printf("  llm: missing or unknown mode %q (expected response|agent)\n", node.LLMMode)
+					formData[varName] = "Configuração inválida do bloco llm."
 				}
 			}
 
