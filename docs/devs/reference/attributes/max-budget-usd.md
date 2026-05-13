@@ -32,5 +32,5 @@ Required by the analyzer. The subprocess is killed once total token cost crosses
 
 | | |
 |---|---|
-| **Spec last touched** | `66f909b` (2026-05-13) |
+| **Spec last touched** | `7df9033` (2026-05-13) |
 
