@@ -154,7 +154,7 @@ func init() {
 		ParentScope: []string{"llm"},
 		Children: []string{
 			"cwd", "tools", "max-turns", "max-budget-usd", "permission-mode",
-			"mcp", "pool", "pool-idle-ttl",
+			"mcp", "pool", "pool-idle-ttl", "show-tools", "resume",
 		},
 		Since: "0.2.0",
 	})
@@ -239,4 +239,40 @@ func init() {
 		ParentScope: []string{"agent"},
 		Since:       "0.2.0",
 	})
+
+	spec.Register(spec.Entity{
+		Name:        "show-tools",
+		Kind:        spec.KindAttribute,
+		Summary:     "Stream tool_use/tool_result frames in addition to assistant text.",
+		Description: "When true and the surrounding `response` block has `stream:` set, tool-call and tool-result events are emitted on a separate hyperstream channel (`tools-<name>`). Default `false`: tool frames are silently dropped.",
+		Syntax:      "show-tools: <bool>",
+		Args:        []spec.Arg{{Name: "value", Type: "bool", Required: true}},
+		ParentScope: []string{"agent"},
+		Default:     "false",
+		Since:       "0.2.0",
+	})
+
+	spec.Register(spec.Entity{
+		Name:        "resume",
+		Kind:        spec.KindAttribute,
+		Summary:     "Resume an existing claude session by UUID (supports `:param`).",
+		Description: "Maps to `claude --resume <id>`. The id is a UUIDv4 string previously returned by the CLI; bind variables (`:session_id`) are substituted before invocation.",
+		Syntax:      "resume: <session-id>",
+		Args:        []spec.Arg{{Name: "value", Type: "string", Required: true}},
+		ParentScope: []string{"agent"},
+		Since:       "0.2.0",
+	})
+
+	// ---- top-level `mcp <name>` keyword (D13 form B) ----
+	//
+	// NOTE: neither the top-level `mcp` Keyword nor its children
+	// (`command`, `args`, `env`, `url`, `transport`) are registered in the
+	// spec registry. `mcp` collides with the `mcp:` Attribute already
+	// registered for `agent` (spec.Register panics on cross-kind
+	// duplicates), and the children cannot list `mcp` as ParentScope
+	// because the registry's invariant requires parents to be Keywords.
+	// Parser and lexer still recognise `mcp <name>` blocks; LSP/MCP
+	// autocomplete is deferred until spec gains parent-scoped name
+	// resolution. Same workaround as `model:` and `stream:` documented
+	// above.
 }

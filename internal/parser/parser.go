@@ -32,6 +32,19 @@ type App struct {
 	Translations    map[string]map[string]string    // lang -> key -> value
 	NamedQueries    map[string]string               // name -> SQL
 	CustomManifests map[string]*CustomFieldManifest // model name -> custom field definitions
+	MCPServers      []MCPServer                     // top-level mcp <name> blocks
+}
+
+// MCPServer is a top-level `mcp <name>` declaration referenced by name
+// from `llm ... agent` blocks via the `mcp:` attribute. The runtime
+// materialises a temporary `--mcp-config` JSON file per request.
+type MCPServer struct {
+	Name      string
+	Command   string            // stdio transport: executable
+	Args      []string          // stdio transport: argv
+	Env       map[string]string // env passed to the subprocess
+	URL       string            // sse/http transport: endpoint
+	Transport string            // "stdio" (default if command set), "sse", or "http"
 }
 
 // Test is a named scenario from a `test` block, executed as an end-to-end
@@ -61,6 +74,7 @@ type AppConfig struct {
 	DefaultLanguage string   // default i18n language
 	DetectLanguage  string   // "header accept-language" or empty
 	CORSOrigins     []string // allowed CORS origins (empty = same-origin only)
+	WorkspaceRoot   string   // filesystem root for llm agent cwd resolution (P3)
 }
 
 // LogConfig configures runtime logging behaviour from a `log` block.
@@ -398,6 +412,8 @@ type Node struct {
 	LLMAgentMCP            []string // for llm agent: MCP server names from config
 	LLMAgentPool           int      // for llm agent: reserved; runtime ignores in v0.2.x
 	LLMAgentPoolIdleTTL    string   // for llm agent: reserved; runtime ignores in v0.2.x
+	LLMAgentShowTools      bool     // for llm agent: emit tool_use/tool_result frames on stream
+	LLMAgentResume         string   // for llm agent: session id to resume (supports :param)
 }
 
 // Validation is one field-level rule set inside a `validate` block.
@@ -485,6 +501,14 @@ func Parse(tokens []lexer.Token, source string) (*App, error) {
 		case "webhook":
 			wh := p.parseWebhook()
 			app.Webhooks = append(app.Webhooks, wh)
+		case "mcp":
+			srv, err := p.parseMCPServer()
+			if err != nil {
+				p.addError(err)
+				p.synchronize()
+				continue
+			}
+			app.MCPServers = append(app.MCPServers, srv)
 		case "socket":
 			sock := p.parseSocket()
 			app.Sockets = append(app.Sockets, sock)
@@ -2514,6 +2538,96 @@ func (p *parserState) parseEnqueueNode() Node {
 	return node
 }
 
+// parseMCPServer parses a top-level `mcp <name>` declaration:
+//
+//	mcp filesystem
+//	  command: npx
+//	  args: -y, @modelcontextprotocol/server-filesystem, /tmp/agents
+//	  env: NODE_ENV=production
+//	  transport: stdio
+//
+// HTTP/SSE form:
+//
+//	mcp remote
+//	  url: https://mcp.example.com/sse
+//	  transport: sse
+func (p *parserState) parseMCPServer() (MCPServer, error) {
+	srv := MCPServer{Env: map[string]string{}}
+
+	// consume "mcp"
+	p.advance()
+
+	// <name>
+	if p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword {
+		srv.Name = p.advance().Value
+	}
+	if srv.Name == "" {
+		return srv, fmt.Errorf("mcp block requires a name: `mcp <name>`")
+	}
+
+	p.skipToEndOfLine()
+	p.skipNewlines()
+
+	if p.current().Type != lexer.TokenIndent {
+		return srv, nil
+	}
+	p.advance()
+
+	for !p.isEOF() {
+		if p.current().Type == lexer.TokenDedent {
+			p.advance()
+			break
+		}
+		if p.current().Type == lexer.TokenNewline {
+			p.advance()
+			continue
+		}
+
+		if p.current().Type != lexer.TokenIdentifier && p.current().Type != lexer.TokenKeyword {
+			p.advance()
+			continue
+		}
+
+		key := p.current().Value
+		lineNum := p.current().Line
+		p.advance()
+		if p.current().Type == lexer.TokenColon {
+			p.advance()
+		}
+		val := extractValueAfterColon(p.lines, lineNum)
+
+		switch key {
+		case "command":
+			srv.Command = strings.Trim(val, "\"' ")
+		case "args":
+			srv.Args = splitCSVList(val)
+		case "env":
+			for _, pair := range splitCSVList(val) {
+				eq := strings.Index(pair, "=")
+				if eq <= 0 {
+					continue
+				}
+				srv.Env[strings.TrimSpace(pair[:eq])] = strings.TrimSpace(pair[eq+1:])
+			}
+		case "url":
+			srv.URL = strings.Trim(val, "\"' ")
+		case "transport":
+			srv.Transport = strings.TrimSpace(val)
+		}
+		p.skipToEndOfLine()
+	}
+
+	if srv.Transport == "" {
+		if srv.Command != "" {
+			srv.Transport = "stdio"
+		} else if srv.URL != "" {
+			srv.Transport = "sse"
+		}
+	}
+
+	return srv, nil
+}
+
 // parseWebhook parses:
 //
 //	webhook /stripe/payment secret env STRIPE_SECRET
@@ -3143,6 +3257,8 @@ func (p *parserState) parseConfig() AppConfig {
 						cfg.CORSOrigins = append(cfg.CORSOrigins, origin)
 					}
 				}
+			case "workspace-root", "workspace_root":
+				cfg.WorkspaceRoot = strings.Trim(rawVal, "\"' ")
 			}
 
 			p.skipToEndOfLine()
@@ -3765,6 +3881,11 @@ func (p *parserState) parseLLMModeChildren(node *Node, mode string) {
 				}
 			case "pool-idle-ttl", "pool_idle_ttl":
 				node.LLMAgentPoolIdleTTL = val
+			case "show-tools", "show_tools":
+				v := strings.ToLower(strings.TrimSpace(val))
+				node.LLMAgentShowTools = v == "true" || v == "yes" || v == "1"
+			case "resume":
+				node.LLMAgentResume = val
 			}
 		}
 		p.skipToEndOfLine()

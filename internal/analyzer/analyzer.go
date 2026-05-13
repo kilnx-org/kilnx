@@ -137,6 +137,10 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkFragmentComponents(app)...)
 	diags = append(diags, checkTranslationParams(app)...)
 	diags = append(diags, checkActionAttributes(app)...)
+	diags = append(diags, checkLLMAgentRequired(app)...)
+	diags = append(diags, checkLLMAgentReservedAttrs(app)...)
+	diags = append(diags, checkLLMAgentWorkspaceRoot(app)...)
+	diags = append(diags, checkLLMAgentMCPRefs(app)...)
 
 	return diags
 }
