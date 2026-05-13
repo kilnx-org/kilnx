@@ -5,9 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/database` |
-| **Source last touched** | `5da8498` (2026-05-08) |
+| **Source last touched** | `34a4269` (2026-05-13) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
+
+> **Implementation touched after doc.go.** Source changed on `2026-05-13`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
@@ -41,6 +43,33 @@ substitute fakes.
 | [`query.go`](../../../internal/database/query.go) | _no file-level doc_ |
 
 ## Types
+
+### `ColumnDrift`
+
+```go
+type ColumnDrift struct {
+	Kind		ColumnDriftKind
+	TableName	string
+	Column		string
+	Detail		string	// human-readable, e.g. "model=TEXT db=INTEGER"
+}
+```
+
+ColumnDrift describes one divergence between a declared model field and
+the live database schema. PlanMigration is intentionally additive (model
+-> DB) and never emits DROP COLUMN or ALTER COLUMN, so these warnings are
+the only signal that the schemas have diverged. `kilnx migrate` reports
+them as warnings; the migration itself is not blocked.
+
+### `ColumnDriftKind`
+
+```go
+type ColumnDriftKind string
+```
+
+ColumnDriftKind classifies how a database column diverges from its model
+declaration. Drift detection is read-only; PlanMigration never emits ALTER
+COLUMN or DROP COLUMN automatically, so this is purely advisory.
 
 ### `DB`
 
@@ -104,6 +133,17 @@ type Dialect interface {
 	// ColumnsSQL returns a query that yields (column_name TEXT) rows for a table.
 	// Receives the table name as a literal (not a parameter) for PRAGMA compat.
 	ColumnsSQL(table string) string
+
+	// ColumnsInfoSQL returns a query that yields (name TEXT, type TEXT,
+	// notnull INT, has_default INT) rows for a table. Used by drift
+	// detection to compare DB columns against model field declarations
+	// across type, NOT NULL, and default-presence dimensions.
+	ColumnsInfoSQL(table string) string
+
+	// UniqueColumnsSQL returns a query that yields (column_name TEXT) rows
+	// for each column that has a single-column UNIQUE index/constraint on
+	// the given table. Composite unique constraints are excluded.
+	UniqueColumnsSQL(table string) string
 
 	// AutoIncrementPK returns the PRIMARY KEY column definition for an
 	// auto-incrementing integer id.
@@ -202,6 +242,18 @@ type TxHandle struct {
 
 TxHandle wraps a *sql.Tx with named-parameter execution and idempotent
 commit/rollback. It is created by [DB.BeginTxHandle].
+
+### `columnInfo`
+
+```go
+type columnInfo struct {
+	Type		string
+	NotNull		bool
+	HasDefault	bool
+}
+```
+
+columnInfo captures the per-column data returned by Dialect.ColumnsInfoSQL.
 
 ### `querier`
 
@@ -314,6 +366,16 @@ skipped; the analyzer surfaces the error.
 ```go
 func isValidIdentifier(name string) bool
 ```
+### `normalizeSQLType`
+
+```go
+func normalizeSQLType(t string) string
+```
+
+normalizeSQLType maps a declared or introspected SQL type to a canonical
+form for cross-comparison. Strips parenthesized length/precision and
+resolves SQLite/PG type aliases (int/integer, bool/boolean, etc.).
+
 ### `queryRowsInternal`
 
 ```go
@@ -329,6 +391,17 @@ func scanRows(rows *sql.Rows) ([]Row, error)
 ```go
 func schemaHash(models []parser.Model) string
 ```
+### `typesEqual`
+
+```go
+func typesEqual(a, b string) bool
+```
+
+typesEqual returns true when two SQL type strings are equivalent after
+normalization (lowercase, whitespace collapsed, common dialect aliases
+resolved, parameterized lengths stripped). Conservative: when in doubt
+it returns true to avoid false-positive drift warnings.
+
 ### `uniqueIndexDDLs`
 
 ```go
@@ -365,6 +438,21 @@ func (db *DB) Conn() *sql.DB
 
 Conn returns the underlying *sql.DB for callers that need direct access
 (e.g. to start raw transactions or run driver-specific queries).
+
+### `(DB) DetectColumnDrift`
+
+```go
+func (db *DB) DetectColumnDrift(models []parser.Model, manifests ...map[string]*parser.CustomFieldManifest) ([]ColumnDrift, error)
+```
+
+DetectColumnDrift introspects each declared model's table and returns
+every divergence between the live schema and the model declaration:
+orphan columns, type mismatches, NOT NULL mismatches, single-column
+UNIQUE mismatches, and DEFAULT presence/absence mismatches. Tables
+missing from the database are skipped (planExistingTable adds them as
+part of normal migration); orphan tables are covered by
+DetectDataLossRisk. Reserved `id` / `custom` columns and column-mode
+custom-field manifest entries are exempted.
 
 ### `(DB) DetectDataLossRisk`
 
@@ -461,6 +549,16 @@ func (db *DB) generateCreateTable(model parser.Model, cm map[string]*parser.Cust
 ```go
 func (db *DB) getColumns(table string) (map[string]bool, error)
 ```
+### `(DB) getColumnsInfo`
+
+```go
+func (db *DB) getColumnsInfo(table string) (map[string]columnInfo, error)
+```
+### `(DB) getUniqueColumns`
+
+```go
+func (db *DB) getUniqueColumns(table string) (map[string]bool, error)
+```
 ### `(DB) planExistingTable`
 
 ```go
@@ -508,6 +606,17 @@ func (PostgresDialect) BoolTrue() string
 ```
 
 BoolTrue returns the SQL literal "TRUE".
+
+### `(PostgresDialect) ColumnsInfoSQL`
+
+```go
+func (PostgresDialect) ColumnsInfoSQL(table string) string
+```
+
+ColumnsInfoSQL returns name, normalized data_type, notnull flag, and a
+1/0 has_default flag for each column of the given public-schema table.
+data_type follows information_schema conventions (e.g. "integer",
+"double precision", "timestamp without time zone"); callers normalize.
 
 ### `(PostgresDialect) ColumnsSQL`
 
@@ -596,6 +705,16 @@ func (PostgresDialect) TableExistsSQL() string
 TableExistsSQL returns a query that counts matching rows in
 information_schema.tables for the public schema.
 
+### `(PostgresDialect) UniqueColumnsSQL`
+
+```go
+func (PostgresDialect) UniqueColumnsSQL(table string) string
+```
+
+UniqueColumnsSQL returns the names of columns covered by a single-column
+UNIQUE constraint on the given public-schema table. Composite UNIQUE
+constraints are excluded via the HAVING COUNT(*) = 1 group filter.
+
 ### `(SqliteDialect) AutoIncrementPK`
 
 ```go
@@ -629,6 +748,15 @@ func (SqliteDialect) BoolTrue() string
 ```
 
 BoolTrue returns the SQL literal "1".
+
+### `(SqliteDialect) ColumnsInfoSQL`
+
+```go
+func (SqliteDialect) ColumnsInfoSQL(table string) string
+```
+
+ColumnsInfoSQL returns name, type, notnull flag, and a 1/0 has_default
+flag (derived from dflt_value IS NOT NULL) via pragma_table_info.
 
 ### `(SqliteDialect) ColumnsSQL`
 
@@ -718,6 +846,18 @@ func (SqliteDialect) TableExistsSQL() string
 
 TableExistsSQL returns a query that counts entries in sqlite_master
 matching the given table name.
+
+### `(SqliteDialect) UniqueColumnsSQL`
+
+```go
+func (SqliteDialect) UniqueColumnsSQL(table string) string
+```
+
+UniqueColumnsSQL returns the names of columns that have a single-column
+unique index on the given table. Composite unique indexes are skipped.
+Includes both `u` (user CREATE UNIQUE INDEX) and `c` (table-level UNIQUE
+constraint) origins; skips `pk` (PRIMARY KEY) since id is excluded by
+callers.
 
 ### `(TxHandle) Commit`
 

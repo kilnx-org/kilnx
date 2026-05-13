@@ -636,7 +636,7 @@ func (db *DB) getColumnsInfo(table string) (map[string]columnInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make(map[string]columnInfo)
 	for rows.Next() {
 		var (
@@ -661,7 +661,7 @@ func (db *DB) getUniqueColumns(table string) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := make(map[string]bool)
 	for rows.Next() {
 		var name string
