@@ -31,6 +31,6 @@ Block-form attribute inside `llm`. Children: `history` (SQL that yields message 
 | | |
 |---|---|
 | **Spec last touched** | `72e9177` (2026-05-13) |
-| **Source last touched** | `72e9177` (2026-05-13) |
+| **Source last touched** | `c92fd85` (2026-05-13) |
 | **Source files** | `internal/parser/parser.go`, `internal/runtime/server.go` |
 

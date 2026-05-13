@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/runtime` |
-| **Source last touched** | `72e9177` (2026-05-13) |
+| **Source last touched** | `c92fd85` (2026-05-13) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
 
@@ -385,7 +385,8 @@ type renderContext struct {
 	eachModels		[]string				// parallel stack of source model names for each entry in eachStack ("" if unknown)
 	models			[]parser.Model				// all models, for resolving computed fields
 	currentRow		database.Row				// active row when inside {{each}} block
-	fragmentArgs		map[string]string			// active component argument bindings
+	fragmentArgs		map[string]string			// active component argument bindings (scalar)
+	fragmentQueryArgs	map[string][]database.Row		// list/query args bound to fragment ({{each argname}} resolves here)
 	fragmentDepth		int					// recursion guard for component fragments
 	fragmentComponents	map[string]*parser.Page			// component name -> fragment (for inline rendering)
 	actions			[]parser.Page				// declared actions for action= attribute expansion
@@ -712,14 +713,6 @@ func buildCustomIterRows(row database.Row, manifest *parser.CustomFieldManifest)
 buildCustomIterRows creates synthetic rows for {{each q.custom}} iteration.
 Each row has name, value, label, and kind fields. Designed for detail pages
 where the query returns a single row; on list pages use {q.custom.field} dot-access.
-
-### `buildFragmentArgs`
-
-```go
-func buildFragmentArgs(argStr string, frag *parser.Page, ctx *renderContext) map[string]string
-```
-
-buildFragmentArgs parses an argument string and applies defaults for a fragment.
 
 ### `buildLLMMessages`
 
@@ -1339,6 +1332,15 @@ isAllowedURLScheme returns true if the URL uses an allowed scheme.
 ```go
 func isAllowedUploadExt(filename string) bool
 ```
+### `isBareIdent`
+
+```go
+func isBareIdent(s string) bool
+```
+
+isBareIdent reports whether s is a plain identifier ([A-Za-z_][A-Za-z0-9_]*),
+i.e. eligible for query-name lookup.
+
 ### `isIdentPart`
 
 ```go
@@ -1467,6 +1469,19 @@ func parseFilterChain(chain string) []parsedFilter
 ```
 
 parseFilterChain splits "upcase | truncate: 30 | default: N/A" into filters
+
+### `parseFragmentArgs`
+
+```go
+func parseFragmentArgs(argStr string, frag *parser.Page, ctx *renderContext) (map[string]string, map[string][]database.Row)
+```
+
+parseFragmentArgs parses an argument string and binds args for a fragment call.
+Returns scalar args (string map) and query/list args (rows map). When an arg
+expression is a bare identifier that resolves to a known query name (parent
+queries or propagated fragment query args), it binds as a list arg, enabling
+{{each argname}} inside the fragment body. Otherwise it falls back to scalar
+resolution via resolveValue.
 
 ### `parseInList`
 

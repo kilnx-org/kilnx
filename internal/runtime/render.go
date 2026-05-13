@@ -1246,12 +1246,6 @@ func isBareIdent(s string) bool {
 	return true
 }
 
-// buildFragmentArgs is kept for backwards compat: returns scalar map only.
-func buildFragmentArgs(argStr string, frag *parser.Page, ctx *renderContext) map[string]string {
-	scalar, _ := parseFragmentArgs(argStr, frag, ctx)
-	return scalar
-}
-
 // expandFragmentCalls processes {{componentName arg=expr}} blocks inside HTML content.
 // It looks up the component fragment, binds arguments, and renders the body inline.
 func expandFragmentCalls(content string, ctx *renderContext) string {
