@@ -22,7 +22,7 @@ port: env <VAR> default <n>
 
 | | |
 |---|---|
-| **Spec last touched** | `56b81a7` (2026-05-13) |
-| **Source last touched** | `2a440f8` (2026-05-13) |
+| **Spec last touched** | `66f909b` (2026-05-13) |
+| **Source last touched** | `87ebbf6` (2026-05-13) |
 | **Source files** | `internal/parser/parser.go` |
 

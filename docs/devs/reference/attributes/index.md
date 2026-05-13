@@ -39,6 +39,6 @@ model order
 | | |
 |---|---|
 | **Spec last touched** | `5da8498` (2026-05-08) |
-| **Source last touched** | `2a440f8` (2026-05-13) |
+| **Source last touched** | `87ebbf6` (2026-05-13) |
 | **Source files** | `internal/parser/parser.go` |
 
