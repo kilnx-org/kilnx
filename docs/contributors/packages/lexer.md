@@ -56,6 +56,22 @@ indent, etc.). Values are defined as the Token* constants below.
 
 ## Functions
 
+### `FieldConstraints`
+
+```go
+func FieldConstraints() []string
+```
+
+FieldConstraints returns the sorted list of recognized field constraint keywords.
+
+### `FieldTypes`
+
+```go
+func FieldTypes() []string
+```
+
+FieldTypes returns the sorted list of recognized field type keywords.
+
 ### `IsFieldConstraint`
 
 ```go

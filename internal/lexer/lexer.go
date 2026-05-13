@@ -1,6 +1,7 @@
 package lexer
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 )
@@ -82,6 +83,26 @@ func IsFieldType(s string) bool {
 // keyword (e.g. required, unique, default, min, max).
 func IsFieldConstraint(s string) bool {
 	return fieldConstraints[s]
+}
+
+// FieldTypes returns the sorted list of recognized field type keywords.
+func FieldTypes() []string {
+	out := make([]string, 0, len(fieldTypes))
+	for k := range fieldTypes {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// FieldConstraints returns the sorted list of recognized field constraint keywords.
+func FieldConstraints() []string {
+	out := make([]string, 0, len(fieldConstraints))
+	for k := range fieldConstraints {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // StripComments removes # comments from source code.

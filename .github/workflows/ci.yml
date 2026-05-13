@@ -146,6 +146,15 @@ jobs:
             exit 1
           fi
 
+      - name: Diff AGENTS.md against committed file
+        run: |
+          if ! diff AGENTS.md /tmp/AGENTS.md > /tmp/agents-diff.txt; then
+            echo "::error::AGENTS.md is out of sync with internal/spec."
+            echo "Run 'go generate ./...' locally and commit the result."
+            cat /tmp/agents-diff.txt
+            exit 1
+          fi
+
       - name: Check for stale entries
         if: github.event_name == 'push'
         run: go run ./cmd/kilnx-gendocs -check-stale -o /tmp/kilnx-docs-stale-check

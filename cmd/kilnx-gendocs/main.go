@@ -3,7 +3,8 @@
 //	go run ./cmd/kilnx-gendocs                          # writes all targets
 //	go run ./cmd/kilnx-gendocs -only=reference          # docs/devs/reference only
 //	go run ./cmd/kilnx-gendocs -only=packages           # docs/contributors/packages only
-//	go run ./cmd/kilnx-gendocs -o /tmp                  # writes to /tmp
+//	go run ./cmd/kilnx-gendocs -only=agents             # AGENTS.md only (at repo root)
+//	go run ./cmd/kilnx-gendocs -o /tmp                  # writes to /tmp (AGENTS.md goes to /tmp/AGENTS.md)
 //	go run ./cmd/kilnx-gendocs -check-stale             # exit 1 if any target is stale
 package main
 
@@ -60,8 +61,16 @@ func main() {
 			log.Fatalf("packages: %v", err)
 		}
 		stale = append(stale, s...)
+		if *only == "packages" {
+			break
+		}
+		fallthrough
+	case "agents":
+		if err := generateAgents(*out, tmpl); err != nil {
+			log.Fatalf("agents: %v", err)
+		}
 	default:
-		log.Fatalf("unknown -only value %q (want all|reference|packages)", *only)
+		log.Fatalf("unknown -only value %q (want all|reference|packages|agents)", *only)
 	}
 
 	if *checkStale && len(stale) > 0 {
@@ -111,6 +120,7 @@ func loadTemplates() (*template.Template, error) {
 	t := template.New("").Funcs(template.FuncMap{
 		"seeAlsoPath": seeAlsoPath,
 		"entityPath":  seeAlsoPath,
+		"firstLine":   firstLine,
 	})
 	entries, err := fs.ReadDir(templatesFS, "templates")
 	if err != nil {

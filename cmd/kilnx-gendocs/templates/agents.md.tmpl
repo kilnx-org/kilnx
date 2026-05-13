@@ -1,0 +1,101 @@
+<!--
+Generated file. DO NOT EDIT.
+Run `go generate ./...` to update.
+Source: cmd/kilnx-gendocs/templates/agents.md.tmpl + spec registry.
+-->
+
+# Kilnx for AI agents
+
+You are an AI coding agent working on a `.kilnx` project. **Kilnx is a declarative backend language that was not in your training data.** Do not infer syntax. Do not invent keywords. The catalog at the bottom of this file is the only source of truth, regenerated from the compiler on every release.
+
+## Hard rules
+
+1. **Before writing any `.kilnx` code**, run `kilnx docs --list` to see what exists.
+2. **Before using a keyword or attribute**, run `kilnx docs <name>` for its syntax, scope, and constraints.
+3. **After every edit**, run `kilnx check <file>` and fix every error before continuing. The analyzer catches type errors, undeclared fields, illegal scopes, security misuse, and migration data-loss risks.
+4. **If `kilnx docs <name>` returns "no entity named", the construct does not exist.** Do not invent it. Pick a real one from `--list` or rephrase the design.
+5. **Reference docs at [`docs/devs/reference/`](docs/devs/reference/) are authoritative.** Source-driven, regenerated on every merge.
+
+## Reading order
+
+Read these in this order before touching code. Time investment: roughly 20 minutes total.
+
+1. [`README.md`](README.md): one-page overview with a complete working app.
+2. [`docs/devs/concepts/mental-model.md`](docs/devs/concepts/mental-model.md): how to think in Kilnx (declarative, indent-significant, AST-driven runtime).
+3. [`docs/devs/concepts/models-and-data.md`](docs/devs/concepts/models-and-data.md): tables, fields, migrations.
+4. [`docs/devs/concepts/pages-actions-fragments.md`](docs/devs/concepts/pages-actions-fragments.md): the HTTP layer.
+5. [`docs/devs/concepts/auth-and-permissions.md`](docs/devs/concepts/auth-and-permissions.md): identity, sessions, authorization.
+6. [`docs/devs/concepts/jobs-and-schedules.md`](docs/devs/concepts/jobs-and-schedules.md): background work and cron.
+7. [`docs/devs/tutorials/01-todo-app.md`](docs/devs/tutorials/01-todo-app.md): hands-on Todo CRUD.
+8. [`docs/devs/tutorials/02-auth-and-sessions.md`](docs/devs/tutorials/02-auth-and-sessions.md): add login and roles.
+9. [`docs/devs/tutorials/03-background-jobs.md`](docs/devs/tutorials/03-background-jobs.md): add a `schedule` and a `job`.
+
+The reference under [`docs/devs/reference/`](docs/devs/reference/) is a lookup, not a read-through. Jump to it when you need details on one keyword or attribute.
+
+## Workflow loop
+
+```
+plan -> read concept -> kilnx docs <name> -> edit .kilnx -> kilnx check -> kilnx run
+```
+
+Repeat the loop in small steps. The compiler is your fastest feedback channel.
+
+## Common pitfalls
+
+- **Indentation is significant.** Two spaces per level. Mixed tabs and spaces are rejected.
+- **No `main`, no router, no handler signature.** Routes exist because you wrote `page /path` or `action /path`. Adding a function in Go is the wrong instinct.
+- **Templates are not Go `html/template`.** Curly-brace expressions like `{field}` are field lookups; `{{"{{"}}if cond{{"}}"}}...{{"{{"}}end{{"}}"}}` are control flow. See the `html` attribute docs.
+- **Secrets via env vars only.** Templates read environment variables as `:env.NAME`. Do not paste credentials into `.kilnx` files.
+- **Migrations are additive.** `kilnx migrate` never drops or alters columns destructively. Drift is reported as warnings; the author resolves manually.
+- **`fetch` is the only escape hatch.** When a primitive does not exist, model the call as an outbound HTTP request via `fetch`, not as a custom Go module.
+
+## Tooling shortcuts
+
+- `kilnx docs --list`: every keyword and attribute with one-line summaries.
+- `kilnx docs --search <query>`: full-text search across names and descriptions.
+- `kilnx docs <name>`: complete entry for one construct (syntax, scope, defaults, since).
+- `kilnx check <file>`: full analyzer pass, exit non-zero on diagnostics.
+- `kilnx run <file>`: dev server with migrations applied on startup.
+- `kilnx build <file> -o <bin>`: standalone binary, single-file deploy.
+- `kilnx version`: print version and build date.
+
+---
+
+## Catalog
+
+The remainder of this document is auto-generated from the compiler's spec registry.
+
+### Keywords ({{len .Keywords}})
+
+| Keyword | Summary | Since |
+|---|---|---|{{range .Keywords}}
+| [`{{.Name}}`](docs/devs/reference/keywords/{{.Name}}.md) | {{firstLine .Summary}} | {{if .Since}}{{.Since}}{{else}}0.1.0{{end}} |{{end}}
+
+### Field types
+
+Recognized inside `model` blocks: {{range $i, $t := .FieldTypes}}{{if $i}}, {{end}}`{{$t}}`{{end}}.
+
+### Field constraints
+
+Recognized as field modifiers: {{range $i, $c := .FieldConstraints}}{{if $i}}, {{end}}`{{$c}}`{{end}}.
+
+### Attributes by scope
+
+Each section lists the attributes valid inside that parent keyword. An attribute appearing in multiple scopes is listed in each.
+{{range .AttributesByScope}}
+#### `{{.Scope}}`
+
+| Attribute | Summary | Since |
+|---|---|---|{{range .Attrs}}
+| [`{{.Name}}`](docs/devs/reference/attributes/{{.Name}}.md) | {{firstLine .Summary}} | {{if .Since}}{{.Since}}{{else}}0.1.0{{end}} |{{end}}
+{{end}}
+### What changed by version
+
+Most recent first. Use this to understand the surface area added in each release.
+{{range .History}}
+#### {{.Since}}
+{{if .Keywords}}
+**Keywords**: {{range $i, $k := .Keywords}}{{if $i}}, {{end}}[`{{$k.Name}}`](docs/devs/reference/keywords/{{$k.Name}}.md){{end}}
+{{end}}{{if .Attrs}}
+**Attributes**: {{range $i, $a := .Attrs}}{{if $i}}, {{end}}[`{{$a.Name}}`](docs/devs/reference/attributes/{{$a.Name}}.md){{end}}
+{{end}}{{end}}
