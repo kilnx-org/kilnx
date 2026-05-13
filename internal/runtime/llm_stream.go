@@ -143,7 +143,7 @@ func executeLLMStream(ctx context.Context, w http.ResponseWriter, node parser.No
 	}
 
 	stream := llmClient.Messages.NewStreaming(ctx, req)
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	chunks := 0
 	for stream.Next() {

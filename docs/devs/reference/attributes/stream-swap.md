@@ -28,3 +28,9 @@ Default `append`. Follows hyperstream's swap dispatcher whitelist.
 
 - [`response`](../keywords/response.md)
 
+## Provenance
+
+| | |
+|---|---|
+| **Spec last touched** | `56b81a7` (2026-05-13) |
+

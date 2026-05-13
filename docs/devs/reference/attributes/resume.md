@@ -1,6 +1,6 @@
-# `cwd`
+# `resume`
 
-> Working directory for the agent subprocess.
+> Resume an existing claude session by UUID (supports `:param`).
 
 | | |
 |---|---|
@@ -10,18 +10,18 @@
 ## Syntax
 
 ```
-cwd: <path>
+resume: <session-id>
 ```
 
 ## Arguments
 
 | Name | Type | Required |
 |------|------|----------|
-| `path` | `path` | yes |
+| `value` | `string` | yes |
 
 ## Description
 
-Resolved relative to `config workspace-root`. Must stay within `workspace-root` after symlink resolution. `:param` substitution is supported (e.g. `/workspaces/:tenant_id/:user_id`). If omitted, a temporary directory is created per request and removed on exit.
+Maps to `claude --resume <id>`. The id is a UUIDv4 string previously returned by the CLI; bind variables (`:session_id`) are substituted before invocation.
 
 ## Used in
 

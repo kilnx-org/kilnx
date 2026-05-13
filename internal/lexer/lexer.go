@@ -49,7 +49,7 @@ var keywords = map[string]bool{
 	"log": true, "test": true, "translations": true,
 	"enqueue": true, "broadcast": true,
 	"send": true, "requires": true, "method": true, "fetch": true, "llm": true,
-	"mcp":  true,
+	"mcp":   true,
 	"title": true,
 }
 

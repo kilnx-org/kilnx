@@ -5,9 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/runtime` |
-| **Source last touched** | `5da8498` (2026-05-08) |
+| **Source last touched** | `2a440f8` (2026-05-13) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
+
+> **Implementation touched after doc.go.** Source changed on `2026-05-13`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
@@ -44,6 +46,9 @@ kilnx CLI.
 | [`interfaces.go`](../../../internal/runtime/interfaces.go) | _no file-level doc_ |
 | [`layout.go`](../../../internal/runtime/layout.go) | _no file-level doc_ |
 | [`llm.go`](../../../internal/runtime/llm.go) | _no file-level doc_ |
+| [`llm_agent.go`](../../../internal/runtime/llm_agent.go) | _no file-level doc_ |
+| [`llm_agent_cwd.go`](../../../internal/runtime/llm_agent_cwd.go) | _no file-level doc_ |
+| [`llm_stream.go`](../../../internal/runtime/llm_stream.go) | _no file-level doc_ |
 | [`logger.go`](../../../internal/runtime/logger.go) | _no file-level doc_ |
 | [`permissions.go`](../../../internal/runtime/permissions.go) | _no file-level doc_ |
 | [`query_conditional.go`](../../../internal/runtime/query_conditional.go) | _no file-level doc_ |
@@ -248,36 +253,39 @@ TenantMap indexes model name (lowercased) to the name of its tenant
 reference. e.g. {"quote": "org", "customer": "org"} means rows of
 "quote" and "customer" are scoped by org_id.
 
-### `anthropicMessage`
+### `agentResult`
 
 ```go
-type anthropicMessage struct {
-	Role	string	`json:"role"`
-	Content	string	`json:"content"`
+type agentResult struct {
+	Text		string
+	SessionID	string
+	StopReason	string
+	CostUSD		float64
+	DurationMS	int64
 }
 ```
-### `anthropicRequest`
+
+agentResult is the projection of the `result` event exposed to the DSL
+as `:<name>.text`, `:<name>.session_id`, `:<name>.cost_usd`,
+`:<name>.duration_ms`, `:<name>.stop_reason`.
+
+### `assistantMessage`
 
 ```go
-type anthropicRequest struct {
-	Model		string			`json:"model"`
-	MaxTokens	int			`json:"max_tokens"`
-	System		string			`json:"system,omitempty"`
-	Messages	[]anthropicMessage	`json:"messages"`
+type assistantMessage struct {
+	Content []struct {
+		Type	string		`json:"type"`
+		Text	string		`json:"text,omitempty"`
+		Name	string		`json:"name,omitempty"`
+		ID	string		`json:"id,omitempty"`
+		Input	json.RawMessage	`json:"input,omitempty"`
+	} `json:"content"`
 }
 ```
-### `anthropicResponse`
 
-```go
-type anthropicResponse struct {
-	Content	[]struct {
-		Text string `json:"text"`
-	}	`json:"content"`
-	Error	*struct {
-		Message string `json:"message"`
-	}	`json:"error"`
-}
-```
+assistantMessage covers the shape of `assistant.message` for tool-use
+detection when show-tools is on.
+
 ### `csrfEntry`
 
 ```go
@@ -297,6 +305,24 @@ type exprParser struct {
 	row	database.Row
 }
 ```
+### `hyperstreamWriter`
+
+```go
+type hyperstreamWriter struct {
+	w		http.ResponseWriter
+	flusher		http.Flusher
+	target		string
+	swap		string
+	suspense	string
+	channel		string
+	seq		int64
+}
+```
+
+hyperstreamWriter serializes hyperstream <hs-partial> envelopes onto a
+Server-Sent Events stream. It is the kilnx server-side counterpart of
+the hyperstream JS client (https://github.com/andreahlert/hyperstream).
+
 ### `kxExprParser`
 
 ```go
@@ -385,6 +411,47 @@ type stdlibFn func(args []string) (string, error)
 
 stdlibFn implements a Kilnx stdlib function. All values are stringly typed
 (Kilnx is string-first end-to-end); functions parse / format on demand.
+
+### `streamInnerEvent`
+
+```go
+type streamInnerEvent struct {
+	Type	string	`json:"type"`
+	Index	int	`json:"index,omitempty"`
+	Delta	struct {
+		Type	string	`json:"type"`
+		Text	string	`json:"text"`
+	}	`json:"delta,omitempty"`
+	ContentBlock	struct {
+		Type	string		`json:"type"`
+		Name	string		`json:"name,omitempty"`
+		ID	string		`json:"id,omitempty"`
+		Input	json.RawMessage	`json:"input,omitempty"`
+	}	`json:"content_block,omitempty"`
+}
+```
+
+streamInnerEvent is the nested envelope inside `stream_event.event`.
+
+### `streamJSONEvent`
+
+```go
+type streamJSONEvent struct {
+	Type		string		`json:"type"`
+	Subtype		string		`json:"subtype,omitempty"`
+	SessionID	string		`json:"session_id,omitempty"`
+	Message		json.RawMessage	`json:"message,omitempty"`
+	Event		json.RawMessage	`json:"event,omitempty"`
+	Result		string		`json:"result,omitempty"`
+	IsError		bool		`json:"is_error,omitempty"`
+	StopReason	string		`json:"stop_reason,omitempty"`
+	TotalCostUSD	float64		`json:"total_cost_usd,omitempty"`
+	DurationMS	int64		`json:"duration_ms,omitempty"`
+}
+```
+
+streamJSONEvent is the subset of fields we care about across all event
+types emitted by `claude -p --output-format stream-json`.
 
 ## Functions
 
@@ -627,6 +694,15 @@ set to a JSON media type (case-insensitive).
 ```go
 func boolStr(b bool) string
 ```
+### `buildAgentArgs`
+
+```go
+func buildAgentArgs(node parser.Node, params map[string]string, mcpConfigPath string) ([]string, error)
+```
+
+buildAgentArgs returns the argv passed to `claude`. The user prompt is
+piped through stdin; `-p` puts the CLI in non-interactive mode.
+
 ### `buildCustomIterRows`
 
 ```go
@@ -645,6 +721,11 @@ func buildFragmentArgs(argStr string, frag *parser.Page, ctx *renderContext) map
 
 buildFragmentArgs parses an argument string and applies defaults for a fragment.
 
+### `buildLLMMessages`
+
+```go
+func buildLLMMessages(node parser.Node, db rowQuerier, params map[string]string) ([]anthropic.MessageParam, error)
+```
 ### `buildRequestBody`
 
 ```go
@@ -666,6 +747,15 @@ tenant-scoped table binds the tenant column explicitly. This is not a
 rewrite: intent must remain visible in the .kilnx source. The
 `scrubbed` argument has had comments and string literals stripped so
 we do not accept a bind needle hidden inside a comment.
+
+### `claudeBin`
+
+```go
+func claudeBin() string
+```
+
+claudeBin can be overridden in tests via t.Setenv("PATH", ...) or by
+setting KILNX_CLAUDE_BIN explicitly. Default is the binary on PATH.
 
 ### `clientIP`
 
@@ -787,8 +877,30 @@ branch with `on`.
 ### `executeLLM`
 
 ```go
-func executeLLM(node parser.Node, db rowQuerier, params map[string]string) (string, error)
+func executeLLM(ctx context.Context, node parser.Node, db rowQuerier, params map[string]string) (string, error)
 ```
+### `executeLLMAgent`
+
+```go
+func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, params map[string]string, w http.ResponseWriter) (*agentResult, error)
+```
+
+executeLLMAgent spawns `claude -p` and consumes the stream-json output.
+When node.LLMStreamTarget is set the response writer must be a
+http.Flusher; assistant text deltas are emitted as hyperstream
+envelopes in real time. The final agentResult exposes cost, duration,
+session id, stop reason and the full text.
+
+### `executeLLMStream`
+
+```go
+func executeLLMStream(ctx context.Context, w http.ResponseWriter, node parser.Node, db rowQuerier, params map[string]string) error
+```
+
+executeLLMStream runs a streaming Messages.New call and writes hyperstream
+envelopes onto w. Caller is responsible for setting any auth/CSRF before
+invocation; this function takes over the response (writes SSE headers).
+
 ### `expandActionAttributes`
 
 ```go
@@ -1334,7 +1446,7 @@ func matchRateLimitPath(pattern, path string) bool
 ### `mergeConsecutiveRoles`
 
 ```go
-func mergeConsecutiveRoles(msgs []anthropicMessage) []anthropicMessage
+func mergeConsecutiveRoles(msgs []anthropic.MessageParam) []anthropic.MessageParam
 ```
 
 mergeConsecutiveRoles collapses consecutive messages with the same role
@@ -1480,6 +1592,19 @@ renderUnfurl generates an HTML card for unfurled link preview
 ```go
 func renderWithLayout(layout parser.Layout, title, nav, content string, layoutCtx *renderContext) string
 ```
+### `resolveAgentCwd`
+
+```go
+func resolveAgentCwd(node parser.Node, app *parser.App, params map[string]string) (string, func(), error)
+```
+
+resolveAgentCwd resolves the working directory for an agent subprocess
+against `config workspace-root`. When node.LLMAgentCwd is empty a tmp
+directory is created inside workspaceRoot and the returned cleanup
+removes it. When declared, the path is :param-expanded, resolved with
+EvalSymlinks, and validated to live inside workspaceRoot; cleanup is a
+no-op (the admin owns the lifecycle of declared directories).
+
 ### `resolveComputedFromQuery`
 
 ```go
@@ -1796,6 +1921,16 @@ func windowDuration(window string) time.Duration
 ```go
 func writeJSON(w http.ResponseWriter, status int, data interface{})
 ```
+### `writeMCPConfig`
+
+```go
+func writeMCPConfig(node parser.Node, app *parser.App) (string, func(), error)
+```
+
+writeMCPConfig materialises a `--mcp-config` JSON file for the agent
+subset declared by node.LLMAgentMCP. Returns "" and a no-op cleanup
+when no servers are referenced.
+
 ### `writeWSFrame`
 
 ```go
@@ -2465,6 +2600,32 @@ parseTerm handles * and /
 
 ```go
 func (p *exprParser) skipSpaces()
+```
+### `(hyperstreamWriter) envelope`
+
+```go
+func (h *hyperstreamWriter) envelope(body string, final bool) string
+```
+### `(hyperstreamWriter) writeDelta`
+
+```go
+func (h *hyperstreamWriter) writeDelta(text string) error
+```
+
+writeDelta emits a non-final partial carrying a token chunk.
+
+### `(hyperstreamWriter) writeFinal`
+
+```go
+func (h *hyperstreamWriter) writeFinal() error
+```
+
+writeFinal closes the partial; clients use this to drop suspense placeholders.
+
+### `(hyperstreamWriter) writeSSE`
+
+```go
+func (h *hyperstreamWriter) writeSSE(envelope string) error
 ```
 ### `(kxExprParser) parseAdditive`
 

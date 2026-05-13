@@ -86,9 +86,11 @@ Generated from `internal/spec/entities.go`. Do not edit by hand.
 | [`requires`](attributes/requires.md) | Require authentication or a specific role/permission. | `page`, `action`, `api` |
 | [`reset`](attributes/reset.md) | Path for the password-reset confirmation page. | `auth` |
 | [`respond`](attributes/respond.md) | Return a partial HTML response (htmx fragment) or status code. | `page`, `action`, `fragment`, `api`, `schedule`, `job`, `webhook` |
+| [`resume`](attributes/resume.md) | Resume an existing claude session by UUID (supports `:param`). | `agent` |
 | [`retry`](attributes/retry.md) | Maximum retry attempts before the job is marked failed. | `job` |
 | [`secret`](attributes/secret.md) | Secret key for session cookies and CSRF tokens. | `config` |
 | [`send`](attributes/send.md) | Send an email. | `page`, `action`, `fragment`, `api`, `schedule`, `job`, `webhook` |
+| [`show-tools`](attributes/show-tools.md) | Stream tool_use/tool_result frames in addition to assistant text. | `agent` |
 | [`slow_query`](attributes/slow_query.md) | Threshold above which a SQL query is logged as slow. | `log` |
 | [`static`](attributes/static.md) | Filesystem path served as static assets. | `config` |
 | [`stream-swap`](attributes/stream-swap.md) | Hyperstream swap style (`append`, `inner`, `outer`, ...). | `response` |
@@ -104,4 +106,5 @@ Generated from `internal/spec/entities.go`. Do not edit by hand.
 | [`uploads`](attributes/uploads.md) | Filesystem path and max size (MB) for user uploads. | `config` |
 | [`validate`](attributes/validate.md) | Validate input against a model or per-field rules. | `page`, `action`, `fragment`, `api`, `schedule`, `job`, `webhook` |
 | [`visit`](attributes/visit.md) | Navigate to a URL. | `test` |
+| [`workspace-root`](attributes/workspace-root.md) | Filesystem root for agent cwd resolution and tmp dirs. | `config` |
 

@@ -5,9 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/database` |
-| **Source last touched** | `965a64b` (2026-05-13) |
-| **Doc last touched** | `b549e17` (2026-05-13) |
+| **Source last touched** | `eefa369` (2026-05-13) |
+| **Doc last touched** | `5da8498` (2026-05-08) |
 
+
+> **Implementation touched after doc.go.** Source changed on `2026-05-13`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
@@ -22,11 +24,6 @@ The package is organized around three concerns:
     parser AST, diffs it against the live schema, and applies the
     necessary CREATE/ALTER statements transactionally. Migration
     history is recorded in a kilnx-managed metadata table.
-    Read-only drift detection (DetectColumnDrift) reports columns
-    whose live schema diverges from the model along orphan, type,
-    NOT NULL, UNIQUE, and DEFAULT-presence axes. Drift is advisory:
-    PlanMigration is intentionally additive and never emits ALTER
-    or DROP COLUMN to reconcile.
 
 Query execution helpers live in query.go. Public types in
 interfaces.go define what the runtime depends on so tests can

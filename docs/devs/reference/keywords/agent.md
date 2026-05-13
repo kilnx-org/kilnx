@@ -27,6 +27,8 @@ Block-form attribute inside `llm`. Spawns the official `claude` CLI (min v2.0.0)
 - [`mcp`](../attributes/mcp.md)
 - [`pool`](../attributes/pool.md)
 - [`pool-idle-ttl`](../attributes/pool-idle-ttl.md)
+- [`show-tools`](../attributes/show-tools.md)
+- [`resume`](../attributes/resume.md)
 
 ## See also
 
@@ -36,6 +38,7 @@ Block-form attribute inside `llm`. Spawns the official `claude` CLI (min v2.0.0)
 
 | | |
 |---|---|
-| **Source last touched** | `5da8498` (2026-05-08) |
-| **Source files** | `internal/parser/parser.go` |
+| **Spec last touched** | `56b81a7` (2026-05-13) |
+| **Source last touched** | `2a440f8` (2026-05-13) |
+| **Source files** | `internal/parser/parser.go`, `internal/runtime/server.go` |
 

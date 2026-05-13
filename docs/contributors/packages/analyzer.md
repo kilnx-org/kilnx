@@ -5,9 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/analyzer` |
-| **Source last touched** | `b738d30` (2026-05-05) |
+| **Source last touched** | `2a440f8` (2026-05-13) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
+
+> **Implementation touched after doc.go.** Source changed on `2026-05-13`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
@@ -25,6 +27,7 @@ db_check.go (database/SQL coherence) and security.go (auth/CSRF).
 | File | Summary |
 |------|---------|
 | [`analyzer.go`](../../../internal/analyzer/analyzer.go) | _no file-level doc_ |
+| [`analyzer_llm_agent.go`](../../../internal/analyzer/analyzer_llm_agent.go) | _no file-level doc_ |
 | [`db_check.go`](../../../internal/analyzer/db_check.go) | _no file-level doc_ |
 | [`security.go`](../../../internal/analyzer/security.go) | _no file-level doc_ |
 | [`types.go`](../../../internal/analyzer/types.go) | _no file-level doc_ |
@@ -190,6 +193,16 @@ BuildSchema creates a compile-time view of the database from model declarations.
 Pass app.CustomManifests as the optional second argument to include column-mode
 custom fields as real schema columns.
 
+### `HasLLMAgentBlock`
+
+```go
+func HasLLMAgentBlock(app *parser.App) bool
+```
+
+HasLLMAgentBlock reports whether the app declares any `llm ... agent`
+block. The runtime startup uses this to decide whether to require the
+`claude` CLI on PATH.
+
 ### `analyzeNodes`
 
 ```go
@@ -325,6 +338,45 @@ func checkInsertValueTypes(tokens []sqlToken, table string, schema *Schema, cont
 ```
 
 checkInsertValueTypes validates that INSERT literal values match column types.
+
+### `checkLLMAgentMCPRefs`
+
+```go
+func checkLLMAgentMCPRefs(app *parser.App) []Diagnostic
+```
+
+checkLLMAgentMCPRefs validates that every MCP name referenced by an
+agent block resolves to a top-level `mcp <name>` declaration.
+
+### `checkLLMAgentRequired`
+
+```go
+func checkLLMAgentRequired(app *parser.App) []Diagnostic
+```
+
+checkLLMAgentRequired walks every LLM node in agent mode and flags
+blocks that miss `max-budget-usd`. The spec registry marks this attr
+`Required: true` but the registry does not enforce it; analysis does.
+
+### `checkLLMAgentReservedAttrs`
+
+```go
+func checkLLMAgentReservedAttrs(app *parser.App) []Diagnostic
+```
+
+checkLLMAgentReservedAttrs warns about reserved attributes that the
+runtime currently ignores, and about the dangerous bypassPermissions
+mode.
+
+### `checkLLMAgentWorkspaceRoot`
+
+```go
+func checkLLMAgentWorkspaceRoot(app *parser.App) []Diagnostic
+```
+
+checkLLMAgentWorkspaceRoot ensures `config workspace-root` is set when
+any agent block declares an explicit cwd, OR when any agent block is
+declared at all (tmp dirs need a root to live under).
 
 ### `checkModelDefaults`
 
@@ -690,6 +742,15 @@ Bool is compatible with numeric because SQLite stores bools as INTEGER.
 ```go
 func validateMinMax(val string, ft parser.FieldType) error
 ```
+### `walkLLMNodes`
+
+```go
+func walkLLMNodes(app *parser.App, fn func(node parser.Node, where string))
+```
+
+walkLLMNodes invokes fn for every NodeLLM in pages, actions, fragments,
+APIs, jobs, schedules, and webhooks.
+
 
 ## Notes
 

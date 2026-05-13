@@ -30,9 +30,11 @@ Field name on the auth table holding hashed passwords. Type must be `password` i
 
 ## Provenance
 
+> ⚠ **Implementation touched after spec.** Source code changed on `2026-05-13`, but this entity's spec was last edited on `2026-05-08`. The description may be out of date.
+
 | | |
 |---|---|
 | **Spec last touched** | `5da8498` (2026-05-08) |
-| **Source last touched** | `5da8498` (2026-05-08) |
+| **Source last touched** | `2a440f8` (2026-05-13) |
 | **Source files** | `internal/parser/parser.go` |
 

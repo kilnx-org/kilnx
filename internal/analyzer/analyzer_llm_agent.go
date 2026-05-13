@@ -86,9 +86,6 @@ func checkLLMAgentWorkspaceRoot(app *parser.App) []Diagnostic {
 // checkLLMAgentMCPRefs validates that every MCP name referenced by an
 // agent block resolves to a top-level `mcp <name>` declaration.
 func checkLLMAgentMCPRefs(app *parser.App) []Diagnostic {
-	if len(app.MCPServers) == 0 {
-		// Still flag references when no servers exist at all.
-	}
 	declared := make(map[string]bool, len(app.MCPServers))
 	for _, s := range app.MCPServers {
 		declared[s.Name] = true

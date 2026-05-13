@@ -28,7 +28,7 @@ func resolveAgentCwd(node parser.Node, app *parser.App, params map[string]string
 	if err != nil {
 		return "", func() {}, fmt.Errorf("agent cwd: workspace-root abs: %w", err)
 	}
-	if err := os.MkdirAll(absRoot, 0o755); err != nil {
+	if err := os.MkdirAll(absRoot, 0o750); err != nil {
 		return "", func() {}, fmt.Errorf("agent cwd: workspace-root mkdir: %w", err)
 	}
 	realRoot, err := filepath.EvalSymlinks(absRoot)
@@ -50,7 +50,7 @@ func resolveAgentCwd(node parser.Node, app *parser.App, params map[string]string
 	if err != nil {
 		return "", func() {}, fmt.Errorf("agent cwd: abs: %w", err)
 	}
-	if err := os.MkdirAll(absPath, 0o755); err != nil {
+	if err := os.MkdirAll(absPath, 0o750); err != nil {
 		return "", func() {}, fmt.Errorf("agent cwd: mkdir: %w", err)
 	}
 	realPath, err := filepath.EvalSymlinks(absPath)

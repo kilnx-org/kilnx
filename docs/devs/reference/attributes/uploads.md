@@ -21,7 +21,7 @@ uploads: <path> max <mb>
 
 | | |
 |---|---|
-| **Spec last touched** | `5da8498` (2026-05-08) |
-| **Source last touched** | `5da8498` (2026-05-08) |
+| **Spec last touched** | `56b81a7` (2026-05-13) |
+| **Source last touched** | `2a440f8` (2026-05-13) |
 | **Source files** | `internal/parser/parser.go` |
 

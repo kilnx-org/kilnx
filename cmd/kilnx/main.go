@@ -110,7 +110,7 @@ func cmdCheck(filename, dbURL string) error {
 		if err != nil {
 			return fmt.Errorf("opening DB for check: %w", err)
 		}
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 		diags = analyzer.AnalyzeWithDB(app, db)
 	} else {
 		diags = analyzer.Analyze(app)

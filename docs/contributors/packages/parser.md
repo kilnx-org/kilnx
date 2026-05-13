@@ -5,9 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/parser` |
-| **Source last touched** | `5da8498` (2026-05-08) |
+| **Source last touched** | `56b81a7` (2026-05-13) |
 | **Doc last touched** | `4479336` (2026-05-08) |
 
+
+> **Implementation touched after doc.go.** Source changed on `2026-05-13`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
@@ -71,6 +73,7 @@ type App struct {
 	Translations	map[string]map[string]string	// lang -> key -> value
 	NamedQueries	map[string]string		// name -> SQL
 	CustomManifests	map[string]*CustomFieldManifest	// model name -> custom field definitions
+	MCPServers	[]MCPServer			// top-level mcp <name> blocks
 }
 ```
 
@@ -91,6 +94,7 @@ type AppConfig struct {
 	DefaultLanguage	string		// default i18n language
 	DetectLanguage	string		// "header accept-language" or empty
 	CORSOrigins	[]string	// allowed CORS origins (empty = same-origin only)
+	WorkspaceRoot	string		// filesystem root for llm agent cwd resolution (P3)
 }
 ```
 
@@ -243,6 +247,23 @@ type LogConfig struct {
 
 LogConfig configures runtime logging behaviour from a `log` block.
 
+### `MCPServer`
+
+```go
+type MCPServer struct {
+	Name		string
+	Command		string			// stdio transport: executable
+	Args		[]string		// stdio transport: argv
+	Env		map[string]string	// env passed to the subprocess
+	URL		string			// sse/http transport: endpoint
+	Transport	string			// "stdio" (default if command set), "sse", or "http"
+}
+```
+
+MCPServer is a top-level `mcp <name>` declaration referenced by name
+from `llm ... agent` blocks via the `mcp:` attribute. The runtime
+materialises a temporary `--mcp-config` JSON file per request.
+
 ### `Model`
 
 ```go
@@ -325,6 +346,8 @@ type Node struct {
 	LLMAgentMCP		[]string	// for llm agent: MCP server names from config
 	LLMAgentPool		int		// for llm agent: reserved; runtime ignores in v0.2.x
 	LLMAgentPoolIdleTTL	string		// for llm agent: reserved; runtime ignores in v0.2.x
+	LLMAgentShowTools	bool		// for llm agent: emit tool_use/tool_result frames on stream
+	LLMAgentResume		string		// for llm agent: session id to resume (supports :param)
 }
 ```
 
@@ -971,6 +994,26 @@ parseLogConfig parses:
 	  slow-query: 100ms
 	  requests: all
 	  errors: all
+
+### `(parserState) parseMCPServer`
+
+```go
+func (p *parserState) parseMCPServer() (MCPServer, error)
+```
+
+parseMCPServer parses a top-level `mcp <name>` declaration:
+
+	mcp filesystem
+	  command: npx
+	  args: -y, @modelcontextprotocol/server-filesystem, /tmp/agents
+	  env: NODE_ENV=production
+	  transport: stdio
+
+HTTP/SSE form:
+
+	mcp remote
+	  url: https://mcp.example.com/sse
+	  transport: sse
 
 ### `(parserState) parseManifestField`
 

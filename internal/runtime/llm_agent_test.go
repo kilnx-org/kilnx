@@ -145,12 +145,12 @@ func TestExecuteLLMAgent_StreamingHyperstream(t *testing.T) {
 
 	app := &parser.App{Config: &parser.AppConfig{WorkspaceRoot: t.TempDir()}}
 	node := parser.Node{
-		Type:             parser.NodeLLM,
-		Name:             "task",
-		LLMMode:          "agent",
-		LLMAgentBudget:   0.1,
-		LLMStreamTarget:  "#out",
-		LLMStreamSwap:    "append",
+		Type:            parser.NodeLLM,
+		Name:            "task",
+		LLMMode:         "agent",
+		LLMAgentBudget:  0.1,
+		LLMStreamTarget: "#out",
+		LLMStreamSwap:   "append",
 	}
 	rec := httptest.NewRecorder()
 	res, err := executeLLMAgent(context.Background(), node, app, map[string]string{"prompt": "hi"}, rec)

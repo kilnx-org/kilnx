@@ -24,3 +24,9 @@ max-tokens: <int>
 
 - [`llm`](../keywords/llm.md)
 
+## Provenance
+
+| | |
+|---|---|
+| **Spec last touched** | `56b81a7` (2026-05-13) |
+

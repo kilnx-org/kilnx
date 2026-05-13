@@ -110,7 +110,9 @@ func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, par
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, claudeBin(), args...)
+	// claudeBin is configurable via KILNX_CLAUDE_BIN (defaults to "claude" on PATH),
+	// args are constructed from validated DSL inputs. Subprocess is intentional.
+	cmd := exec.CommandContext(ctx, claudeBin(), args...) //nolint:gosec // G204: trusted binary + sanitized args
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 
@@ -398,7 +400,7 @@ func writeMCPConfig(node parser.Node, app *parser.App) (string, func(), error) {
 		return "", func() {}, fmt.Errorf("agent mcp tmp: %w", err)
 	}
 	if _, err := f.Write(buf); err != nil {
-		f.Close()
+		_ = f.Close()
 		_ = os.Remove(f.Name())
 		return "", func() {}, fmt.Errorf("agent mcp write: %w", err)
 	}
