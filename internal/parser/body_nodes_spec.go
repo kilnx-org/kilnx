@@ -119,7 +119,7 @@ func init() {
 	})
 
 	// `llm` is registered in llm_spec.go as a KindKeyword body block with
-	// discriminated `response` / `agent` children (v0.2.0 redesign).
+	// discriminated `response` / `agent` children (v0.1.3 redesign).
 
 	spec.Register(spec.Entity{
 		Name: "respond", Kind: spec.KindAttribute,

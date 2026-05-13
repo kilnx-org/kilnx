@@ -30,7 +30,7 @@ func init() {
 			"system", "temperature", "max-tokens",
 			"response", "agent",
 		},
-		Since: "0.2.0",
+		Since: "0.1.3",
 		Examples: []spec.Example{
 			{
 				Title: "Streaming chat (response mode)",
@@ -76,7 +76,7 @@ func init() {
 		Syntax:      "system: <text>",
 		Args:        []spec.Arg{{Name: "text", Type: "string", Required: true}},
 		ParentScope: []string{"llm"},
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
@@ -86,7 +86,7 @@ func init() {
 		Args:        []spec.Arg{{Name: "value", Type: "float", Required: true}},
 		ParentScope: []string{"llm"},
 		Default:     "1.0",
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
@@ -96,7 +96,7 @@ func init() {
 		Args:        []spec.Arg{{Name: "value", Type: "int", Required: true}},
 		ParentScope: []string{"llm"},
 		Default:     "1024",
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	// ---- response mode ----
@@ -111,7 +111,7 @@ func init() {
 		Syntax:      "response",
 		ParentScope: []string{"llm"},
 		Children:    []string{"history", "stream-swap"},
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
@@ -121,7 +121,7 @@ func init() {
 		Syntax:      "history: <SQL>",
 		Args:        []spec.Arg{{Name: "sql", Type: "string", Required: true}},
 		ParentScope: []string{"response"},
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	// NOTE: `stream:` (CSS selector inside `response`) is not registered as
@@ -137,7 +137,7 @@ func init() {
 		Args:        []spec.Arg{{Name: "style", Type: "enum", Required: true}},
 		ParentScope: []string{"response"},
 		Default:     "append",
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	// ---- agent mode ----
@@ -156,7 +156,7 @@ func init() {
 			"cwd", "tools", "max-turns", "max-budget-usd", "permission-mode",
 			"mcp", "pool", "pool-idle-ttl", "show-tools", "resume",
 		},
-		Since: "0.2.0",
+		Since: "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
@@ -166,7 +166,7 @@ func init() {
 		Syntax:      "cwd: <path>",
 		Args:        []spec.Arg{{Name: "path", Type: "path", Required: true}},
 		ParentScope: []string{"agent"},
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
@@ -176,7 +176,7 @@ func init() {
 		Syntax:      "tools: <name>, <name>, ...",
 		Args:        []spec.Arg{{Name: "names", Type: "list", Required: false, Variadic: true}},
 		ParentScope: []string{"agent"},
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
@@ -186,7 +186,7 @@ func init() {
 		Args:        []spec.Arg{{Name: "value", Type: "int", Required: true}},
 		ParentScope: []string{"agent"},
 		Default:     "10",
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
@@ -197,7 +197,7 @@ func init() {
 		Args:        []spec.Arg{{Name: "value", Type: "float", Required: true}},
 		ParentScope: []string{"agent"},
 		Required:    true,
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
@@ -208,7 +208,7 @@ func init() {
 		Args:        []spec.Arg{{Name: "mode", Type: "enum", Required: true}},
 		ParentScope: []string{"agent"},
 		Default:     "plan",
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
@@ -218,17 +218,17 @@ func init() {
 		Syntax:      "mcp: <name>, <name>, ...",
 		Args:        []spec.Arg{{Name: "names", Type: "list", Required: true, Variadic: true}},
 		ParentScope: []string{"agent"},
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
 		Name: "pool", Kind: spec.KindAttribute,
 		Summary:     "Reserved: number of warm `claude` subprocesses to keep alive (not yet implemented).",
-		Description: "Reserved sintaxe in v0.2.0. Analyzer emits a `not yet implemented` warning; runtime ignores the value and always spawns per request.",
+		Description: "Reserved sintaxe in v0.1.3. Analyzer emits a `not yet implemented` warning; runtime ignores the value and always spawns per request.",
 		Syntax:      "pool: <int>",
 		Args:        []spec.Arg{{Name: "value", Type: "int", Required: false}},
 		ParentScope: []string{"agent"},
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
@@ -237,7 +237,7 @@ func init() {
 		Syntax:      "pool-idle-ttl: <duration>",
 		Args:        []spec.Arg{{Name: "duration", Type: "string", Required: false}},
 		ParentScope: []string{"agent"},
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
@@ -249,7 +249,7 @@ func init() {
 		Args:        []spec.Arg{{Name: "value", Type: "bool", Required: true}},
 		ParentScope: []string{"agent"},
 		Default:     "false",
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	spec.Register(spec.Entity{
@@ -260,7 +260,7 @@ func init() {
 		Syntax:      "resume: <session-id>",
 		Args:        []spec.Arg{{Name: "value", Type: "string", Required: true}},
 		ParentScope: []string{"agent"},
-		Since:       "0.2.0",
+		Since:       "0.1.3",
 	})
 
 	// ---- top-level `mcp <name>` keyword (D13 form B) ----

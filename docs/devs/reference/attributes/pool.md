@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Kind** | Attribute |
-| **Since** | `0.2.0` |
+| **Since** | `0.1.3` |
 
 ## Syntax
 
@@ -21,7 +21,7 @@ pool: <int>
 
 ## Description
 
-Reserved sintaxe in v0.2.0. Analyzer emits a `not yet implemented` warning; runtime ignores the value and always spawns per request.
+Reserved sintaxe in v0.1.3. Analyzer emits a `not yet implemented` warning; runtime ignores the value and always spawns per request.
 
 ## Used in
 
