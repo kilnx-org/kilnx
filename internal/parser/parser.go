@@ -363,40 +363,40 @@ const (
 // Node is one statement inside a Page, Action, Schedule, or similar
 // body. NodeType selects which fields are meaningful; the rest are zero.
 type Node struct {
-	Type          NodeType
-	Value         string
-	Name          string            // for query: result var name
-	SQL           string            // for query: the raw SQL
-	SourceModel   string            // primary model this query targets (set by analyzer)
-	Props         map[string]string // for on: condition; for send email: body
-	Paginate      int               // for query: items per page (0 = no pagination)
-	ModelName     string            // for validate: which model to validate against
-	QuerySQL      string            // for respond ... query: pre-fill data
-	Validations   []Validation      // for validate block
-	RespondTarget string            // for respond: CSS selector target
-	RespondSwap   string            // for respond: htmx swap strategy
-	HTMLContent   string            // for html: raw HTML content
-	EmailTo       string            // for send email: recipient (:email or query result)
-	EmailSubject  string            // for send email: subject line
-	EmailTemplate string            // for send email: template name
-	JobName       string            // for enqueue: which job to run
-	JobParams     map[string]string // for enqueue: params to pass to job
-	Children      []Node            // for on: child nodes to execute
-	StatusCode    int               // for respond: HTTP status code
-	BroadcastRoom string            // for broadcast: room name
-	BroadcastFrag string            // for broadcast: fragment reference
-	TemplateName  string            // for generate pdf: template name
-	DataQueryName string            // for generate pdf: data query name
-	EmailAttach   string            // for send email: attachment file path or param
-	FetchURL      string            // for fetch: the URL to request
-	FetchMethod   string            // for fetch: GET, POST, PUT, DELETE
-	FetchHeaders  map[string]string // for fetch: request headers
-	FetchBody     map[string]string // for fetch: POST body params
-	LLMModel       string  // for llm: model name (e.g. claude-sonnet-4-6)
-	LLMSystem      string  // for llm: system prompt
-	LLMTemperature float64 // for llm: sampling temperature (0 = unset)
-	LLMMaxTokens   int     // for llm: max output tokens (0 = default)
-	LLMMode        string  // for llm: "response" or "agent"
+	Type           NodeType
+	Value          string
+	Name           string            // for query: result var name
+	SQL            string            // for query: the raw SQL
+	SourceModel    string            // primary model this query targets (set by analyzer)
+	Props          map[string]string // for on: condition; for send email: body
+	Paginate       int               // for query: items per page (0 = no pagination)
+	ModelName      string            // for validate: which model to validate against
+	QuerySQL       string            // for respond ... query: pre-fill data
+	Validations    []Validation      // for validate block
+	RespondTarget  string            // for respond: CSS selector target
+	RespondSwap    string            // for respond: htmx swap strategy
+	HTMLContent    string            // for html: raw HTML content
+	EmailTo        string            // for send email: recipient (:email or query result)
+	EmailSubject   string            // for send email: subject line
+	EmailTemplate  string            // for send email: template name
+	JobName        string            // for enqueue: which job to run
+	JobParams      map[string]string // for enqueue: params to pass to job
+	Children       []Node            // for on: child nodes to execute
+	StatusCode     int               // for respond: HTTP status code
+	BroadcastRoom  string            // for broadcast: room name
+	BroadcastFrag  string            // for broadcast: fragment reference
+	TemplateName   string            // for generate pdf: template name
+	DataQueryName  string            // for generate pdf: data query name
+	EmailAttach    string            // for send email: attachment file path or param
+	FetchURL       string            // for fetch: the URL to request
+	FetchMethod    string            // for fetch: GET, POST, PUT, DELETE
+	FetchHeaders   map[string]string // for fetch: request headers
+	FetchBody      map[string]string // for fetch: POST body params
+	LLMModel       string            // for llm: model name (e.g. claude-sonnet-4-6)
+	LLMSystem      string            // for llm: system prompt
+	LLMTemperature float64           // for llm: sampling temperature (0 = unset)
+	LLMMaxTokens   int               // for llm: max output tokens (0 = default)
+	LLMMode        string            // for llm: "response" or "agent"
 
 	// response-mode fields
 	LLMHistorySQL   string // for llm response: SQL yielding message rows

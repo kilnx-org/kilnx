@@ -520,7 +520,8 @@ func TestTxHandleQueryRowsWithParams(t *testing.T) {
 // ---------- Param binding edge cases ----------
 
 func TestBindParamsMissingLeftAsIs(t *testing.T) {
-	query, args := bindParams(SqliteDialect{},
+	query, args := bindParams(
+		SqliteDialect{},
 		"SELECT * FROM t WHERE a = :known AND b = :missing",
 		map[string]string{"known": "val"},
 	)
@@ -565,7 +566,8 @@ func TestBindParamsEmptyMap(t *testing.T) {
 }
 
 func TestBindParamsDuplicateParam(t *testing.T) {
-	query, args := bindParams(SqliteDialect{},
+	query, args := bindParams(
+		SqliteDialect{},
 		"SELECT * FROM t WHERE a = :x OR b = :x",
 		map[string]string{"x": "val"},
 	)

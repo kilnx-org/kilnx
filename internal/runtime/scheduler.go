@@ -205,7 +205,8 @@ func (jq *JobQueue) recoverOrphanedJobs() {
 	}
 
 	rows, err := db.QueryRows(
-		`SELECT id, name FROM _kilnx_jobs WHERE state = 'executing'`)
+		`SELECT id, name FROM _kilnx_jobs WHERE state = 'executing'`,
+	)
 	if err != nil || len(rows) == 0 {
 		return
 	}
@@ -213,7 +214,8 @@ func (jq *JobQueue) recoverOrphanedJobs() {
 	for _, row := range rows {
 		db.ExecWithParams(
 			`UPDATE _kilnx_jobs SET state = 'available', scheduled_at = datetime('now') WHERE id = :id`,
-			map[string]string{"id": row["id"]})
+			map[string]string{"id": row["id"]},
+		)
 	}
 	fmt.Printf("Recovered %d orphaned job(s)\n", len(rows))
 }
@@ -254,7 +256,8 @@ func (jq *JobQueue) Enqueue(name string, params map[string]string) error {
 			"name":         name,
 			"params":       string(paramsJSON),
 			"max_attempts": fmt.Sprintf("%d", maxAttempts),
-		})
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("enqueue error: %w", err)
 	}
@@ -281,7 +284,8 @@ func (jq *JobQueue) processNextJob() {
 	rows, err := db.QueryRows(
 		`SELECT id, name, params, attempts, max_attempts FROM _kilnx_jobs
 		 WHERE state = 'available' AND scheduled_at <= datetime('now')
-		 ORDER BY id LIMIT 1`)
+		 ORDER BY id LIMIT 1`,
+	)
 	if err != nil || len(rows) == 0 {
 		return
 	}
@@ -296,14 +300,16 @@ func (jq *JobQueue) processNextJob() {
 	if !ok {
 		db.ExecWithParams(
 			`UPDATE _kilnx_jobs SET state = 'discarded', last_error = 'unknown job type' WHERE id = :id`,
-			map[string]string{"id": jobID})
+			map[string]string{"id": jobID},
+		)
 		return
 	}
 
 	// Mark as executing
 	db.ExecWithParams(
 		`UPDATE _kilnx_jobs SET state = 'executing', started_at = datetime('now') WHERE id = :id`,
-		map[string]string{"id": jobID})
+		map[string]string{"id": jobID},
+	)
 
 	// Deserialize params
 	var params map[string]string
@@ -335,7 +341,8 @@ func (jq *JobQueue) processNextJob() {
 					"attempts": fmt.Sprintf("%d", attempts),
 					"error":    execErr.Error(),
 					"backoff":  fmt.Sprintf("%d", backoffSecs),
-				})
+				},
+			)
 			fmt.Printf("  job '%s' failed, retry %d/%d in %ds\n", jobName, attempts, maxAttempts, backoffSecs)
 		} else {
 			db.ExecWithParams(
@@ -345,13 +352,15 @@ func (jq *JobQueue) processNextJob() {
 					"id":       jobID,
 					"attempts": fmt.Sprintf("%d", attempts),
 					"error":    execErr.Error(),
-				})
+				},
+			)
 			fmt.Printf("  job '%s' discarded after %d attempts\n", jobName, attempts)
 		}
 	} else {
 		db.ExecWithParams(
 			`UPDATE _kilnx_jobs SET state = 'completed', completed_at = datetime('now') WHERE id = :id`,
-			map[string]string{"id": jobID})
+			map[string]string{"id": jobID},
+		)
 		fmt.Printf("  job '%s' completed\n", jobName)
 	}
 }
