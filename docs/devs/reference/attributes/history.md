@@ -32,6 +32,6 @@ Each row must expose `papel` (`user`, `assistente`, or `sistema`) and `conteudo`
 | | |
 |---|---|
 | **Spec last touched** | `66f909b` (2026-05-13) |
-| **Source last touched** | `87ebbf6` (2026-05-13) |
+| **Source last touched** | `aef0ef5` (2026-05-13) |
 | **Source files** | `internal/parser/parser.go` |
 

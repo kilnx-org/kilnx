@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/runtime` |
-| **Source last touched** | `12d3c66` (2026-05-13) |
+| **Source last touched** | `aef0ef5` (2026-05-13) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
 
