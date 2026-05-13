@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/lexer` |
-| **Source last touched** | `d373018` (2026-05-13) |
+| **Source last touched** | `72e9177` (2026-05-13) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
 

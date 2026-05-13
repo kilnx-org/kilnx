@@ -34,6 +34,6 @@ Auto-synthesizes a required reference field to the tenant model and transparentl
 | | |
 |---|---|
 | **Spec last touched** | `5da8498` (2026-05-08) |
-| **Source last touched** | `69981b8` (2026-05-13) |
+| **Source last touched** | `72e9177` (2026-05-13) |
 | **Source files** | `internal/parser/parser.go`, `internal/runtime/auth.go` |
 

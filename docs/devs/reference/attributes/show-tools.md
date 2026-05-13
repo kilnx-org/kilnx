@@ -32,5 +32,5 @@ When true and the surrounding `response` block has `stream:` set, tool-call and 
 
 | | |
 |---|---|
-| **Spec last touched** | `7df9033` (2026-05-13) |
+| **Spec last touched** | `72e9177` (2026-05-13) |
 
