@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ## [Unreleased]
 
+### Added
+- Fragments accept query/list args: when a fragment is invoked with a bare identifier matching a parent query name (e.g. `{{Select options=roles}}`), the rows bind to the arg so `{{each options}}` inside the fragment body iterates them. Enables generic data-driven primitives (Select, list views, pickers) without hardcoding query names in fragment bodies. Bare identifiers that do not match any active query fall back to the previous scalar-string behaviour, so existing fragments are unaffected.
+
 ## [0.1.3] - 2026-05-13
 
 ### Added

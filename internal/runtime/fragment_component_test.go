@@ -371,3 +371,126 @@ func TestExpandFragmentCallsLiteralFallback(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// TestExpandFragmentCallsQueryArg verifies that a fragment can accept a query
+// name as an argument and iterate over it via {{each argname}} inside its body.
+// This is the "Select with options from DB" pattern: the fragment is generic;
+// the page picks which query feeds it.
+func TestExpandFragmentCallsQueryArg(t *testing.T) {
+	selectFrag := &parser.Page{
+		Path: "select",
+		FragmentArgs: []parser.FragmentArg{
+			{Name: "name"},
+			{Name: "options"},
+		},
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<select name="{name}">{{each options}}<option value="{id}">{label}</option>{{end}}</select>`},
+		},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"select": selectFrag},
+		queries: map[string][]database.Row{
+			"roles": {
+				{"id": "1", "label": "Admin"},
+				{"id": "2", "label": "User"},
+			},
+		},
+		paginate:          map[string]PaginateInfo{},
+		querySourceModels: map[string]string{},
+		customManifests:   map[string]*parser.CustomFieldManifest{},
+		queryParams:       map[string]string{},
+	}
+	content := `{{select name="role" options=roles}}`
+	got := renderHTML(content, ctx)
+	want := `<select name="role"><option value="1">Admin</option><option value="2">User</option></select>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestExpandFragmentCallsQueryArgEmpty verifies that an empty query bound as
+// a fragment arg produces an empty iteration (and the optional {{else}} branch
+// inside the fragment body fires).
+func TestExpandFragmentCallsQueryArgEmpty(t *testing.T) {
+	listFrag := &parser.Page{
+		Path: "list",
+		FragmentArgs: []parser.FragmentArg{
+			{Name: "items"},
+		},
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<ul>{{each items}}<li>{name}</li>{{else}}<li class="empty">none</li>{{end}}</ul>`},
+		},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"list": listFrag},
+		queries: map[string][]database.Row{
+			"users": {},
+		},
+		paginate:          map[string]PaginateInfo{},
+		querySourceModels: map[string]string{},
+		customManifests:   map[string]*parser.CustomFieldManifest{},
+		queryParams:       map[string]string{},
+	}
+	got := renderHTML(`{{list items=users}}`, ctx)
+	want := `<ul><li class="empty">none</li></ul>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestExpandFragmentCallsQueryArgUnknownIdentFallsBackToScalar verifies that
+// when a bare identifier arg does NOT match any query, it falls through to the
+// existing scalar resolution path (treated as literal string), preserving the
+// pre-feature behavior for plain values like color=red or status=active.
+func TestExpandFragmentCallsQueryArgUnknownIdentFallsBackToScalar(t *testing.T) {
+	badge := &parser.Page{
+		Path:         "badge",
+		FragmentArgs: []parser.FragmentArg{{Name: "color"}},
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<span>{color}</span>`},
+		},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"badge": badge},
+		queries:            map[string][]database.Row{},
+		paginate:           map[string]PaginateInfo{},
+		querySourceModels:  map[string]string{},
+		customManifests:    map[string]*parser.CustomFieldManifest{},
+		queryParams:        map[string]string{},
+	}
+	got := renderHTML(`{{badge color=red}}`, ctx)
+	want := `<span>red</span>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestExpandFragmentCallsQueryArgMixed verifies that scalar and query args can
+// coexist on the same fragment call without one clobbering the other.
+func TestExpandFragmentCallsQueryArgMixed(t *testing.T) {
+	frag := &parser.Page{
+		Path: "labeledlist",
+		FragmentArgs: []parser.FragmentArg{
+			{Name: "label"},
+			{Name: "items"},
+		},
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<div>{label}: <ul>{{each items}}<li>{name}</li>{{end}}</ul></div>`},
+		},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"labeledlist": frag},
+		queries: map[string][]database.Row{
+			"tags": {{"name": "go"}, {"name": "kilnx"}},
+		},
+		paginate:          map[string]PaginateInfo{},
+		querySourceModels: map[string]string{},
+		customManifests:   map[string]*parser.CustomFieldManifest{},
+		queryParams:       map[string]string{},
+	}
+	got := renderHTML(`{{labeledlist label="Tags" items=tags}}`, ctx)
+	want := `<div>Tags: <ul><li>go</li><li>kilnx</li></ul></div>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

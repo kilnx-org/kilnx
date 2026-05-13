@@ -433,6 +433,17 @@ func expandEachBlocks(content string, ctx *renderContext, nonce string) string {
 		}
 
 		rows, ok := ctx.queries[queryName]
+		if !ok {
+			// Fallback: a fragment may have received a query/list arg under
+			// this name. Lookup the propagated rows so {{each argname}} works
+			// when invoked as `{{Frag argname=parentQueryName}}`.
+			if ctx.fragmentQueryArgs != nil {
+				if fqRows, fqOk := ctx.fragmentQueryArgs[queryName]; fqOk {
+					rows = fqRows
+					ok = true
+				}
+			}
+		}
 		if !ok || len(rows) == 0 {
 			if elseBody != "" {
 				expanded := expandIfBlocks(elseBody, ctx, nil)
@@ -1131,7 +1142,7 @@ func expandSingleFragmentCall(match string, ctx *renderContext) string {
 	if !ok {
 		return match
 	}
-	argMap := buildFragmentArgs(argStr, frag, ctx)
+	scalarArgs, queryArgs := parseFragmentArgs(argStr, frag, ctx)
 	var fragHTML string
 	for _, node := range frag.Body {
 		if node.Type == parser.NodeHTML {
@@ -1150,16 +1161,23 @@ func expandSingleFragmentCall(match string, ctx *renderContext) string {
 		querySourceModels:  ctx.querySourceModels,
 		customManifests:    ctx.customManifests,
 		eachStack:          ctx.eachStack,
-		fragmentArgs:       argMap,
+		fragmentArgs:       scalarArgs,
+		fragmentQueryArgs:  queryArgs,
 		fragmentDepth:      ctx.fragmentDepth + 1,
 		fragmentComponents: ctx.fragmentComponents,
 	}
 	return renderHTML(fragHTML, childCtx)
 }
 
-// buildFragmentArgs parses an argument string and applies defaults for a fragment.
-func buildFragmentArgs(argStr string, frag *parser.Page, ctx *renderContext) map[string]string {
-	argMap := make(map[string]string)
+// parseFragmentArgs parses an argument string and binds args for a fragment call.
+// Returns scalar args (string map) and query/list args (rows map). When an arg
+// expression is a bare identifier that resolves to a known query name (parent
+// queries or propagated fragment query args), it binds as a list arg, enabling
+// {{each argname}} inside the fragment body. Otherwise it falls back to scalar
+// resolution via resolveValue.
+func parseFragmentArgs(argStr string, frag *parser.Page, ctx *renderContext) (map[string]string, map[string][]database.Row) {
+	scalarMap := make(map[string]string)
+	queryMap := make(map[string][]database.Row)
 	for _, pair := range splitArgStr(argStr) {
 		pair = strings.TrimSpace(pair)
 		if pair == "" {
@@ -1171,27 +1189,67 @@ func buildFragmentArgs(argStr string, frag *parser.Page, ctx *renderContext) map
 		}
 		key := strings.TrimSpace(pair[:eqIdx])
 		expr := strings.TrimSpace(pair[eqIdx+1:])
-		var val string
 		if strings.HasPrefix(expr, `"`) && strings.HasSuffix(expr, `"`) && len(expr) >= 2 {
-			val = expr[1 : len(expr)-1]
-		} else if strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`) && len(expr) >= 2 {
-			val = expr[1 : len(expr)-1]
-		} else {
-			resolved := resolveValue(expr, ctx, ctx.currentRow)
-			if resolved == "{"+expr+"}" {
-				val = expr
-			} else {
-				val = resolved
+			scalarMap[key] = expr[1 : len(expr)-1]
+			continue
+		}
+		if strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`) && len(expr) >= 2 {
+			scalarMap[key] = expr[1 : len(expr)-1]
+			continue
+		}
+		// Bare identifier: try query/list binding before scalar resolution.
+		if isBareIdent(expr) {
+			if rows, ok := ctx.queries[expr]; ok {
+				queryMap[key] = rows
+				continue
+			}
+			if ctx.fragmentQueryArgs != nil {
+				if rows, ok := ctx.fragmentQueryArgs[expr]; ok {
+					queryMap[key] = rows
+					continue
+				}
 			}
 		}
-		argMap[key] = val
-	}
-	for _, arg := range frag.FragmentArgs {
-		if _, ok := argMap[arg.Name]; !ok && arg.HasDefault {
-			argMap[arg.Name] = arg.DefaultValue
+		resolved := resolveValue(expr, ctx, ctx.currentRow)
+		if resolved == "{"+expr+"}" {
+			scalarMap[key] = expr
+		} else {
+			scalarMap[key] = resolved
 		}
 	}
-	return argMap
+	for _, arg := range frag.FragmentArgs {
+		if _, ok := scalarMap[arg.Name]; !ok {
+			if _, qok := queryMap[arg.Name]; !qok && arg.HasDefault {
+				scalarMap[arg.Name] = arg.DefaultValue
+			}
+		}
+	}
+	return scalarMap, queryMap
+}
+
+// isBareIdent reports whether s is a plain identifier ([A-Za-z_][A-Za-z0-9_]*),
+// i.e. eligible for query-name lookup.
+func isBareIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+			continue
+		}
+		if i > 0 && c >= '0' && c <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// buildFragmentArgs is kept for backwards compat: returns scalar map only.
+func buildFragmentArgs(argStr string, frag *parser.Page, ctx *renderContext) map[string]string {
+	scalar, _ := parseFragmentArgs(argStr, frag, ctx)
+	return scalar
 }
 
 // expandFragmentCalls processes {{componentName arg=expr}} blocks inside HTML content.
@@ -1221,45 +1279,8 @@ func expandFragmentCalls(content string, ctx *renderContext) string {
 			return match // unknown component, leave for analyzer to catch
 		}
 
-		// Parse arguments: key=expr key2=expr (quoted values may contain spaces)
-		argMap := make(map[string]string)
-		for _, pair := range splitArgStr(argStr) {
-			pair = strings.TrimSpace(pair)
-			if pair == "" {
-				continue
-			}
-			eqIdx := strings.Index(pair, "=")
-			if eqIdx < 0 {
-				continue // malformed, skip
-			}
-			key := strings.TrimSpace(pair[:eqIdx])
-			expr := strings.TrimSpace(pair[eqIdx+1:])
-			var val string
-			if strings.HasPrefix(expr, `"`) && strings.HasSuffix(expr, `"`) {
-				// String literal: "value"
-				val = expr[1 : len(expr)-1]
-			} else if strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`) {
-				// String literal: 'value'
-				val = expr[1 : len(expr)-1]
-			} else {
-				// Try to resolve as variable/query/field reference
-				resolved := resolveValue(expr, ctx, ctx.currentRow)
-				if resolved == "{"+expr+"}" {
-					// Not resolved — treat as literal string
-					val = expr
-				} else {
-					val = resolved
-				}
-			}
-			argMap[key] = val
-		}
-
-		// Apply defaults for missing args
-		for _, arg := range frag.FragmentArgs {
-			if _, ok := argMap[arg.Name]; !ok && arg.HasDefault {
-				argMap[arg.Name] = arg.DefaultValue
-			}
-		}
+		// Parse arguments via shared helper (handles scalar + query/list args).
+		scalarArgs, queryArgs := parseFragmentArgs(argStr, frag, ctx)
 
 		// Find the HTML body of the component
 		var fragHTML string
@@ -1282,7 +1303,8 @@ func expandFragmentCalls(content string, ctx *renderContext) string {
 			querySourceModels:  ctx.querySourceModels,
 			customManifests:    ctx.customManifests,
 			eachStack:          ctx.eachStack,
-			fragmentArgs:       argMap,
+			fragmentArgs:       scalarArgs,
+			fragmentQueryArgs:  queryArgs,
 			fragmentDepth:      ctx.fragmentDepth + 1,
 			fragmentComponents: ctx.fragmentComponents,
 		}

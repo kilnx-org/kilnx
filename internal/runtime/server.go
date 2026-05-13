@@ -382,7 +382,8 @@ type renderContext struct {
 	eachModels         []string                               // parallel stack of source model names for each entry in eachStack ("" if unknown)
 	models             []parser.Model                         // all models, for resolving computed fields
 	currentRow         database.Row                           // active row when inside {{each}} block
-	fragmentArgs       map[string]string                      // active component argument bindings
+	fragmentArgs       map[string]string                      // active component argument bindings (scalar)
+	fragmentQueryArgs  map[string][]database.Row              // list/query args bound to fragment ({{each argname}} resolves here)
 	fragmentDepth      int                                    // recursion guard for component fragments
 	fragmentComponents map[string]*parser.Page                // component name -> fragment (for inline rendering)
 	actions            []parser.Page                          // declared actions for action= attribute expansion
