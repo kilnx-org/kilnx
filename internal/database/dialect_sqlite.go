@@ -56,6 +56,31 @@ func (SqliteDialect) ColumnsSQL(table string) string {
 	return fmt.Sprintf(`SELECT name FROM pragma_table_info("%s")`, table)
 }
 
+// ColumnsInfoSQL returns name, type, notnull flag, and a 1/0 has_default
+// flag (derived from dflt_value IS NOT NULL) via pragma_table_info.
+func (SqliteDialect) ColumnsInfoSQL(table string) string {
+	return fmt.Sprintf(
+		`SELECT name, type, "notnull", CASE WHEN dflt_value IS NULL THEN 0 ELSE 1 END FROM pragma_table_info("%s")`,
+		table,
+	)
+}
+
+// UniqueColumnsSQL returns the names of columns that have a single-column
+// unique index on the given table. Composite unique indexes are skipped.
+// Includes both `u` (user CREATE UNIQUE INDEX) and `c` (table-level UNIQUE
+// constraint) origins; skips `pk` (PRIMARY KEY) since id is excluded by
+// callers.
+func (SqliteDialect) UniqueColumnsSQL(table string) string {
+	return fmt.Sprintf(`
+		SELECT ii.name
+		FROM pragma_index_list("%s") AS il
+		JOIN pragma_index_info(il.name) AS ii
+		WHERE il."unique" = 1
+		  AND il.origin IN ('u', 'c')
+		  AND (SELECT COUNT(*) FROM pragma_index_info(il.name)) = 1
+	`, table)
+}
+
 // AutoIncrementPK returns the SQLite INTEGER PRIMARY KEY AUTOINCREMENT
 // definition.
 func (SqliteDialect) AutoIncrementPK() string {

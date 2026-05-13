@@ -58,6 +58,39 @@ func (PostgresDialect) ColumnsSQL(table string) string {
 		 ORDER BY ordinal_position`, table)
 }
 
+// ColumnsInfoSQL returns name, normalized data_type, notnull flag, and a
+// 1/0 has_default flag for each column of the given public-schema table.
+// data_type follows information_schema conventions (e.g. "integer",
+// "double precision", "timestamp without time zone"); callers normalize.
+func (PostgresDialect) ColumnsInfoSQL(table string) string {
+	return fmt.Sprintf(
+		`SELECT column_name,
+		        data_type,
+		        CASE WHEN is_nullable = 'NO' THEN 1 ELSE 0 END,
+		        CASE WHEN column_default IS NULL THEN 0 ELSE 1 END
+		 FROM information_schema.columns
+		 WHERE table_schema = 'public' AND table_name = '%s'
+		 ORDER BY ordinal_position`, table)
+}
+
+// UniqueColumnsSQL returns the names of columns covered by a single-column
+// UNIQUE constraint on the given public-schema table. Composite UNIQUE
+// constraints are excluded via the HAVING COUNT(*) = 1 group filter.
+func (PostgresDialect) UniqueColumnsSQL(table string) string {
+	return fmt.Sprintf(`
+		SELECT MIN(kcu.column_name)
+		FROM information_schema.table_constraints AS tc
+		JOIN information_schema.key_column_usage AS kcu
+		  ON tc.constraint_name = kcu.constraint_name
+		 AND tc.table_schema = kcu.table_schema
+		WHERE tc.constraint_type = 'UNIQUE'
+		  AND tc.table_schema = 'public'
+		  AND tc.table_name = '%s'
+		GROUP BY tc.constraint_name
+		HAVING COUNT(*) = 1
+	`, table)
+}
+
 // AutoIncrementPK returns the PostgreSQL BIGSERIAL primary key definition.
 func (PostgresDialect) AutoIncrementPK() string {
 	return "id BIGSERIAL PRIMARY KEY"

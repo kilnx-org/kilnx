@@ -16,6 +16,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Changed
 - Transport-level `fetch` failures (DNS, timeout, connection refused) now abort the surrounding action with `502 Bad Gateway` and roll back the implicit transaction. Jobs and schedules surface the error to the queue. HTTP 4xx / 5xx are still parsed and exposed (not treated as transport errors). Page renders continue to degrade gracefully.
 
+### Fixed
+- `kilnx migrate` now detects schema drift across five dimensions: orphan columns (DB has them but model no longer declares them), column type mismatch, NOT NULL mismatch, single-column UNIQUE mismatch, and DEFAULT presence mismatch (value not compared, since dialect normalization is unreliable across SQLite/Postgres). Previously the diff was unidirectional (model -> DB only), so any DB-side change beyond a missing column went unreported and `kilnx migrate` reported "up to date" against a divergent schema. Warnings are grouped by kind with `table.column (detail)` lines plus a manual-fix hint per kind. Migration itself remains additive: no destructive ALTERs are generated.
+
 ### Security
 - `fetch` log lines redact the URL query string so secrets passed via `:param` substitution do not leak to stdout.
 

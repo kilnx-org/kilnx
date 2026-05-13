@@ -432,6 +432,247 @@ func (db *DB) DetectDataLossRisk(models []parser.Model) ([]DataLossRisk, error) 
 	return risks, rows.Err()
 }
 
+// ColumnDriftKind classifies how a database column diverges from its model
+// declaration. Drift detection is read-only; PlanMigration never emits ALTER
+// COLUMN or DROP COLUMN automatically, so this is purely advisory.
+type ColumnDriftKind string
+
+const (
+	// DriftOrphan: column exists in DB but no longer declared in the model.
+	DriftOrphan ColumnDriftKind = "orphan"
+	// DriftType: column type in DB differs from the type the model would emit.
+	DriftType ColumnDriftKind = "type"
+	// DriftNotNull: model and DB disagree on NOT NULL.
+	DriftNotNull ColumnDriftKind = "notnull"
+	// DriftUnique: model and DB disagree on single-column UNIQUE.
+	DriftUnique ColumnDriftKind = "unique"
+	// DriftDefault: model and DB disagree on the presence of a DEFAULT.
+	// (Value comparison is intentionally skipped: dialect normalization is
+	// too noisy to compare default expressions reliably across SQLite/PG.)
+	DriftDefault ColumnDriftKind = "default"
+)
+
+// ColumnDrift describes one divergence between a declared model field and
+// the live database schema. PlanMigration is intentionally additive (model
+// -> DB) and never emits DROP COLUMN or ALTER COLUMN, so these warnings are
+// the only signal that the schemas have diverged. `kilnx migrate` reports
+// them as warnings; the migration itself is not blocked.
+type ColumnDrift struct {
+	Kind      ColumnDriftKind
+	TableName string
+	Column    string
+	Detail    string // human-readable, e.g. "model=TEXT db=INTEGER"
+}
+
+// columnInfo captures the per-column data returned by Dialect.ColumnsInfoSQL.
+type columnInfo struct {
+	Type       string
+	NotNull    bool
+	HasDefault bool
+}
+
+// DetectColumnDrift introspects each declared model's table and returns
+// every divergence between the live schema and the model declaration:
+// orphan columns, type mismatches, NOT NULL mismatches, single-column
+// UNIQUE mismatches, and DEFAULT presence/absence mismatches. Tables
+// missing from the database are skipped (planExistingTable adds them as
+// part of normal migration); orphan tables are covered by
+// DetectDataLossRisk. Reserved `id` / `custom` columns and column-mode
+// custom-field manifest entries are exempted.
+func (db *DB) DetectColumnDrift(models []parser.Model, manifests ...map[string]*parser.CustomFieldManifest) ([]ColumnDrift, error) {
+	var cm map[string]*parser.CustomFieldManifest
+	if len(manifests) > 0 {
+		cm = manifests[0]
+	}
+	var drifts []ColumnDrift
+	for _, model := range models {
+		if !isValidIdentifier(model.Name) {
+			continue
+		}
+		exists, err := db.tableExists(model.Name)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			continue
+		}
+		dbCols, err := db.getColumnsInfo(model.Name)
+		if err != nil {
+			return nil, err
+		}
+		dbUniques, err := db.getUniqueColumns(model.Name)
+		if err != nil {
+			return nil, err
+		}
+
+		// Build the expected column set: id + non-computed model fields +
+		// reserved custom slot + column-mode manifest fields.
+		expected := map[string]bool{"id": true}
+		fieldByCol := make(map[string]parser.Field, len(model.Fields))
+		for _, field := range model.Fields {
+			if field.Type == parser.FieldComputed {
+				continue
+			}
+			col := fieldToColumnName(field)
+			expected[col] = true
+			fieldByCol[col] = field
+		}
+		if model.CustomFieldsFile != "" || model.DynamicFields {
+			expected["custom"] = true
+		}
+		if manifest, ok := cm[model.Name]; ok {
+			for _, f := range manifest.Fields {
+				if f.Mode != parser.CustomFieldModeColumn {
+					continue
+				}
+				expected[f.Name] = true
+			}
+		}
+
+		// Orphan columns (DB-only).
+		for col := range dbCols {
+			if !expected[col] {
+				drifts = append(drifts, ColumnDrift{
+					Kind:      DriftOrphan,
+					TableName: model.Name,
+					Column:    col,
+				})
+			}
+		}
+
+		// Per-field drift (type / notnull / unique / default presence).
+		// Skip if the DB column is missing: that case is handled by the
+		// additive migrator (planExistingTable will ADD COLUMN it).
+		for col, field := range fieldByCol {
+			info, ok := dbCols[col]
+			if !ok {
+				continue
+			}
+			expectedType := db.dialect.FieldToSQLType(field)
+			if !typesEqual(expectedType, info.Type) {
+				drifts = append(drifts, ColumnDrift{
+					Kind:      DriftType,
+					TableName: model.Name,
+					Column:    col,
+					Detail:    fmt.Sprintf("model=%s db=%s", expectedType, info.Type),
+				})
+			}
+			if field.Required != info.NotNull {
+				drifts = append(drifts, ColumnDrift{
+					Kind:      DriftNotNull,
+					TableName: model.Name,
+					Column:    col,
+					Detail:    fmt.Sprintf("model required=%t db notnull=%t", field.Required, info.NotNull),
+				})
+			}
+			_, hasUniq := dbUniques[col]
+			// Field-level UNIQUE only; primary key on id is excluded by
+			// fieldByCol (id is never a field).
+			if field.Unique != hasUniq {
+				drifts = append(drifts, ColumnDrift{
+					Kind:      DriftUnique,
+					TableName: model.Name,
+					Column:    col,
+					Detail:    fmt.Sprintf("model unique=%t db unique=%t", field.Unique, hasUniq),
+				})
+			}
+			modelHasDefault := field.Default != "" || field.Auto
+			if modelHasDefault != info.HasDefault {
+				drifts = append(drifts, ColumnDrift{
+					Kind:      DriftDefault,
+					TableName: model.Name,
+					Column:    col,
+					Detail:    fmt.Sprintf("model has_default=%t db has_default=%t", modelHasDefault, info.HasDefault),
+				})
+			}
+		}
+	}
+	return drifts, nil
+}
+
+// typesEqual returns true when two SQL type strings are equivalent after
+// normalization (lowercase, whitespace collapsed, common dialect aliases
+// resolved, parameterized lengths stripped). Conservative: when in doubt
+// it returns true to avoid false-positive drift warnings.
+func typesEqual(a, b string) bool {
+	return normalizeSQLType(a) == normalizeSQLType(b)
+}
+
+// normalizeSQLType maps a declared or introspected SQL type to a canonical
+// form for cross-comparison. Strips parenthesized length/precision and
+// resolves SQLite/PG type aliases (int/integer, bool/boolean, etc.).
+func normalizeSQLType(t string) string {
+	t = strings.ToLower(strings.TrimSpace(t))
+	if i := strings.IndexByte(t, '('); i >= 0 {
+		t = strings.TrimSpace(t[:i])
+	}
+	t = strings.Join(strings.Fields(t), " ")
+	switch t {
+	case "int", "int4", "integer":
+		return "integer"
+	case "int8", "bigint", "bigserial":
+		return "bigint"
+	case "real", "float8", "double precision":
+		return "double precision"
+	case "bool", "boolean":
+		return "boolean"
+	case "timestamp", "timestamp without time zone", "datetime":
+		return "timestamp"
+	case "timestamptz", "timestamp with time zone":
+		return "timestamptz"
+	case "varchar", "character varying", "text":
+		return "text"
+	case "numeric", "decimal":
+		return "numeric"
+	}
+	return t
+}
+
+func (db *DB) getColumnsInfo(table string) (map[string]columnInfo, error) {
+	if !isValidIdentifier(table) {
+		return nil, fmt.Errorf("invalid table name: %q", table)
+	}
+	rows, err := db.conn.Query(db.dialect.ColumnsInfoSQL(table))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]columnInfo)
+	for rows.Next() {
+		var (
+			name       string
+			ctype      string
+			notnull    int
+			hasDefault int
+		)
+		if err := rows.Scan(&name, &ctype, &notnull, &hasDefault); err != nil {
+			return nil, err
+		}
+		out[name] = columnInfo{Type: ctype, NotNull: notnull != 0, HasDefault: hasDefault != 0}
+	}
+	return out, rows.Err()
+}
+
+func (db *DB) getUniqueColumns(table string) (map[string]bool, error) {
+	if !isValidIdentifier(table) {
+		return nil, fmt.Errorf("invalid table name: %q", table)
+	}
+	rows, err := db.conn.Query(db.dialect.UniqueColumnsSQL(table))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[name] = true
+	}
+	return out, rows.Err()
+}
+
 func (db *DB) planExistingTable(model parser.Model, cm map[string]*parser.CustomFieldManifest) ([]string, error) {
 	var stmts []string
 

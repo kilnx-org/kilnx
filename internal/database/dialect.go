@@ -36,6 +36,17 @@ type Dialect interface {
 	// Receives the table name as a literal (not a parameter) for PRAGMA compat.
 	ColumnsSQL(table string) string
 
+	// ColumnsInfoSQL returns a query that yields (name TEXT, type TEXT,
+	// notnull INT, has_default INT) rows for a table. Used by drift
+	// detection to compare DB columns against model field declarations
+	// across type, NOT NULL, and default-presence dimensions.
+	ColumnsInfoSQL(table string) string
+
+	// UniqueColumnsSQL returns a query that yields (column_name TEXT) rows
+	// for each column that has a single-column UNIQUE index/constraint on
+	// the given table. Composite unique constraints are excluded.
+	UniqueColumnsSQL(table string) string
+
 	// AutoIncrementPK returns the PRIMARY KEY column definition for an
 	// auto-incrementing integer id.
 	// SQLite: "id INTEGER PRIMARY KEY AUTOINCREMENT"

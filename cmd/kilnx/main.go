@@ -270,6 +270,18 @@ func cmdMigrate(filename string, flags []string) error {
 		fmt.Println()
 	}
 
+	// Detect schema drift between declared models and the live database.
+	// Reported as warnings only: `kilnx migrate` is purely additive (no
+	// DROP/ALTER COLUMN), so divergence persists until the operator fixes
+	// it manually.
+	drifts, err := db.DetectColumnDrift(app.Models, app.CustomManifests)
+	if err != nil {
+		return fmt.Errorf("checking column drift: %w", err)
+	}
+	if len(drifts) > 0 {
+		printDrifts(drifts)
+	}
+
 	if status {
 		// Show migration history
 		history, err := db.MigrationHistory()
@@ -334,6 +346,61 @@ func cmdMigrate(filename string, flags []string) error {
 	}
 
 	return nil
+}
+
+// printDrifts emits a grouped warning summary for the slice of ColumnDrift
+// returned by database.DetectColumnDrift. Each kind gets its own section so
+// the operator can scan by category. The migration itself is not blocked.
+func printDrifts(drifts []database.ColumnDrift) {
+	groups := make(map[database.ColumnDriftKind][]database.ColumnDrift, 5)
+	order := []database.ColumnDriftKind{
+		database.DriftOrphan,
+		database.DriftType,
+		database.DriftNotNull,
+		database.DriftUnique,
+		database.DriftDefault,
+	}
+	for _, d := range drifts {
+		groups[d.Kind] = append(groups[d.Kind], d)
+	}
+	headings := map[database.ColumnDriftKind]string{
+		database.DriftOrphan:  "Columns present in the DB but no longer declared on their model:",
+		database.DriftType:    "Column types differ between model and DB:",
+		database.DriftNotNull: "NOT NULL differs between model and DB:",
+		database.DriftUnique:  "UNIQUE differs between model and DB (single-column only):",
+		database.DriftDefault: "DEFAULT presence differs between model and DB (value not compared):",
+	}
+	hints := map[database.ColumnDriftKind]string{
+		database.DriftOrphan:  "Remove with `ALTER TABLE ... DROP COLUMN ...` (Postgres) or rebuild (SQLite).",
+		database.DriftType:    "Reconcile by `ALTER TABLE ... ALTER COLUMN ... TYPE ...` (Postgres) or rebuild (SQLite).",
+		database.DriftNotNull: "Backfill missing values, then `ALTER TABLE ... ALTER COLUMN ... SET/DROP NOT NULL` (Postgres) or rebuild (SQLite).",
+		database.DriftUnique:  "Add or drop the unique index/constraint manually; `kilnx migrate` is additive only.",
+		database.DriftDefault: "Set or drop the DEFAULT manually if you want the schemas to match.",
+	}
+	printed := false
+	for _, kind := range order {
+		items := groups[kind]
+		if len(items) == 0 {
+			continue
+		}
+		if !printed {
+			fmt.Println("WARNING: schema drift detected (migration is additive and will not fix these):")
+			printed = true
+		}
+		fmt.Println()
+		fmt.Printf("  %s\n", headings[kind])
+		for _, d := range items {
+			if d.Detail != "" {
+				fmt.Printf("    - %s.%s  (%s)\n", d.TableName, d.Column, d.Detail)
+			} else {
+				fmt.Printf("    - %s.%s\n", d.TableName, d.Column)
+			}
+		}
+		fmt.Printf("  %s\n", hints[kind])
+	}
+	if printed {
+		fmt.Println()
+	}
 }
 
 func printMigrationStmt(stmt string) {

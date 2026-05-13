@@ -1422,6 +1422,294 @@ func TestDetectDataLossRisk_SqliteInternalsFiltered(t *testing.T) {
 	}
 }
 
+func TestDetectColumnDrift_NoneWhenSchemaMatches(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	models := []parser.Model{{
+		Name: "post",
+		Fields: []parser.Field{
+			{Name: "title", Type: parser.FieldText},
+			{Name: "views", Type: parser.FieldInt},
+		},
+	}}
+	if _, err := db.Migrate(models); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	drifts, err := db.DetectColumnDrift(models)
+	if err != nil {
+		t.Fatalf("DetectColumnDrift: %v", err)
+	}
+	if len(drifts) != 0 {
+		t.Fatalf("expected no drift, got %d: %#v", len(drifts), drifts)
+	}
+}
+
+func TestDetectColumnDrift_OrphanColumnReported(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	// Bootstrap with a model that declared `code`.
+	v1 := []parser.Model{{
+		Name: "product",
+		Fields: []parser.Field{
+			{Name: "title", Type: parser.FieldText},
+			{Name: "code", Type: parser.FieldText},
+		},
+	}}
+	if _, err := db.Migrate(v1); err != nil {
+		t.Fatalf("migrate v1: %v", err)
+	}
+
+	// Author removes `code` from the .kilnx — drift detector must flag it.
+	v2 := []parser.Model{{
+		Name: "product",
+		Fields: []parser.Field{
+			{Name: "title", Type: parser.FieldText},
+		},
+	}}
+	drifts, err := db.DetectColumnDrift(v2)
+	if err != nil {
+		t.Fatalf("DetectColumnDrift: %v", err)
+	}
+	if len(drifts) != 1 {
+		t.Fatalf("expected 1 drift, got %d: %#v", len(drifts), drifts)
+	}
+	if drifts[0].TableName != "product" || drifts[0].Column != "code" {
+		t.Errorf("drift = %#v, want product.code", drifts[0])
+	}
+}
+
+func TestDetectColumnDrift_IgnoresReservedIdAndCustom(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	models := []parser.Model{{
+		Name:             "note",
+		CustomFieldsFile: "notes.json",
+		Fields: []parser.Field{
+			{Name: "body", Type: parser.FieldText},
+		},
+	}}
+	if _, err := db.Migrate(models); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	drifts, err := db.DetectColumnDrift(models)
+	if err != nil {
+		t.Fatalf("DetectColumnDrift: %v", err)
+	}
+	if len(drifts) != 0 {
+		t.Fatalf("id and custom should not count as drift, got %#v", drifts)
+	}
+}
+
+func TestDetectColumnDrift_ReferenceFieldUsesUnderscoreId(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	models := []parser.Model{
+		{Name: "author", Fields: []parser.Field{{Name: "name", Type: parser.FieldText}}},
+		{Name: "book", Fields: []parser.Field{
+			{Name: "title", Type: parser.FieldText},
+			{Name: "author", Type: parser.FieldReference, Reference: "author"},
+		}},
+	}
+	if _, err := db.Migrate(models); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	drifts, err := db.DetectColumnDrift(models)
+	if err != nil {
+		t.Fatalf("DetectColumnDrift: %v", err)
+	}
+	if len(drifts) != 0 {
+		t.Fatalf("reference field expanded to author_id should match, got %#v", drifts)
+	}
+}
+
+func TestDetectColumnDrift_SkipsTableMissingFromDB(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	// Model declared but never migrated -> no table on disk. Drift detector
+	// should silently skip it; orphan-table coverage is the other direction.
+	models := []parser.Model{{
+		Name:   "ghost",
+		Fields: []parser.Field{{Name: "x", Type: parser.FieldText}},
+	}}
+	drifts, err := db.DetectColumnDrift(models)
+	if err != nil {
+		t.Fatalf("DetectColumnDrift: %v", err)
+	}
+	if len(drifts) != 0 {
+		t.Fatalf("expected no drift for missing table, got %#v", drifts)
+	}
+}
+
+// driftKindCount counts entries in drifts matching kind for the given column.
+func driftKindCount(drifts []ColumnDrift, kind ColumnDriftKind, table, column string) int {
+	n := 0
+	for _, d := range drifts {
+		if d.Kind == kind && d.TableName == table && d.Column == column {
+			n++
+		}
+	}
+	return n
+}
+
+func TestDetectColumnDrift_TypeMismatchReported(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	// Raw schema: amount is INTEGER. Model declares FieldFloat (REAL).
+	_, err := db.Conn().Exec(`CREATE TABLE "invoice" ("id" INTEGER PRIMARY KEY, "amount" INTEGER)`)
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	models := []parser.Model{{
+		Name: "invoice",
+		Fields: []parser.Field{
+			{Name: "amount", Type: parser.FieldFloat},
+		},
+	}}
+	drifts, err := db.DetectColumnDrift(models)
+	if err != nil {
+		t.Fatalf("DetectColumnDrift: %v", err)
+	}
+	if got := driftKindCount(drifts, DriftType, "invoice", "amount"); got != 1 {
+		t.Fatalf("expected 1 type drift on invoice.amount, got %d (all=%#v)", got, drifts)
+	}
+}
+
+func TestDetectColumnDrift_NotNullMismatchReported(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	// Raw schema: NOT NULL on title. Model declares title as not Required.
+	_, err := db.Conn().Exec(`CREATE TABLE "post" ("id" INTEGER PRIMARY KEY, "title" TEXT NOT NULL)`)
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	models := []parser.Model{{
+		Name: "post",
+		Fields: []parser.Field{
+			{Name: "title", Type: parser.FieldText, Required: false},
+		},
+	}}
+	drifts, err := db.DetectColumnDrift(models)
+	if err != nil {
+		t.Fatalf("DetectColumnDrift: %v", err)
+	}
+	if got := driftKindCount(drifts, DriftNotNull, "post", "title"); got != 1 {
+		t.Fatalf("expected 1 notnull drift on post.title, got %d (all=%#v)", got, drifts)
+	}
+}
+
+func TestDetectColumnDrift_UniqueMismatchReported(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	// Raw schema: unique index on email. Model declares email without unique.
+	_, err := db.Conn().Exec(`CREATE TABLE "person" ("id" INTEGER PRIMARY KEY, "email" TEXT)`)
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if _, err := db.Conn().Exec(`CREATE UNIQUE INDEX "ux_person_email" ON "person"("email")`); err != nil {
+		t.Fatalf("create unique index: %v", err)
+	}
+	models := []parser.Model{{
+		Name: "person",
+		Fields: []parser.Field{
+			{Name: "email", Type: parser.FieldEmail, Unique: false},
+		},
+	}}
+	drifts, err := db.DetectColumnDrift(models)
+	if err != nil {
+		t.Fatalf("DetectColumnDrift: %v", err)
+	}
+	if got := driftKindCount(drifts, DriftUnique, "person", "email"); got != 1 {
+		t.Fatalf("expected 1 unique drift on person.email, got %d (all=%#v)", got, drifts)
+	}
+}
+
+func TestDetectColumnDrift_UniqueMatch_CompositeIgnored(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	// Composite UNIQUE (a,b) on DB: must NOT be reported as single-column
+	// drift against field-level unique declarations.
+	_, err := db.Conn().Exec(`CREATE TABLE "pair" ("id" INTEGER PRIMARY KEY, "a" TEXT, "b" TEXT)`)
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if _, err := db.Conn().Exec(`CREATE UNIQUE INDEX "uq_pair_ab" ON "pair"("a","b")`); err != nil {
+		t.Fatalf("create composite unique index: %v", err)
+	}
+	models := []parser.Model{{
+		Name: "pair",
+		Fields: []parser.Field{
+			{Name: "a", Type: parser.FieldText, Unique: false},
+			{Name: "b", Type: parser.FieldText, Unique: false},
+		},
+	}}
+	drifts, err := db.DetectColumnDrift(models)
+	if err != nil {
+		t.Fatalf("DetectColumnDrift: %v", err)
+	}
+	if got := driftKindCount(drifts, DriftUnique, "pair", "a"); got != 0 {
+		t.Fatalf("composite unique must not flag column a, got %d", got)
+	}
+	if got := driftKindCount(drifts, DriftUnique, "pair", "b"); got != 0 {
+		t.Fatalf("composite unique must not flag column b, got %d", got)
+	}
+}
+
+func TestDetectColumnDrift_DefaultPresenceReported(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	// Raw schema: status has a DEFAULT. Model declares no default.
+	_, err := db.Conn().Exec(`CREATE TABLE "task" ("id" INTEGER PRIMARY KEY, "status" TEXT DEFAULT 'open')`)
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	models := []parser.Model{{
+		Name: "task",
+		Fields: []parser.Field{
+			{Name: "status", Type: parser.FieldText, Default: ""},
+		},
+	}}
+	drifts, err := db.DetectColumnDrift(models)
+	if err != nil {
+		t.Fatalf("DetectColumnDrift: %v", err)
+	}
+	if got := driftKindCount(drifts, DriftDefault, "task", "status"); got != 1 {
+		t.Fatalf("expected 1 default drift on task.status, got %d (all=%#v)", got, drifts)
+	}
+}
+
+func TestDetectColumnDrift_AllMatchEmitsNothing(t *testing.T) {
+	db, cleanup := openTemp(t)
+	defer cleanup()
+
+	// Model: required + unique + default. DB built by Migrate matches.
+	models := []parser.Model{{
+		Name: "account",
+		Fields: []parser.Field{
+			{Name: "handle", Type: parser.FieldText, Required: true, Unique: true, Default: "anon"},
+		},
+	}}
+	if _, err := db.Migrate(models); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	drifts, err := db.DetectColumnDrift(models)
+	if err != nil {
+		t.Fatalf("DetectColumnDrift: %v", err)
+	}
+	if len(drifts) != 0 {
+		t.Fatalf("expected zero drift after fresh migrate, got %#v", drifts)
+	}
+}
+
 func TestDetectDataLossRisk_EmptyTableIgnored(t *testing.T) {
 	db, cleanup := openTemp(t)
 	defer cleanup()
