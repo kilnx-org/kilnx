@@ -95,6 +95,37 @@ Notes:
 - Self-closing `{{Name args}}` keeps existing behavior; slot markers in the fragment fall back to their defaults.
 - Slot body content is rendered in the fragment's scope, so refs like `{name}` inside `{{each items}}` resolve against the iterated row.
 
+### Slot forwarding
+
+A wrapper fragment can forward its own named slot content into a nested fragment call with `{{forward name="X"}}`. Use this to delegate a named slot to a child fragment without re-declaring its markup:
+
+```kilnx
+fragment DetailTopbar()
+  html
+    <div class="topbar">
+      <div>{{slot name="breadcrumb"}}{{/slot}}</div>
+      <div>{{slot name="actions"}}{{/slot}}</div>
+    </div>
+
+fragment DetailHeader()
+  html
+    {{DetailTopbar}}
+      {{forward name="breadcrumb"}}
+      {{forward name="actions"}}
+    {{/DetailTopbar}}
+    <div class="header-body">{{slot name="header"}}{{/slot}}</div>
+```
+
+```kilnx
+{{DetailHeader}}
+  {{slot name="breadcrumb"}}<a href="/back">Back</a>{{/slot}}
+  {{slot name="actions"}}<button>Save</button>{{/slot}}
+  {{slot name="header"}}<h1>Title</h1>{{/slot}}
+{{/DetailHeader}}
+```
+
+`{{forward}}` only supports named slots: default-to-default forwarding is already covered by a bare `{{slot}}` marker inside the child call. When the outer caller did not provide a value for the forwarded slot, `{{forward}}` emits nothing so the inner fragment falls back to its own slot fallback.
+
 ## See also
 
 - [`page`](page.md)

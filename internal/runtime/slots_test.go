@@ -334,3 +334,106 @@ func TestFindFragmentBlockEnd(t *testing.T) {
 		t.Errorf("end = %d, content after = %q, want 'rest'", end, content[end:])
 	}
 }
+
+// TestForwardNamedSlot covers the named-to-named forwarding path: outer fills
+// breadcrumb+actions on the wrapper, the wrapper {{forward}}s them into a
+// nested fragment call, and the inner fragment renders the forwarded content
+// in its own named-slot placeholders.
+func TestForwardNamedSlot(t *testing.T) {
+	inner := &parser.Page{
+		Path: "Inner",
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<div class="topbar"><span class="b">{{slot name="breadcrumb"}}{{/slot}}</span><span class="a">{{slot name="actions"}}{{/slot}}</span></div>`},
+		},
+		FragmentArgs: []parser.FragmentArg{},
+	}
+	outer := &parser.Page{
+		Path: "Outer",
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `{{Inner}}{{forward name="breadcrumb"}}{{forward name="actions"}}{{/Inner}}`},
+		},
+		FragmentArgs: []parser.FragmentArg{},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"Inner": inner, "Outer": outer},
+		queries:            map[string][]database.Row{},
+		paginate:           map[string]PaginateInfo{},
+		querySourceModels:  map[string]string{},
+		customManifests:    map[string]*parser.CustomFieldManifest{},
+		queryParams:        map[string]string{},
+	}
+	content := `{{Outer}}{{slot name="breadcrumb"}}<a>back</a>{{/slot}}{{slot name="actions"}}<btn>new</btn>{{/slot}}{{/Outer}}`
+	got := renderHTML(content, ctx)
+	want := `<div class="topbar"><span class="b"><a>back</a></span><span class="a"><btn>new</btn></span></div>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestForwardUnfilledFallsBackToChildFallback verifies that {{forward name="X"}}
+// emits nothing when the outer caller did not provide X, letting the inner
+// fragment use its own slot fallback rather than receiving an empty override.
+func TestForwardUnfilledFallsBackToChildFallback(t *testing.T) {
+	inner := &parser.Page{
+		Path: "Inner",
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<header>{{slot name="title"}}default-title{{/slot}}</header>`},
+		},
+		FragmentArgs: []parser.FragmentArg{},
+	}
+	outer := &parser.Page{
+		Path: "Outer",
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `{{Inner}}{{forward name="title"}}{{/Inner}}`},
+		},
+		FragmentArgs: []parser.FragmentArg{},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"Inner": inner, "Outer": outer},
+		queries:            map[string][]database.Row{},
+		paginate:           map[string]PaginateInfo{},
+		querySourceModels:  map[string]string{},
+		customManifests:    map[string]*parser.CustomFieldManifest{},
+		queryParams:        map[string]string{},
+	}
+	content := `{{Outer}}{{/Outer}}`
+	got := renderHTML(content, ctx)
+	want := `<header>default-title</header>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestForwardNamelessIsStripped: {{forward}} without a name attribute is not
+// a supported construct (default-to-default forwarding is covered by bare
+// {{slot}}). The marker should be stripped, leaving no template residue.
+func TestForwardNamelessIsStripped(t *testing.T) {
+	inner := &parser.Page{
+		Path: "Inner",
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `<p>{{slot}}fb{{/slot}}</p>`},
+		},
+		FragmentArgs: []parser.FragmentArg{},
+	}
+	outer := &parser.Page{
+		Path: "Outer",
+		Body: []parser.Node{
+			{Type: parser.NodeHTML, HTMLContent: `{{Inner}}{{forward}}{{/Inner}}`},
+		},
+		FragmentArgs: []parser.FragmentArg{},
+	}
+	ctx := &renderContext{
+		fragmentComponents: map[string]*parser.Page{"Inner": inner, "Outer": outer},
+		queries:            map[string][]database.Row{},
+		paginate:           map[string]PaginateInfo{},
+		querySourceModels:  map[string]string{},
+		customManifests:    map[string]*parser.CustomFieldManifest{},
+		queryParams:        map[string]string{},
+	}
+	content := `{{Outer}}<x>{{/Outer}}`
+	got := renderHTML(content, ctx)
+	want := `<p>fb</p>`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

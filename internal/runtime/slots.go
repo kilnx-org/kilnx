@@ -29,6 +29,11 @@ import (
 // in both fragment HTMLContent and caller block-form bodies.
 var slotOpenRe = regexp.MustCompile(`\{\{slot(?:\s+([^}]+))?\}\}`)
 
+// forwardOpenRe matches {{forward name="X"}} markers. Used inside a fragment
+// body to re-emit the outer fragment's named slot content as a named slot
+// block within a nested fragment call, enabling named-to-named slot forwarding.
+var forwardOpenRe = regexp.MustCompile(`\{\{forward(?:\s+([^}]+))?\}\}`)
+
 // findFragmentBlockEnd scans content for the matching {{/name}} of an opened
 // {{name args}} tag at depth 1. It counts nested same-name fragment opens so
 // {{Outer}}{{Outer}}{{/Outer}}{{/Outer}} pairs correctly. Returns the inner
@@ -233,10 +238,49 @@ func substituteSlots(fragHTML string, named map[string]string, def string) strin
 	return b.String()
 }
 
+// substituteForward replaces {{forward name="X"}} markers with the outer
+// fragment's named slot content wrapped as a {{slot name="X"}}...{{/slot}}
+// block. This lets a wrapper fragment delegate its named slots to a nested
+// fragment call: the rewritten markers are recognised by the inner call's
+// extractSlots pass as named-slot blocks.
+//
+// {{forward}} without a name is intentionally unsupported: default-to-default
+// forwarding is already covered by a bare {{slot}} marker, which the outer
+// substitution pass replaces with the caller's default content (which then
+// becomes the inner call's default slot content naturally).
+//
+// When the outer caller did not provide the named slot, the marker is stripped
+// entirely so the inner fragment falls back to its own slot fallback rather
+// than receiving an empty override.
+func substituteForward(html string, named map[string]string) string {
+	if !strings.Contains(html, "{{forward") {
+		return html
+	}
+	return forwardOpenRe.ReplaceAllStringFunc(html, func(match string) string {
+		parts := forwardOpenRe.FindStringSubmatch(match)
+		argStr := ""
+		if len(parts) > 1 {
+			argStr = parts[1]
+		}
+		name := parseSlotName(argStr)
+		if name == "" {
+			return ""
+		}
+		val, ok := named[name]
+		if !ok {
+			return ""
+		}
+		return `{{slot name="` + name + `"}}` + val + `{{/slot}}`
+	})
+}
+
 // resolveFragmentBody returns the fragment's HTMLContent with slot markers
 // substituted. If callerBody is empty (self-closing call form), only fallback
 // content survives. Caller body may itself contain {{slot name="X"}}...{{/slot}}
 // blocks marking named slots; everything else becomes default slot content.
+//
+// {{forward name="X"}} markers in the fragment body are also processed so that
+// named slots can be forwarded into nested fragment calls.
 func resolveFragmentBody(frag *parser.Page, callerBody string) string {
 	var fragHTML string
 	for _, node := range frag.Body {
@@ -249,8 +293,10 @@ func resolveFragmentBody(frag *parser.Page, callerBody string) string {
 		return ""
 	}
 	if callerBody == "" {
-		return substituteSlots(fragHTML, nil, "")
+		html := substituteSlots(fragHTML, nil, "")
+		return substituteForward(html, nil)
 	}
 	named, def := extractSlots(callerBody)
-	return substituteSlots(fragHTML, named, def)
+	html := substituteSlots(fragHTML, named, def)
+	return substituteForward(html, named)
 }

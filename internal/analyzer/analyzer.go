@@ -1337,7 +1337,8 @@ func checkFragmentComponents(app *parser.App) []Diagnostic {
 	builtins := map[string]bool{
 		"each": true, "end": true, "if": true, "else": true,
 		"t": true, "plural": true,
-		"slot": true,
+		"slot":    true,
+		"forward": true,
 	}
 
 	// Scan all NodeHTML bodies across pages, fragments, actions, apis
