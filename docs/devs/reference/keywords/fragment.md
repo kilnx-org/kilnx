@@ -48,6 +48,53 @@ fragment badge(status, color="blue")
     <span class="{color}">{status}</span>
 ```
 
+### Component with slots (block-form call)
+
+Component fragments can expose `{{slot}}` placeholders so callers supply custom markup. Default slot `{{slot}}` accepts arbitrary content; named slots use `{{slot name="X"}}`. Both forms accept fallback content via `{{slot}}fallback{{/slot}}`.
+
+```kilnx
+fragment Card
+  html
+    <div class="card">
+      <header>{{slot name="header"}}Default Title{{/slot}}</header>
+      <main>{{slot}}</main>
+    </div>
+```
+
+Invoke in block form with `{{Name args}}...{{/Name}}`:
+
+```kilnx
+{{Card}}
+  {{slot name="header"}}Custom Title{{/slot}}
+  <p>Body content fills the default slot.</p>
+{{/Card}}
+```
+
+Slots compose with `query`/`list` args. A generic kanban renders its caller's per-item markup inside `{{each items}}`:
+
+```kilnx
+fragment DvKanban(items)
+  html
+    <div class="kanban">
+      {{each items}}<article>{{slot}}</article>{{end}}
+    </div>
+```
+
+```kilnx
+page /people
+  query people: SELECT id, name FROM person
+  html
+    {{DvKanban items=people}}
+      <h3>{name}</h3>
+    {{/DvKanban}}
+```
+
+Notes:
+
+- A slot the caller did not provide falls back to the fragment's fallback content (or is removed if there is none).
+- Self-closing `{{Name args}}` keeps existing behavior; slot markers in the fragment fall back to their defaults.
+- Slot body content is rendered in the fragment's scope, so refs like `{name}` inside `{{each items}}` resolve against the iterated row.
+
 ## See also
 
 - [`page`](page.md)

@@ -1092,46 +1092,50 @@ func splitArgStr(s string) []string {
 // expandFragmentCallsOutsideEach expands fragment component calls that are
 // NOT inside a {{each}}...{{end}} block. Calls inside each-blocks are handled
 // per-row inside expandEachBlocks (so they can reference the current row).
+// Handles both self-closing ({{Frag args}}) and block form
+// ({{Frag args}}...{{/Frag}}) with slot semantics.
 func expandFragmentCallsOutsideEach(content string, ctx *renderContext) string {
 	if ctx.fragmentComponents == nil || len(ctx.fragmentComponents) == 0 {
 		return content
 	}
 	insideEach := isInsideEachBlock(content)
-	matches := fragmentCallRe.FindAllStringIndex(content, -1)
-	if len(matches) == 0 {
-		return content
-	}
 	var b strings.Builder
 	b.Grow(len(content))
-	prev := 0
-	for _, m := range matches {
-		start, end := m[0], m[1]
-		b.WriteString(content[prev:start])
-		match := content[start:end]
-		if insideEach(start) {
-			b.WriteString(match)
-		} else {
-			b.WriteString(expandSingleFragmentCall(match, ctx))
+	pos := 0
+	for pos < len(content) {
+		loc := fragmentCallRe.FindStringIndex(content[pos:])
+		if loc == nil {
+			b.WriteString(content[pos:])
+			break
 		}
-		prev = end
+		absStart := pos + loc[0]
+		absEnd := pos + loc[1]
+		b.WriteString(content[pos:absStart])
+		if insideEach(absStart) {
+			b.WriteString(content[absStart:absEnd])
+			pos = absEnd
+			continue
+		}
+		replacement, end := tryExpandFragmentAt(content, absStart, absEnd, ctx)
+		b.WriteString(replacement)
+		pos = end
 	}
-	b.WriteString(content[prev:])
 	return b.String()
 }
 
-// expandSingleFragmentCall expands one {{name args}} occurrence using ctx.
-// Returns the original match if the name is not a known component or if the
-// recursion guard has fired.
-func expandSingleFragmentCall(match string, ctx *renderContext) string {
-	if ctx.fragmentComponents == nil || len(ctx.fragmentComponents) == 0 {
-		return match
-	}
-	if ctx.fragmentDepth >= 2 {
-		return match
-	}
-	parts := fragmentCallRe.FindStringSubmatch(match)
+// tryExpandFragmentAt attempts to expand a fragment call beginning at the
+// {{Name args}} match between openStart and openEnd in content. If a matching
+// {{/Name}} is found later in content, the call is treated as block-form: the
+// inner body is parsed for slot blocks and substituted into the fragment body.
+// Otherwise the self-closing form is used and slot markers fall back to their
+// fallback content. Returns the replacement HTML and the absolute end position
+// (one past the last consumed char). When the call cannot be expanded (unknown
+// name, depth guard hit), returns the original open tag and absEnd.
+func tryExpandFragmentAt(content string, openStart, openEnd int, ctx *renderContext) (replacement string, end int) {
+	openTag := content[openStart:openEnd]
+	parts := fragmentCallRe.FindStringSubmatch(openTag)
 	if len(parts) < 2 {
-		return match
+		return openTag, openEnd
 	}
 	name := parts[1]
 	argStr := ""
@@ -1140,19 +1144,26 @@ func expandSingleFragmentCall(match string, ctx *renderContext) string {
 	}
 	frag, ok := ctx.fragmentComponents[name]
 	if !ok {
-		return match
+		return openTag, openEnd
 	}
-	scalarArgs, queryArgs := parseFragmentArgs(argStr, frag, ctx)
-	var fragHTML string
-	for _, node := range frag.Body {
-		if node.Type == parser.NodeHTML {
-			fragHTML = node.HTMLContent
-			break
-		}
+	if ctx.fragmentDepth >= 2 {
+		return openTag, openEnd
 	}
+
+	callerBody, endRel := findFragmentBlockEnd(content[openEnd:], name)
+	consumedEnd := openEnd
+	if endRel >= 0 {
+		consumedEnd = openEnd + endRel
+	} else {
+		callerBody = ""
+	}
+
+	fragHTML := resolveFragmentBody(frag, callerBody)
 	if fragHTML == "" {
-		return ""
+		return "", consumedEnd
 	}
+
+	scalarArgs, queryArgs := parseFragmentArgs(argStr, frag, ctx)
 	childCtx := &renderContext{
 		queries:            ctx.queries,
 		paginate:           ctx.paginate,
@@ -1161,12 +1172,14 @@ func expandSingleFragmentCall(match string, ctx *renderContext) string {
 		querySourceModels:  ctx.querySourceModels,
 		customManifests:    ctx.customManifests,
 		eachStack:          ctx.eachStack,
+		eachModels:         ctx.eachModels,
+		currentRow:         ctx.currentRow,
 		fragmentArgs:       scalarArgs,
 		fragmentQueryArgs:  queryArgs,
 		fragmentDepth:      ctx.fragmentDepth + 1,
 		fragmentComponents: ctx.fragmentComponents,
 	}
-	return renderHTML(fragHTML, childCtx)
+	return renderHTML(fragHTML, childCtx), consumedEnd
 }
 
 // parseFragmentArgs parses an argument string and binds args for a fragment call.
@@ -1248,64 +1261,32 @@ func isBareIdent(s string) bool {
 
 // expandFragmentCalls processes {{componentName arg=expr}} blocks inside HTML content.
 // It looks up the component fragment, binds arguments, and renders the body inline.
+// Handles both self-closing and block form ({{Frag}}...{{/Frag}}) with slot
+// semantics, mirroring expandFragmentCallsOutsideEach.
 func expandFragmentCalls(content string, ctx *renderContext) string {
 	if ctx.fragmentComponents == nil || len(ctx.fragmentComponents) == 0 {
 		return content
 	}
 	if ctx.fragmentDepth >= 2 {
-		// Recursion guard: don't expand beyond depth 2
 		return content
 	}
-
-	return fragmentCallRe.ReplaceAllStringFunc(content, func(match string) string {
-		parts := fragmentCallRe.FindStringSubmatch(match)
-		if len(parts) < 2 {
-			return match
+	var b strings.Builder
+	b.Grow(len(content))
+	pos := 0
+	for pos < len(content) {
+		loc := fragmentCallRe.FindStringIndex(content[pos:])
+		if loc == nil {
+			b.WriteString(content[pos:])
+			break
 		}
-		name := parts[1]
-		argStr := ""
-		if len(parts) > 2 {
-			argStr = parts[2]
-		}
-
-		frag, ok := ctx.fragmentComponents[name]
-		if !ok {
-			return match // unknown component, leave for analyzer to catch
-		}
-
-		// Parse arguments via shared helper (handles scalar + query/list args).
-		scalarArgs, queryArgs := parseFragmentArgs(argStr, frag, ctx)
-
-		// Find the HTML body of the component
-		var fragHTML string
-		for _, node := range frag.Body {
-			if node.Type == parser.NodeHTML {
-				fragHTML = node.HTMLContent
-				break
-			}
-		}
-		if fragHTML == "" {
-			return "" // no HTML body
-		}
-
-		// Create child context with bound args and incremented depth
-		childCtx := &renderContext{
-			queries:            ctx.queries,
-			paginate:           ctx.paginate,
-			currentUser:        ctx.currentUser,
-			queryParams:        ctx.queryParams,
-			querySourceModels:  ctx.querySourceModels,
-			customManifests:    ctx.customManifests,
-			eachStack:          ctx.eachStack,
-			fragmentArgs:       scalarArgs,
-			fragmentQueryArgs:  queryArgs,
-			fragmentDepth:      ctx.fragmentDepth + 1,
-			fragmentComponents: ctx.fragmentComponents,
-		}
-
-		rendered := renderHTML(fragHTML, childCtx)
-		return rendered
-	})
+		absStart := pos + loc[0]
+		absEnd := pos + loc[1]
+		b.WriteString(content[pos:absStart])
+		replacement, end := tryExpandFragmentAt(content, absStart, absEnd, ctx)
+		b.WriteString(replacement)
+		pos = end
+	}
+	return b.String()
 }
 
 // translationRe matches {t.key} and {t.key param=expr}

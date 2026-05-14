@@ -7,6 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ## [Unreleased]
 
 ### Added
+- Fragment slots and block-form invocation: a component fragment can declare slot placeholders (`{{slot}}` default, `{{slot name="X"}}` named) and callers fill them with the block form `{{Frag args}}...{{/Frag}}`. Unfilled slots fall back to content between `{{slot}}fallback{{/slot}}` markers, or are removed when the marker is self-closing. Slot body is rendered in the fragment's scope, so refs like `{name}` inside `{{each items}}` resolve against the iterated row. Enables generic primitives like `DvKanban`/`DvTable` whose per-item markup is supplied by the caller. Self-closing `{{Frag args}}` retains existing behaviour.
 - Fragments accept query/list args: when a fragment is invoked with a bare identifier matching a parent query name (e.g. `{{Select options=roles}}`), the rows bind to the arg so `{{each options}}` inside the fragment body iterates them. Enables generic data-driven primitives (Select, list views, pickers) without hardcoding query names in fragment bodies. Bare identifiers that do not match any active query fall back to the previous scalar-string behaviour, so existing fragments are unaffected.
 
 ## [0.1.3] - 2026-05-13

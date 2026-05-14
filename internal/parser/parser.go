@@ -1683,6 +1683,12 @@ func (p *parserState) parseFragment() (Page, error) {
 			return page, fmt.Errorf("line %d: unclosed argument list in fragment component", nameTok.Line)
 		}
 		p.advance() // consume ')'
+		// Mark as component fragment even when args list is empty, so the
+		// analyzer registers it (the parens are the discriminator vs path
+		// fragments, not the presence of args).
+		if page.FragmentArgs == nil {
+			page.FragmentArgs = []FragmentArg{}
+		}
 	} else {
 		return page, fmt.Errorf("line %d: expected path or component name after 'fragment'", p.current().Line)
 	}
