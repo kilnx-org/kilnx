@@ -275,9 +275,9 @@ func init() {
 	})
 
 	spec.Register(spec.Entity{
-		Name:        "on-progress",
-		Kind:        spec.KindAttribute,
-		Summary:     "Handler block run on each progress event while an `agent` runs.",
+		Name:    "on-progress",
+		Kind:    spec.KindAttribute,
+		Summary: "Handler block run on each progress event while an `agent` runs.",
 		Description: "Block-form child of [`agent`](../keywords/agent.md). The body is a normal kilnx body (typically a `query` or `broadcast`). It runs once per progress event emitted while the agent subprocess runs. Inside the body these bindings are available, in addition to the surrounding params:\n\n" +
 			"- `:progress`, short human-readable line.\n" +
 			"- `:progress_kind`, one of `session`, `text`, `assistant`, `tool`, `done`.\n" +
