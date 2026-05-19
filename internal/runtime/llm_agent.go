@@ -321,6 +321,10 @@ func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, par
 		return nil, fmt.Errorf("agent stream scan: %w", err)
 	}
 
+	if onProgress != nil && pendingText.Len() > 0 {
+		emit(onProgress, "text", firstLine(pendingText.String()), res.SessionID, res.CostUSD)
+	}
+
 	if err := cmd.Wait(); err != nil {
 		errText := strings.TrimSpace(stderrBuf.String())
 		if errText == "" {

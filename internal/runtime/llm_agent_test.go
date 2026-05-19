@@ -329,9 +329,35 @@ func TestExecuteLLMAgent_MCPUnknownServer(t *testing.T) {
 	}
 }
 
+// multiDeltaFixture writes a jsonl stream containing two consecutive
+// text_delta events (to exercise the trailing-flush path) plus the
+// tool_use / result events needed for the other assertions.
+func multiDeltaFixture(t *testing.T) string {
+	t.Helper()
+	const sid = "44444444-5555-4666-8777-888888888888"
+	lines := strings.Join([]string{
+		`{"type":"system","subtype":"init","session_id":"` + sid + `"}`,
+		`{"type":"stream_event","session_id":"` + sid + `","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu_1","name":"Read"}}}`,
+		// First text_delta: flushes immediately because lastTextFlush is zero.
+		`{"type":"stream_event","session_id":"` + sid + `","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"part1 "}}}`,
+		// Second text_delta: arrives within 250 ms — without the trailing
+		// flush it is never emitted as a "text" progress event.
+		`{"type":"stream_event","session_id":"` + sid + `","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"part2"}}}`,
+		`{"type":"assistant","session_id":"` + sid + `","message":{"id":"m1","content":[{"type":"tool_use","id":"tu_1","name":"Read","input":{}},{"type":"text","text":"part1 part2"}]}}`,
+		`{"type":"user","session_id":"` + sid + `","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"ok"}]}}`,
+		`{"type":"result","subtype":"success","session_id":"` + sid + `","stop_reason":"end_turn","total_cost_usd":0.002,"duration_ms":20,"result":"part1 part2"}`,
+	}, "\n")
+	dir := t.TempDir()
+	path := dir + "/multi_delta.jsonl"
+	if err := os.WriteFile(path, []byte(lines+"\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	return path
+}
+
 func TestExecuteLLMAgent_OnProgressCallback(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	t.Setenv("KILNX_CLAUDE_BIN", fakeClaudeBin(t, "testdata/agent_streams/tools.jsonl"))
+	t.Setenv("KILNX_CLAUDE_BIN", fakeClaudeBin(t, multiDeltaFixture(t)))
 
 	app := &parser.App{Config: &parser.AppConfig{WorkspaceRoot: t.TempDir()}}
 	node := parser.Node{
@@ -364,6 +390,14 @@ func TestExecuteLLMAgent_OnProgressCallback(t *testing.T) {
 	if !containsString(kinds, "done") {
 		t.Errorf("expected a `done` progress event, got %v", kinds)
 	}
+	// Two text_delta events arrive back-to-back (within 250 ms). The first
+	// flushes immediately (lastTextFlush is zero), but the second is only
+	// emitted by the trailing flush AFTER the scanner loop exits. We
+	// therefore expect at least two "text" events.
+	textCount := countString(kinds, "text")
+	if textCount < 2 {
+		t.Errorf("expected at least 2 `text` progress events (trailing flush), got %d in %v", textCount, kinds)
+	}
 	if lastSession != "44444444-5555-4666-8777-888888888888" {
 		t.Errorf("session id = %q", lastSession)
 	}
@@ -376,4 +410,14 @@ func containsString(xs []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func countString(xs []string, want string) int {
+	n := 0
+	for _, x := range xs {
+		if x == want {
+			n++
+		}
+	}
+	return n
 }
