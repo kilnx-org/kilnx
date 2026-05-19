@@ -3859,9 +3859,15 @@ func (p *parserState) parseLLMModeChildren(node *Node, mode string) {
 				if p.current().Type == lexer.TokenIndent {
 					p.advance()
 					node.LLMAgentProgressBody = p.parseBody()
+				} else {
+					p.addError(fmt.Errorf("agent: `on progress` requires an indented body"))
 				}
 			} else {
-				p.addError(fmt.Errorf("agent: only `on progress` is supported, got `on %s`", p.current().Value))
+				got := p.current().Value
+				if got == "" {
+					got = "<end of line>"
+				}
+				p.addError(fmt.Errorf("agent: only `on progress` is supported, got `on %s`", got))
 				p.skipToEndOfLine()
 				p.skipNewlines()
 			}
