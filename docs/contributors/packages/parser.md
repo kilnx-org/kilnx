@@ -5,11 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/parser` |
-| **Source last touched** | `72e9177` (2026-05-13) |
+| **Source last touched** | `d461e57` (2026-05-19) |
 | **Doc last touched** | `4479336` (2026-05-08) |
 
 
-> **Implementation touched after doc.go.** Source changed on `2026-05-13`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
+> **Implementation touched after doc.go.** Source changed on `2026-05-19`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
@@ -348,6 +348,7 @@ type Node struct {
 	LLMAgentPoolIdleTTL	string		// for llm agent: reserved; runtime ignores in v0.2.x
 	LLMAgentShowTools	bool		// for llm agent: emit tool_use/tool_result frames on stream
 	LLMAgentResume		string		// for llm agent: session id to resume (supports :param)
+	LLMAgentProgressBody	[]Node		// for llm agent: body of the `on progress` handler
 }
 ```
 

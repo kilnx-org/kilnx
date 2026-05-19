@@ -30,6 +30,26 @@ The action returns immediately after enqueuing. The job runs in the background a
 
 Jobs are useful for slow operations: bulk emails, PDF generation, third-party API calls, report rollups. The pattern is "respond fast, finish later".
 
+### Agentic jobs
+
+Jobs can also drive an [`llm`](../reference/keywords/llm.md) call, including the long-running [`agent`](../reference/keywords/agent.md) subprocess mode. The agent runs inside the worker, not the HTTP handler, so there is no connection to keep alive. To surface live progress to a polling UI or a connected stream, attach an [`on progress`](../reference/attributes/on-progress.md) handler:
+
+```kilnx
+job run-review
+  llm review
+    model: claude-sonnet-4-6
+    agent
+      cwd: :bundle_dir
+      max-budget-usd: 2.00
+      on progress
+        query: UPDATE review_job SET progress = :progress, session_id = :session_id WHERE id = :job_id
+  query: UPDATE review_job SET status = 'done', summary = :review.text WHERE id = :job_id
+```
+
+If the worker crashes mid-agent, the queue re-runs the job from the start. The first progress event carries `:session_id`; persisting it lets the retry continue the previous claude session by passing `resume: :session_id` on `agent` instead of starting over.
+
+
+
 ## Schedules: recurring work
 
 A `schedule` runs on a cadence, set by [`every`](../reference/attributes/every.md). The argument is a duration or a cron expression.

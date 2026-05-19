@@ -10,7 +10,11 @@ func init() {
 		Description: "The runtime invokes the schedule's body at the cadence declared by " +
 			"`every`. Bodies typically run cleanup queries, send periodic emails, or " +
 			"enqueue jobs. Schedules execute in-process; for distributed setups, see " +
-			"`webhook` or external schedulers.",
+			"`webhook` or external schedulers.\n\n" +
+			"Schedule bodies may contain `llm` and `agent` nodes, executed by the same " +
+			"path as inside a `job`. The result bindings (`:<name>.text`, " +
+			"`:<name>.cost_usd`, `:<name>.session_id`, `:<name>.duration_ms`, " +
+			"`:<name>.stop_reason`) and the `on progress` handler are available here too.",
 		Syntax: "schedule <name> every <duration|cron>",
 		Args: []spec.Arg{
 			{Name: "name", Type: "identifier", Required: true},

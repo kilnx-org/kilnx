@@ -25,6 +25,8 @@ schedule <name> every <duration|cron>
 
 The runtime invokes the schedule's body at the cadence declared by `every`. Bodies typically run cleanup queries, send periodic emails, or enqueue jobs. Schedules execute in-process; for distributed setups, see `webhook` or external schedulers.
 
+Schedule bodies may contain `llm` and `agent` nodes, executed by the same path as inside a `job`. The result bindings (`:<name>.text`, `:<name>.cost_usd`, `:<name>.session_id`, `:<name>.duration_ms`, `:<name>.stop_reason`) and the `on progress` handler are available here too.
+
 ## Children
 
 - [`every`](../attributes/every.md)
@@ -46,11 +48,11 @@ schedule cleanup-sessions every 1h
 
 ## Provenance
 
-> ⚠ **Implementation touched after spec.** Source code changed on `2026-05-13`, but this entity's spec was last edited on `2026-05-08`. The description may be out of date.
+> ⚠ **Implementation touched after spec.** Source code changed on `2026-05-19`, but this entity's spec was last edited on `2026-05-08`. The description may be out of date.
 
 | | |
 |---|---|
 | **Spec last touched** | `5da8498` (2026-05-08) |
-| **Source last touched** | `72e9177` (2026-05-13) |
+| **Source last touched** | `d461e57` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go` |
 

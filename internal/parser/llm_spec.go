@@ -22,7 +22,13 @@ func init() {
 		Description: "Body-level keyword. Bind the result to `<name>` for use by subsequent " +
 			"nodes. Common settings (`model`, `system`, `temperature`, `max-tokens`) live " +
 			"directly under `llm`; mode-specific children (`response` or `agent`) define " +
-			"how the call runs. Exactly one of `response` or `agent` must be present.",
+			"how the call runs. Exactly one of `response` or `agent` must be present.\n\n" +
+			"Valid inside `action`, `page`, `fragment`, `api`, `webhook`, `job`, and " +
+			"`schedule` bodies. Nodes that follow the `llm` see the final assistant reply " +
+			"on `:<name>.text`, plus `:<name>.cost_usd`, `:<name>.session_id`, " +
+			"`:<name>.duration_ms`, `:<name>.stop_reason`. For long-running jobs, attach " +
+			"an [`on progress`](../attributes/on-progress.md) handler to the `agent` block " +
+			"to persist or broadcast incremental progress while the subprocess runs.",
 		Syntax:      "llm <name>",
 		Args:        []spec.Arg{{Name: "name", Type: "identifier", Required: true}},
 		ParentScope: llmParents,
@@ -55,6 +61,18 @@ func init() {
       max-turns: 10
       max-budget-usd: 0.50
       permission-mode: plan`,
+			},
+			{
+				Title: "Agent in a job with live progress",
+				Code: `job run-review
+  llm review
+    model: claude-sonnet-4-6
+    agent
+      cwd: :bundle_dir
+      max-budget-usd: 2.00
+      on progress
+        query: UPDATE review_job SET progress = :progress WHERE id = :job_id
+  query: UPDATE review_job SET status = 'done', summary = :review.text WHERE id = :job_id`,
 			},
 		},
 		SeeAlso: []string{"response", "agent", "fetch"},
@@ -149,7 +167,11 @@ func init() {
 		Description: "Block-form attribute inside `llm`. Spawns the official `claude` CLI " +
 			"(min v2.0.0) per request and streams `stream-json` envelopes back. Requires " +
 			"`max-budget-usd`. The `claude` CLI must be on PATH at runtime; `kilnx run` " +
-			"validates this at startup when any `agent` block is declared.",
+			"validates this at startup when any `agent` block is declared.\n\n" +
+			"Inside a `job` or `schedule`, the agent runs on the worker rather than an " +
+			"HTTP handler. Attach an [`on progress`](../attributes/on-progress.md) " +
+			"block-form child to react to each progress event (typically a `query` or " +
+			"`broadcast`); a failing handler is logged and does not abort the agent.",
 		Syntax:      "agent",
 		ParentScope: []string{"llm"},
 		Children: []string{
@@ -251,6 +273,15 @@ func init() {
 		Default:     "false",
 		Since:       "0.1.3",
 	})
+
+	// NOTE: the `on progress` block-form child of `agent` is not registered
+	// as a spec entity. Its identifier is two tokens (`on` then `progress`)
+	// rather than a single keyword/hyphenated attribute name, so it does not
+	// fit the registry which keys by a single Name and derives doc filenames
+	// from it. The page lives at `docs/devs/reference/attributes/on-progress.md`
+	// as a hand-authored file; the `agent` Description above links to it so
+	// it surfaces in the generated `agent.md`. Same precedent as `mcp`,
+	// `model:` and `stream:` documented below.
 
 	spec.Register(spec.Entity{
 		Name:        "resume",
