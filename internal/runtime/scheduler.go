@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -564,4 +565,28 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 	}
 
 	return nil
+}
+
+// makeAgentProgressFn builds the progress callback for an llm-agent node.
+// Returns nil when the node has no `on progress` body, so executeLLMAgent
+// skips progress work entirely. Each event runs the handler body with
+// :progress, :progress_kind, :cost_usd and :session_id bound, on top of a
+// copy of the surrounding params. A failing handler is logged, not fatal.
+func (s *Server) makeAgentProgressFn(node parser.Node, params map[string]string) progressFn {
+	if len(node.LLMAgentProgressBody) == 0 {
+		return nil
+	}
+	return func(kind, text, sessionID string, cost float64) {
+		p := make(map[string]string, len(params)+4)
+		for k, v := range params {
+			p[k] = v
+		}
+		p["progress"] = text
+		p["progress_kind"] = kind
+		p["session_id"] = sessionID
+		p["cost_usd"] = strconv.FormatFloat(cost, 'f', 6, 64)
+		if err := s.executeNodes(node.LLMAgentProgressBody, p); err != nil {
+			s.logger.LogError("on progress handler failed", err)
+		}
+	}
 }
