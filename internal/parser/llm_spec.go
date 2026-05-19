@@ -176,7 +176,7 @@ func init() {
 		ParentScope: []string{"llm"},
 		Children: []string{
 			"cwd", "tools", "max-turns", "max-budget-usd", "permission-mode",
-			"mcp", "pool", "pool-idle-ttl", "show-tools", "resume",
+			"mcp", "pool", "pool-idle-ttl", "show-tools", "resume", "on-progress",
 		},
 		Since: "0.1.3",
 	})
@@ -274,14 +274,31 @@ func init() {
 		Since:       "0.1.3",
 	})
 
-	// NOTE: the `on progress` block-form child of `agent` is not registered
-	// as a spec entity. Its identifier is two tokens (`on` then `progress`)
-	// rather than a single keyword/hyphenated attribute name, so it does not
-	// fit the registry which keys by a single Name and derives doc filenames
-	// from it. The page lives at `docs/devs/reference/attributes/on-progress.md`
-	// as a hand-authored file; the `agent` Description above links to it so
-	// it surfaces in the generated `agent.md`. Same precedent as `mcp`,
-	// `model:` and `stream:` documented below.
+	spec.Register(spec.Entity{
+		Name:        "on-progress",
+		Kind:        spec.KindAttribute,
+		Summary:     "Handler block run on each progress event while an `agent` runs.",
+		Description: "Block-form child of [`agent`](../keywords/agent.md). The body is a normal kilnx body (typically a `query` or `broadcast`). It runs once per progress event emitted while the agent subprocess runs. Inside the body these bindings are available, in addition to the surrounding params:\n\n" +
+			"- `:progress`, short human-readable line.\n" +
+			"- `:progress_kind`, one of `session`, `text`, `assistant`, `tool`, `done`.\n" +
+			"- `:cost_usd`, running cost in USD.\n" +
+			"- `:session_id`, claude session id, populated once the `session` event fires (the first event the subprocess emits, before any text/tool).\n\n" +
+			"Written in source as two tokens (`on progress`), generated docs use the hyphenated form `on-progress`. A failing handler body is logged and does not abort the agent or the job.",
+		Syntax:      "on progress\n  <body>",
+		ParentScope: []string{"agent"},
+		Examples: []spec.Example{{
+			Title: "Persist progress for a polling UI",
+			Code: "job run-review\n" +
+				"  llm review\n" +
+				"    model: claude-sonnet-4-6\n" +
+				"    agent\n" +
+				"      cwd: :bundle_dir\n" +
+				"      max-budget-usd: 2.00\n" +
+				"      on progress\n" +
+				"        query: UPDATE review_job SET progress = :progress WHERE id = :job_id",
+		}},
+		Since: "0.1.4",
+	})
 
 	spec.Register(spec.Entity{
 		Name:        "resume",

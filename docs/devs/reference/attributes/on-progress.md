@@ -1,4 +1,4 @@
-# `on progress`
+# `on-progress`
 
 > Handler block run on each progress event while an `agent` runs.
 
@@ -23,7 +23,7 @@ Block-form child of [`agent`](../keywords/agent.md). The body is a normal kilnx 
 - `:cost_usd`, running cost in USD.
 - `:session_id`, claude session id, populated once the `session` event fires (the first event the subprocess emits, before any text/tool).
 
-A failing handler body is logged and does not abort the agent or the job.
+Written in source as two tokens (`on progress`), generated docs use the hyphenated form `on-progress`. A failing handler body is logged and does not abort the agent or the job.
 
 ## Used in
 
@@ -48,6 +48,5 @@ job run-review
 
 | | |
 |---|---|
-| **Spec last touched** | `d050f4c` (2026-05-19) |
-| **Source last touched** | `d050f4c` (2026-05-19) |
-| **Source files** | `internal/parser/parser.go`, `internal/runtime/server.go` |
+| **Spec last touched** | `3df67e5` (2026-05-19) |
+

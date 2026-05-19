@@ -74,6 +74,7 @@ Generated from `internal/spec/entities.go`. Do not edit by hand.
 | [`min`](attributes/min.md) | Minimum value (numeric) or length (string). | `model` |
 | [`name`](attributes/name.md) | Human-readable application name. | `config` |
 | [`on`](attributes/on.md) | Conditional or event handler. | `page`, `action`, `fragment`, `api`, `schedule`, `job`, `webhook`, `socket` |
+| [`on-progress`](attributes/on-progress.md) | Handler block run on each progress event while an `agent` runs. | `agent` |
 | [`password`](attributes/password.md) | Field storing the bcrypt password hash. | `auth` |
 | [`permission-mode`](attributes/permission-mode.md) | Tool-use permission policy: `plan`, `acceptEdits`, or `bypassPermissions`. | `agent` |
 | [`pool`](attributes/pool.md) | Reserved: number of warm `claude` subprocesses to keep alive (not yet implemented). | `agent` |

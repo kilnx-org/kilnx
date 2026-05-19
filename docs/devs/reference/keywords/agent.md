@@ -31,6 +31,7 @@ Inside a `job` or `schedule`, the agent runs on the worker rather than an HTTP h
 - [`pool-idle-ttl`](../attributes/pool-idle-ttl.md)
 - [`show-tools`](../attributes/show-tools.md)
 - [`resume`](../attributes/resume.md)
+- [`on-progress`](../attributes/on-progress.md)
 
 ## See also
 
