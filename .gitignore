@@ -20,3 +20,9 @@ docs/content/changelog.md
 coverage.out
 *.cover
 *.cov
+
+# agent artifacts
+.claude/
+CLAUDE.md
+docs/superpowers/
+**/settings.local.json
