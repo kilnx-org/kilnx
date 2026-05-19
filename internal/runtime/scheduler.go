@@ -576,7 +576,6 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 				res, err := executeLLMAgent(jobCtx(), node, s.getApp(), params, nil, s.makeAgentProgressFn(node, params))
 				if err != nil {
 					s.logger.LogError("job llm-agent error", err)
-					params[varName+".error"] = err.Error()
 					return fmt.Errorf("llm agent: %w", err)
 				}
 				params[varName] = res.Text
@@ -603,8 +602,13 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 }
 
 // jobCtx returns the context used for llm calls inside jobs/schedules.
-// Jobs have no HTTP request, so a background context is used; the agent's
-// max-turns and max-budget-usd provide the run bounds.
+// Jobs have no HTTP request, so a background context is used to allow
+// long-running agents (minutes). The agent's `max-budget-usd` and
+// `max-turns` bound cost and turn count, but NOT wall-clock time; a
+// subprocess that stops producing output without exiting will block the
+// job queue until the server is restarted. Acceptable in v1 for the
+// design's "long-running agent dispatched as a background job" target;
+// follow-up may add a configurable per-job timeout.
 func jobCtx() context.Context { return context.Background() }
 
 // makeAgentProgressFn builds the progress callback for an llm-agent node.
