@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -561,11 +562,50 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 					return fmt.Errorf("enqueue error: %w", err)
 				}
 			}
+
+		case parser.NodeLLM:
+			if s.db == nil {
+				continue
+			}
+			varName := node.Name
+			if varName == "" {
+				varName = "_llm"
+			}
+			switch node.LLMMode {
+			case "agent":
+				res, err := executeLLMAgent(jobCtx(), node, s.getApp(), params, nil, s.makeAgentProgressFn(node, params))
+				if err != nil {
+					s.logger.LogError("job llm-agent error", err)
+					params[varName+".error"] = err.Error()
+					return fmt.Errorf("llm agent: %w", err)
+				}
+				params[varName] = res.Text
+				params[varName+".text"] = res.Text
+				params[varName+".session_id"] = res.SessionID
+				params[varName+".cost_usd"] = strconv.FormatFloat(res.CostUSD, 'f', 6, 64)
+				params[varName+".duration_ms"] = strconv.FormatInt(res.DurationMS, 10)
+				params[varName+".stop_reason"] = res.StopReason
+			case "response":
+				text, err := executeLLM(jobCtx(), node, s.db, params)
+				if err != nil {
+					s.logger.LogError("job llm error", err)
+					return fmt.Errorf("llm response: %w", err)
+				}
+				params[varName] = text
+				params[varName+".text"] = text
+			default:
+				s.logger.LogError("job llm: unknown mode", fmt.Errorf("mode %q", node.LLMMode))
+			}
 		}
 	}
 
 	return nil
 }
+
+// jobCtx returns the context used for llm calls inside jobs/schedules.
+// Jobs have no HTTP request, so a background context is used; the agent's
+// max-turns and max-budget-usd provide the run bounds.
+func jobCtx() context.Context { return context.Background() }
 
 // makeAgentProgressFn builds the progress callback for an llm-agent node.
 // Returns nil when the node has no `on progress` body, so executeLLMAgent
