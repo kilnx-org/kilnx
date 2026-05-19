@@ -28,11 +28,9 @@ Block-form attribute inside `llm`. Children: `history` (SQL that yields message 
 
 ## Provenance
 
-> ⚠ **Implementation touched after spec.** Source code changed on `2026-05-19`, but this entity's spec was last edited on `2026-05-13`. The description may be out of date.
-
 | | |
 |---|---|
-| **Spec last touched** | `72e9177` (2026-05-13) |
+| **Spec last touched** | `a1b78ce` (2026-05-19) |
 | **Source last touched** | `d050f4c` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go`, `internal/runtime/scheduler.go`, `internal/runtime/server.go` |
 

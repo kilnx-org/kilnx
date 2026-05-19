@@ -48,84 +48,6 @@ fragment badge(status, color="blue")
     <span class="{color}">{status}</span>
 ```
 
-### Component with slots (block-form call)
-
-Component fragments can expose `{{slot}}` placeholders so callers supply custom markup. Default slot `{{slot}}` accepts arbitrary content; named slots use `{{slot name="X"}}`. Both forms accept fallback content via `{{slot}}fallback{{/slot}}`.
-
-```kilnx
-fragment Card
-  html
-    <div class="card">
-      <header>{{slot name="header"}}Default Title{{/slot}}</header>
-      <main>{{slot}}</main>
-    </div>
-```
-
-Invoke in block form with `{{Name args}}...{{/Name}}`:
-
-```kilnx
-{{Card}}
-  {{slot name="header"}}Custom Title{{/slot}}
-  <p>Body content fills the default slot.</p>
-{{/Card}}
-```
-
-Slots compose with `query`/`list` args. A generic kanban renders its caller's per-item markup inside `{{each items}}`:
-
-```kilnx
-fragment DvKanban(items)
-  html
-    <div class="kanban">
-      {{each items}}<article>{{slot}}</article>{{end}}
-    </div>
-```
-
-```kilnx
-page /people
-  query people: SELECT id, name FROM person
-  html
-    {{DvKanban items=people}}
-      <h3>{name}</h3>
-    {{/DvKanban}}
-```
-
-Notes:
-
-- A slot the caller did not provide falls back to the fragment's fallback content (or is removed if there is none).
-- Self-closing `{{Name args}}` keeps existing behavior; slot markers in the fragment fall back to their defaults.
-- Slot body content is rendered in the fragment's scope, so refs like `{name}` inside `{{each items}}` resolve against the iterated row.
-
-### Slot forwarding
-
-A wrapper fragment can forward its own named slot content into a nested fragment call with `{{forward name="X"}}`. Use this to delegate a named slot to a child fragment without re-declaring its markup:
-
-```kilnx
-fragment DetailTopbar()
-  html
-    <div class="topbar">
-      <div>{{slot name="breadcrumb"}}{{/slot}}</div>
-      <div>{{slot name="actions"}}{{/slot}}</div>
-    </div>
-
-fragment DetailHeader()
-  html
-    {{DetailTopbar}}
-      {{forward name="breadcrumb"}}
-      {{forward name="actions"}}
-    {{/DetailTopbar}}
-    <div class="header-body">{{slot name="header"}}{{/slot}}</div>
-```
-
-```kilnx
-{{DetailHeader}}
-  {{slot name="breadcrumb"}}<a href="/back">Back</a>{{/slot}}
-  {{slot name="actions"}}<button>Save</button>{{/slot}}
-  {{slot name="header"}}<h1>Title</h1>{{/slot}}
-{{/DetailHeader}}
-```
-
-`{{forward}}` only supports named slots: default-to-default forwarding is already covered by a bare `{{slot}}` marker inside the child call. When the outer caller did not provide a value for the forwarded slot, `{{forward}}` emits nothing so the inner fragment falls back to its own slot fallback.
-
 ## See also
 
 - [`page`](page.md)
@@ -136,11 +58,11 @@ fragment DetailHeader()
 
 ## Provenance
 
-> ⚠ **Implementation touched after spec.** Source code changed on `2026-05-13`, but this entity's spec was last edited on `2026-05-08`. The description may be out of date.
+> ⚠ **Implementation touched after spec.** Source code changed on `2026-05-19`, but this entity's spec was last edited on `2026-05-08`. The description may be out of date.
 
 | | |
 |---|---|
 | **Spec last touched** | `5da8498` (2026-05-08) |
-| **Source last touched** | `72e9177` (2026-05-13) |
+| **Source last touched** | `d461e57` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go` |
 

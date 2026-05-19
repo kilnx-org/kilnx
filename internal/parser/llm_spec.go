@@ -246,7 +246,7 @@ func init() {
 	spec.Register(spec.Entity{
 		Name: "pool", Kind: spec.KindAttribute,
 		Summary:     "Reserved: number of warm `claude` subprocesses to keep alive (not yet implemented).",
-		Description: "Reserved sintaxe in v0.1.3. Analyzer emits a `not yet implemented` warning; runtime ignores the value and always spawns per request.",
+		Description: "Reserved syntax in v0.1.3. Analyzer emits a `not yet implemented` warning; runtime ignores the value and always spawns per request.",
 		Syntax:      "pool: <int>",
 		Args:        []spec.Arg{{Name: "value", Type: "int", Required: false}},
 		ParentScope: []string{"agent"},

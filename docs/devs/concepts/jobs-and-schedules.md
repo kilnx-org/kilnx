@@ -46,7 +46,24 @@ job run-review
   query: UPDATE review_job SET status = 'done', summary = :review.text WHERE id = :job_id
 ```
 
-If the worker crashes mid-agent, the queue re-runs the job from the start. The first progress event carries `:session_id`; persisting it lets the retry continue the previous claude session by passing `resume: :session_id` on `agent` instead of starting over.
+If the worker crashes mid-agent, the queue re-runs the job from the start. The first progress event carries `:session_id`. Persisting it (as the `on progress` body above does) lets a retry resume the previous claude session: have the job's first step query the persisted value into a named param, then pass that param as `resume:` on the `agent`. Example:
+
+```kilnx
+job run-review
+  query prev: SELECT session_id FROM review_job WHERE id = :job_id
+  llm review
+    model: claude-sonnet-4-6
+    agent
+      cwd: :bundle_dir
+      max-budget-usd: 2.00
+      resume: :prev.session_id
+      on progress
+        query: UPDATE review_job
+          SET progress = :progress, session_id = :session_id
+          WHERE id = :job_id
+```
+
+On the first run, `:prev.session_id` is empty and the agent starts cold. On a retry after a crash, the persisted value resumes the session. Note that a resumed session replays the original prompt, so the prompt should instruct the agent to check existing artifacts before redoing work.
 
 
 
