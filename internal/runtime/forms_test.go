@@ -202,3 +202,19 @@ func TestExtractFormData_MultiFile_ReturnsJSONArray(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractFormData_RejectedFileSkippedSurvivorsKept(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := &parser.AppConfig{UploadsDir: tmp, UploadsMaxMB: 32}
+	req := newMultipartRequest(t, map[string][]string{
+		"files": {"good.pdf|ok", "bad.exe|nope", "ok2.png|ok"},
+	})
+	data := extractFormData(req, cfg)
+	var paths []string
+	if err := json.Unmarshal([]byte(data["files"]), &paths); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("want 2 surviving paths, got %d (%v)", len(paths), paths)
+	}
+}
