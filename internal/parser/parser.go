@@ -3177,6 +3177,46 @@ func (p *parserState) parseTranslations() map[string]map[string]string {
 	return result
 }
 
+// parseUploadExtensionsTokens parses the CSV tokens of `upload-extensions:`.
+// Returns add, remove, allowAll, and a parse error on bare tokens or
+// "*" mixed with any other token.
+func parseUploadExtensionsTokens(raw string) (add, remove []string, allowAll bool, err error) {
+	tokens := strings.Split(raw, ",")
+	hasStar := false
+	hasOther := false
+	for _, t := range tokens {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if t == "*" {
+			hasStar = true
+			continue
+		}
+		hasOther = true
+		switch {
+		case strings.HasPrefix(t, "+"):
+			ext := strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(t, "+"), "."))
+			if ext == "" {
+				return nil, nil, false, fmt.Errorf("upload-extensions: empty extension after '+'")
+			}
+			add = append(add, ext)
+		case strings.HasPrefix(t, "-"):
+			ext := strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(t, "-"), "."))
+			if ext == "" {
+				return nil, nil, false, fmt.Errorf("upload-extensions: empty extension after '-'")
+			}
+			remove = append(remove, ext)
+		default:
+			return nil, nil, false, fmt.Errorf("upload-extensions: expected +ext, -ext, or *, got %q", t)
+		}
+	}
+	if hasStar && hasOther {
+		return nil, nil, false, fmt.Errorf("upload-extensions: '*' cannot be combined with other tokens")
+	}
+	return add, remove, hasStar, nil
+}
+
 // parseConfig parses:
 //
 //	config
@@ -3274,6 +3314,15 @@ func (p *parserState) parseConfig() AppConfig {
 				}
 			case "workspace-root", "workspace_root":
 				cfg.WorkspaceRoot = strings.Trim(rawVal, "\"' ")
+			case "upload-extensions", "upload_extensions":
+				add, remove, allowAll, parseErr := parseUploadExtensionsTokens(rawVal)
+				if parseErr != nil {
+					p.addError(parseErr)
+				} else {
+					cfg.UploadExtensionsAdd = add
+					cfg.UploadExtensionsRemove = remove
+					cfg.UploadExtensionsAllowAll = allowAll
+				}
 			}
 
 			p.skipToEndOfLine()
