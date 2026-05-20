@@ -6,7 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ## [Unreleased]
 
+### Breaking
+
+- Multi-file form upload bindings now serialise as a JSON array of `/_uploads/...` paths, including single-file uploads. Migrate single-file consumers via `SELECT value FROM json_each(:files) LIMIT 1`. See `docs/devs/reference/attributes/uploads.md`.
+
 ### Added
+
+- `upload-extensions:` config attribute with `+ext`, `-ext`, `*` operators to extend or restrict the default upload whitelist. `*` triggers an analyzer warning.
+- `serve-roots:` config attribute listing directories from which `respond file` may serve.
+- `respond file <path> [as <name>] [inline|attachment]` statement for streaming a disk file as the HTTP response. Requires a `serve-roots:` entry (analyzer error otherwise).
 - `llm`/`agent` nodes now execute inside `job` and `schedule` bodies, not only HTTP handlers. The agent result binds under `:<name>.text` / `.cost_usd` / `.session_id` / `.duration_ms` / `.stop_reason` for following nodes. New `on progress` handler block under `agent` runs a body (typically a `query` or `broadcast`) on each progress event, with `:progress`, `:progress_kind`, `:cost_usd`, `:session_id` bound, lets a background job surface live progress with no HTTP connection. A failing `on progress` body is logged, not fatal.
 - Fragment slots and block-form invocation: a component fragment can declare slot placeholders (`{{slot}}` default, `{{slot name="X"}}` named) and callers fill them with the block form `{{Frag args}}...{{/Frag}}`. Unfilled slots fall back to content between `{{slot}}fallback{{/slot}}` markers, or are removed when the marker is self-closing. Slot body is rendered in the fragment's scope, so refs like `{name}` inside `{{each items}}` resolve against the iterated row. Enables generic primitives like `DvKanban`/`DvTable` whose per-item markup is supplied by the caller. Self-closing `{{Frag args}}` retains existing behaviour.
 - Named slot forwarding: a wrapper fragment can delegate its own named slots to a nested fragment call with `{{forward name="X"}}`. The marker re-emits the outer fragment's named slot content wrapped as a slot block so the inner call's slot extraction picks it up as a named slot. When the outer caller does not provide the named slot, the marker emits nothing so the inner fragment falls back to its own slot fallback. Default-to-default forwarding remains covered by a bare `{{slot}}` marker.
