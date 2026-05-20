@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -1530,6 +1531,52 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
 			return
+
+		case parser.NodeRespondFile:
+			pathExpr := substituteParams(node.RespondFilePath, formData)
+			if pathExpr == "" {
+				http.NotFound(w, r)
+				return
+			}
+			absPath, err := filepath.Abs(pathExpr)
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			absPath = filepath.Clean(absPath)
+			var serveRoots []string
+			if respondApp := s.getApp(); respondApp != nil && respondApp.Config != nil {
+				serveRoots = respondApp.Config.ServeRoots
+			}
+			if !pathInsideAnyRoot(absPath, serveRoots) {
+				s.logger.LogSecurity("respond file: path outside serve-roots", fmt.Errorf("%s", absPath))
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			info, statErr := os.Stat(absPath)
+			if statErr != nil || info.IsDir() {
+				http.NotFound(w, r)
+				return
+			}
+			fileName := node.RespondFileName
+			if fileName == "" {
+				fileName = filepath.Base(absPath)
+			}
+			ct := mime.TypeByExtension(filepath.Ext(absPath))
+			if ct == "" {
+				ct = "application/octet-stream"
+			}
+			disp := node.RespondFileDisposition
+			if disp == "" {
+				disp = "attachment"
+			}
+			if tx != nil {
+				tx.Commit()
+			}
+			w.Header().Set("Content-Type", ct)
+			w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=%q", disp, fileName))
+			http.ServeFile(w, r, absPath)
+			return
 		}
 	}
 
@@ -1576,6 +1623,48 @@ func (s *Server) handleActionNodes(w http.ResponseWriter, r *http.Request, nodes
 			}
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
+			return
+		case parser.NodeRespondFile:
+			pathExpr := substituteParams(node.RespondFilePath, formData)
+			if pathExpr == "" {
+				http.NotFound(w, r)
+				return
+			}
+			absPath, err := filepath.Abs(pathExpr)
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			absPath = filepath.Clean(absPath)
+			var serveRoots []string
+			if nodeApp := s.getApp(); nodeApp != nil && nodeApp.Config != nil {
+				serveRoots = nodeApp.Config.ServeRoots
+			}
+			if !pathInsideAnyRoot(absPath, serveRoots) {
+				s.logger.LogSecurity("respond file: path outside serve-roots", fmt.Errorf("%s", absPath))
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			info, statErr := os.Stat(absPath)
+			if statErr != nil || info.IsDir() {
+				http.NotFound(w, r)
+				return
+			}
+			fileName := node.RespondFileName
+			if fileName == "" {
+				fileName = filepath.Base(absPath)
+			}
+			ct := mime.TypeByExtension(filepath.Ext(absPath))
+			if ct == "" {
+				ct = "application/octet-stream"
+			}
+			disp := node.RespondFileDisposition
+			if disp == "" {
+				disp = "attachment"
+			}
+			w.Header().Set("Content-Type", ct)
+			w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=%q", disp, fileName))
+			http.ServeFile(w, r, absPath)
 			return
 		case parser.NodeSendEmail:
 			recipient := resolveEmailRecipient(node.EmailTo, formData)
