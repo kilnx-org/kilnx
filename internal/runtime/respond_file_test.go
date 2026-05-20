@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kilnx-org/kilnx/internal/parser"
 )
 
 func newTempFile(t *testing.T, dir, name, content string) string {
@@ -90,8 +93,11 @@ func TestRespondFile_Traversal403(t *testing.T) {
 	// Create a file outside allowed, then construct a traversal path
 	outsideDir := filepath.Join(tmp, "outside")
 	outsideFile := newTempFile(t, outsideDir, "secret.txt", "shh")
-	// Build a traversal path: allowedDir + "/../outside/secret.txt" -> resolves outside
-	traversalPath := filepath.Join(allowedDir, "..", "outside", "secret.txt")
+	// Build a traversal path using raw concat so ".." is NOT pre-resolved.
+	// filepath.Join would clean the ".." away before the runtime ever sees it,
+	// making the test equivalent to OutsideRoot403. Raw concat preserves the
+	// traversal sequence so filepath.Abs+Clean inside the runtime resolves it.
+	traversalPath := allowedDir + "/../outside/secret.txt"
 	_ = outsideFile
 
 	src := fmt.Sprintf(`config
@@ -177,5 +183,36 @@ action /n
 	if !strings.Contains(cd, "report.pdf") {
 		body, _ := io.ReadAll(resp.Body)
 		t.Errorf("want report.pdf in Content-Disposition, got %q (status=%d body=%s)", cd, resp.StatusCode, body)
+	}
+}
+
+// TestRespondFile_HandleActionNodes exercises the NodeRespondFile case inside
+// handleActionNodes (the second switch site, used by on success/error branches).
+func TestRespondFile_HandleActionNodes(t *testing.T) {
+	tmp := t.TempDir()
+	uploadsDir := filepath.Join(tmp, "uploads")
+	target := newTempFile(t, uploadsDir, "doc.pdf", "PDFDATA")
+
+	s := newTestServer(nil)
+	// Wire serve-roots into app config so pathInsideAnyRoot allows the file.
+	s.app.Config = &parser.AppConfig{ServeRoots: []string{uploadsDir}}
+
+	node := parser.Node{
+		Type:                  parser.NodeRespondFile,
+		RespondFilePath:       target,
+		RespondFileName:       "",
+		RespondFileDisposition: "attachment",
+	}
+
+	req := httptest.NewRequest("POST", "/x", nil)
+	rec := httptest.NewRecorder()
+	s.handleActionNodes(rec, req, []parser.Node{node}, map[string]string{}, s.getApp())
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") || !strings.Contains(cd, "doc.pdf") {
+		t.Errorf("Content-Disposition: %q", cd)
 	}
 }
