@@ -198,9 +198,9 @@ func TestRespondFile_HandleActionNodes(t *testing.T) {
 	s.app.Config = &parser.AppConfig{ServeRoots: []string{uploadsDir}}
 
 	node := parser.Node{
-		Type:                  parser.NodeRespondFile,
-		RespondFilePath:       target,
-		RespondFileName:       "",
+		Type:                   parser.NodeRespondFile,
+		RespondFilePath:        target,
+		RespondFileName:        "",
 		RespondFileDisposition: "attachment",
 	}
 

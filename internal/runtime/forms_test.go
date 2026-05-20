@@ -228,24 +228,34 @@ func TestIsAllowedUploadExt_ConfigOverrides(t *testing.T) {
 	}{
 		{"default allows pdf", nil, "report.pdf", true},
 		{"default rejects dxf", nil, "drawing.dxf", false},
-		{"add dxf allows it",
+		{
+			"add dxf allows it",
 			&parser.AppConfig{UploadExtensionsAdd: []string{"dxf"}},
-			"drawing.dxf", true},
-		{"remove pdf rejects it",
+			"drawing.dxf", true,
+		},
+		{
+			"remove pdf rejects it",
 			&parser.AppConfig{UploadExtensionsRemove: []string{"pdf"}},
-			"report.pdf", false},
-		{"allowAll lets exe through",
+			"report.pdf", false,
+		},
+		{
+			"allowAll lets exe through",
 			&parser.AppConfig{UploadExtensionsAllowAll: true},
-			"installer.exe", true},
-		{"remove wins over add",
+			"installer.exe", true,
+		},
+		{
+			"remove wins over add",
 			&parser.AppConfig{
 				UploadExtensionsAdd:    []string{"pdf"},
 				UploadExtensionsRemove: []string{"pdf"},
 			},
-			"x.pdf", false},
-		{"empty extension never allowed even with star",
+			"x.pdf", false,
+		},
+		{
+			"empty extension never allowed even with star",
 			&parser.AppConfig{UploadExtensionsAllowAll: true},
-			"noext", false},
+			"noext", false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

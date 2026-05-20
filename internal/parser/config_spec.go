@@ -83,9 +83,9 @@ func init() {
 	})
 
 	spec.Register(spec.Entity{
-		Name:    "serve-roots",
-		Kind:    spec.KindAttribute,
-		Summary: "Directories from which `respond file` may serve.",
+		Name:        "serve-roots",
+		Kind:        spec.KindAttribute,
+		Summary:     "Directories from which `respond file` may serve.",
 		Description: "Required when any action uses [`respond file`](../attributes/respond.md). Comma-separated absolute or app-relative paths. The runtime rejects any `respond file` whose resolved path is not inside one of these roots (HTTP 403). The analyzer raises an error if `respond file` appears without `serve-roots` (fail-safe).",
 		Syntax:      "serve-roots: <path>, <path>, ...",
 		ParentScope: []string{"config"},
