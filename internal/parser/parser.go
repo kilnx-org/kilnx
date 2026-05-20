@@ -1755,6 +1755,43 @@ func (p *parserState) parseRespondNode() Node {
 		return node
 	}
 
+	// "respond file <path> [as <name>] [inline | attachment]"
+	if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "file" {
+		p.advance()
+		node.Type = NodeRespondFile
+		node.RespondFileDisposition = "attachment"
+
+		// Extract the raw text after "file" from the source line.
+		rest := ""
+		if respondLine >= 1 && respondLine <= len(p.lines) {
+			line := p.lines[respondLine-1]
+			idx := strings.Index(line, "file")
+			if idx >= 0 {
+				rest = strings.TrimSpace(line[idx+len("file"):])
+			}
+		}
+
+		fields := strings.Fields(rest)
+		// Disposition token (must be the last whitespace-separated word, if present).
+		if n := len(fields); n > 0 {
+			last := fields[n-1]
+			if last == "inline" || last == "attachment" {
+				node.RespondFileDisposition = last
+				fields = fields[:n-1]
+			}
+		}
+
+		// Optional "as <name>"
+		if i := indexWord(fields, "as"); i >= 0 && i+1 < len(fields) {
+			node.RespondFileName = strings.Join(fields[i+1:], " ")
+			fields = fields[:i]
+		}
+
+		node.RespondFilePath = strings.TrimSpace(strings.Join(fields, " "))
+		p.skipToEndOfLine()
+		return node
+	}
+
 	// expect "fragment"
 	if (p.current().Type == lexer.TokenKeyword || p.current().Type == lexer.TokenIdentifier) && p.current().Value == "fragment" {
 		p.advance()
@@ -3412,6 +3449,16 @@ func (p *parserState) parseBroadcastNode() Node {
 
 	p.skipToEndOfLine()
 	return node
+}
+
+// indexWord returns the index of the first element equal to w, or -1.
+func indexWord(fields []string, w string) int {
+	for i, f := range fields {
+		if f == w {
+			return i
+		}
+	}
+	return -1
 }
 
 // resolveEnvValue handles "env VAR_NAME default VALUE" syntax.
