@@ -152,6 +152,7 @@ func Analyze(app *parser.App) []Diagnostic {
 	diags = append(diags, checkLLMAgentReservedAttrs(app)...)
 	diags = append(diags, checkLLMAgentWorkspaceRoot(app)...)
 	diags = append(diags, checkLLMAgentMCPRefs(app)...)
+	diags = append(diags, checkRespondFileServeRoots(app)...)
 
 	return diags
 }
@@ -1677,4 +1678,64 @@ func checkActionAttributes(app *parser.App) []Diagnostic {
 	}
 
 	return diags
+}
+
+// checkRespondFileServeRoots emits an error if any body node uses
+// NodeRespondFile but serve-roots is not configured. Without serve-roots
+// every respond-file call is rejected at runtime (fail-safe), so this
+// catches the misconfiguration at analysis time.
+func checkRespondFileServeRoots(app *parser.App) []Diagnostic {
+	hasRespondFile := false
+
+	var scanNodes func(nodes []parser.Node)
+	scanNodes = func(nodes []parser.Node) {
+		for _, n := range nodes {
+			if n.Type == parser.NodeRespondFile {
+				hasRespondFile = true
+				return
+			}
+			if len(n.Children) > 0 {
+				scanNodes(n.Children)
+			}
+		}
+	}
+
+	for _, a := range app.Actions {
+		scanNodes(a.Body)
+	}
+	for _, pg := range app.Pages {
+		scanNodes(pg.Body)
+	}
+	for _, f := range app.Fragments {
+		scanNodes(f.Body)
+	}
+	for _, a := range app.APIs {
+		scanNodes(a.Body)
+	}
+	for _, s := range app.Schedules {
+		scanNodes(s.Body)
+	}
+	for _, j := range app.Jobs {
+		scanNodes(j.Body)
+	}
+	for _, wh := range app.Webhooks {
+		for _, ev := range wh.Events {
+			scanNodes(ev.Body)
+		}
+	}
+
+	if !hasRespondFile {
+		return nil
+	}
+	if app.Config != nil && len(app.Config.ServeRoots) > 0 {
+		return nil
+	}
+
+	return []Diagnostic{{
+		Level: "error",
+		Message: "respond file requires a serve-roots config entry. " +
+			"Add `serve-roots: <dir>, <dir>` to the config block listing the " +
+			"directories that may be served. Without this, no path is served (fail-safe).",
+		Context: "config",
+	}}
 }
