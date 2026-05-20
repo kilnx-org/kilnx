@@ -27,12 +27,26 @@ var allowedUploadExts = map[string]bool{
 	"csv": true, "zip": true,
 }
 
-func isAllowedUploadExt(filename string) bool {
-	ext := strings.ToLower(filepath.Ext(filename))
+func isAllowedUploadExt(filename string, cfg *parser.AppConfig) bool {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(filename), "."))
 	if ext == "" {
 		return false
 	}
-	ext = ext[1:] // remove leading dot
+	if cfg != nil {
+		if cfg.UploadExtensionsAllowAll {
+			return true
+		}
+		for _, r := range cfg.UploadExtensionsRemove {
+			if r == ext {
+				return false
+			}
+		}
+		for _, a := range cfg.UploadExtensionsAdd {
+			if a == ext {
+				return true
+			}
+		}
+	}
 	return allowedUploadExts[ext]
 }
 
@@ -410,7 +424,7 @@ func extractFormData(r *http.Request, config *parser.AppConfig) map[string]strin
 					if fh.Filename == "" {
 						continue
 					}
-					if !isAllowedUploadExt(fh.Filename) {
+					if !isAllowedUploadExt(fh.Filename, config) {
 						fmt.Fprintf(os.Stderr, "kilnx: rejected upload of disallowed file type: %s\n", fh.Filename)
 						continue
 					}

@@ -218,3 +218,41 @@ func TestExtractFormData_RejectedFileSkippedSurvivorsKept(t *testing.T) {
 		t.Fatalf("want 2 surviving paths, got %d (%v)", len(paths), paths)
 	}
 }
+
+func TestIsAllowedUploadExt_ConfigOverrides(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  *parser.AppConfig
+		file string
+		want bool
+	}{
+		{"default allows pdf", nil, "report.pdf", true},
+		{"default rejects dxf", nil, "drawing.dxf", false},
+		{"add dxf allows it",
+			&parser.AppConfig{UploadExtensionsAdd: []string{"dxf"}},
+			"drawing.dxf", true},
+		{"remove pdf rejects it",
+			&parser.AppConfig{UploadExtensionsRemove: []string{"pdf"}},
+			"report.pdf", false},
+		{"allowAll lets exe through",
+			&parser.AppConfig{UploadExtensionsAllowAll: true},
+			"installer.exe", true},
+		{"remove wins over add",
+			&parser.AppConfig{
+				UploadExtensionsAdd:    []string{"pdf"},
+				UploadExtensionsRemove: []string{"pdf"},
+			},
+			"x.pdf", false},
+		{"empty extension never allowed even with star",
+			&parser.AppConfig{UploadExtensionsAllowAll: true},
+			"noext", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isAllowedUploadExt(tc.file, tc.cfg)
+			if got != tc.want {
+				t.Errorf("got %v want %v", got, tc.want)
+			}
+		})
+	}
+}
