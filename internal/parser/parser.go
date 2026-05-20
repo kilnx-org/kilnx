@@ -75,6 +75,14 @@ type AppConfig struct {
 	DetectLanguage  string   // "header accept-language" or empty
 	CORSOrigins     []string // allowed CORS origins (empty = same-origin only)
 	WorkspaceRoot   string   // filesystem root for llm agent cwd resolution (P3)
+
+	// Patch 2 — upload-extensions
+	UploadExtensionsAdd      []string // lowercase, no leading "."
+	UploadExtensionsRemove   []string // lowercase, no leading "."
+	UploadExtensionsAllowAll bool     // set when "*" was given alone
+
+	// Patch 3 — serve-roots
+	ServeRoots []string // absolute paths the `respond file` statement may read from
 }
 
 // LogConfig configures runtime logging behaviour from a `log` block.
