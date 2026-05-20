@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"bytes"
+	"encoding/json"
 	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -127,5 +129,51 @@ func TestExtractFormData_MultipartParseError(t *testing.T) {
 	data := extractFormData(req, nil)
 	if data == nil {
 		t.Error("expected empty map, not nil")
+	}
+}
+
+func newMultipartRequest(t *testing.T, files map[string][]string) *http.Request {
+	t.Helper()
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	for field, entries := range files {
+		for _, entry := range entries {
+			// entry is "<filename>|<content>"
+			parts := strings.SplitN(entry, "|", 2)
+			fw, err := w.CreateFormFile(field, parts[0])
+			if err != nil {
+				t.Fatalf("CreateFormFile: %v", err)
+			}
+			fw.Write([]byte(parts[1]))
+		}
+	}
+	w.Close()
+	req, _ := http.NewRequest("POST", "/", body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	return req
+}
+
+func TestExtractFormData_MultiFile_ReturnsJSONArray(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := &parser.AppConfig{UploadsDir: tmp, UploadsMaxMB: 32}
+	req := newMultipartRequest(t, map[string][]string{
+		"files": {"a.pdf|alpha", "b.pdf|beta", "c.pdf|gamma"},
+	})
+	data := extractFormData(req, cfg)
+	raw, ok := data["files"]
+	if !ok {
+		t.Fatalf("expected files binding, got %#v", data)
+	}
+	var paths []string
+	if err := json.Unmarshal([]byte(raw), &paths); err != nil {
+		t.Fatalf("expected JSON array, got %q (err %v)", raw, err)
+	}
+	if len(paths) != 3 {
+		t.Fatalf("expected 3 paths, got %d (%v)", len(paths), paths)
+	}
+	for _, p := range paths {
+		if !strings.HasPrefix(p, "/_uploads/") {
+			t.Fatalf("expected /_uploads/ prefix, got %q", p)
+		}
 	}
 }
