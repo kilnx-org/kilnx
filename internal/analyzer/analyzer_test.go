@@ -2131,3 +2131,20 @@ func TestAnalyze_IndexDuplicateGroup(t *testing.T) {
 		t.Fatalf("expected duplicate-index error, got: %+v", diags)
 	}
 }
+
+func TestAnalyzer_UploadExtensionsStarWarning(t *testing.T) {
+	app := &parser.App{
+		Config: &parser.AppConfig{UploadExtensionsAllowAll: true},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "warning" && strings.Contains(d.Message, "upload-extensions") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected upload-extensions star warning, got %v", diags)
+	}
+}

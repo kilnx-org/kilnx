@@ -118,6 +118,17 @@ func Analyze(app *parser.App) []Diagnostic {
 	var diags []Diagnostic
 	schema := BuildSchema(app.Models, app.CustomManifests)
 
+	if app.Config != nil && app.Config.UploadExtensionsAllowAll {
+		diags = append(diags, Diagnostic{
+			Level: "warning",
+			Message: "upload-extensions: * allows all file types. /_uploads/ is " +
+				"served as a static filesystem, so any uploaded file becomes a " +
+				"public URL. Use specific '+ext' tokens unless you understand " +
+				"the implications.",
+			Context: "config",
+		})
+	}
+
 	populateSourceModels(app)
 
 	diags = append(diags, checkModelDefaults(app.Models)...)
