@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -3365,6 +3366,20 @@ func (p *parserState) parseConfig() AppConfig {
 					cfg.UploadExtensionsAdd = add
 					cfg.UploadExtensionsRemove = remove
 					cfg.UploadExtensionsAllowAll = allowAll
+				}
+			case "serve-roots", "serve_roots":
+				wd, _ := os.Getwd()
+				for _, token := range strings.Split(rawVal, ",") {
+					token = strings.Trim(strings.TrimSpace(token), "\"' ")
+					if token == "" {
+						continue
+					}
+					abs := token
+					if !filepath.IsAbs(abs) {
+						abs = filepath.Join(wd, abs)
+					}
+					abs = filepath.Clean(abs)
+					cfg.ServeRoots = append(cfg.ServeRoots, abs)
 				}
 			}
 

@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -1505,5 +1506,23 @@ func TestParseRespondFile(t *testing.T) {
 				t.Errorf("Disp: got %q want %q", got.RespondFileDisposition, tc.want.RespondFileDisposition)
 			}
 		})
+	}
+}
+
+func TestParseConfig_ServeRoots(t *testing.T) {
+	src := "config\n  serve-roots: ./uploads, ./reports, /tmp/x\n"
+	tokens := lexer.Tokenize(src)
+	app, err := Parse(tokens, src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	got := app.Config.ServeRoots
+	if len(got) != 3 {
+		t.Fatalf("want 3 roots, got %v", got)
+	}
+	for _, r := range got {
+		if !filepath.IsAbs(r) {
+			t.Errorf("expected absolute path, got %q", r)
+		}
 	}
 }
