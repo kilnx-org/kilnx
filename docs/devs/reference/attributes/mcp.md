@@ -31,7 +31,7 @@ Each name must resolve to an MCP server block in the top-level `config`. The mat
 
 | | |
 |---|---|
-| **Spec last touched** | `3df67e5` (2026-05-19) |
+| **Spec last touched** | `cd7b558` (2026-05-19) |
 | **Source last touched** | `d461e57` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go` |
 

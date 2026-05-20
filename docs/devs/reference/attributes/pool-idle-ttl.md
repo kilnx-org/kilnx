@@ -27,5 +27,5 @@ pool-idle-ttl: <duration>
 
 | | |
 |---|---|
-| **Spec last touched** | `3df67e5` (2026-05-19) |
+| **Spec last touched** | `cd7b558` (2026-05-19) |
 

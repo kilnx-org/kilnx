@@ -31,7 +31,7 @@ Resolved relative to `config workspace-root`. Must stay within `workspace-root` 
 
 | | |
 |---|---|
-| **Spec last touched** | `3df67e5` (2026-05-19) |
+| **Spec last touched** | `cd7b558` (2026-05-19) |
 | **Source last touched** | `d461e57` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go` |
 
