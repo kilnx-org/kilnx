@@ -5,11 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/analyzer` |
-| **Source last touched** | `72e9177` (2026-05-13) |
+| **Source last touched** | `5775a72` (2026-05-14) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
 
-> **Implementation touched after doc.go.** Source changed on `2026-05-13`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
+> **Implementation touched after doc.go.** Source changed on `2026-05-14`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 

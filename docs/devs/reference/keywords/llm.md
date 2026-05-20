@@ -23,6 +23,8 @@ llm <name>
 
 Body-level keyword. Bind the result to `<name>` for use by subsequent nodes. Common settings (`model`, `system`, `temperature`, `max-tokens`) live directly under `llm`; mode-specific children (`response` or `agent`) define how the call runs. Exactly one of `response` or `agent` must be present.
 
+Valid inside `action`, `page`, `fragment`, `api`, `webhook`, `job`, and `schedule` bodies. Nodes that follow the `llm` see the final assistant reply on `:<name>.text`, plus `:<name>.cost_usd`, `:<name>.session_id`, `:<name>.duration_ms`, `:<name>.stop_reason`. For long-running jobs, attach an [`on progress`](../attributes/on-progress.md) handler to the `agent` block to persist or broadcast incremental progress while the subprocess runs.
+
 ## Children
 
 - [`system`](../attributes/system.md)
@@ -61,6 +63,20 @@ job process-doc
       permission-mode: plan
 ```
 
+### Agent in a job with live progress
+
+```kilnx
+job run-review
+  llm review
+    model: claude-sonnet-4-6
+    agent
+      cwd: :bundle_dir
+      max-budget-usd: 2.00
+      on progress
+        query: UPDATE review_job SET progress = :progress WHERE id = :job_id
+  query: UPDATE review_job SET status = 'done', summary = :review.text WHERE id = :job_id
+```
+
 ## See also
 
 - [`response`](response.md)
@@ -71,7 +87,7 @@ job process-doc
 
 | | |
 |---|---|
-| **Spec last touched** | `72e9177` (2026-05-13) |
-| **Source last touched** | `72e9177` (2026-05-13) |
+| **Spec last touched** | `cd7b558` (2026-05-19) |
+| **Source last touched** | `d461e57` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go` |
 

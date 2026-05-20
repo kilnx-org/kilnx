@@ -129,6 +129,7 @@ Each section lists the attributes valid inside that parent keyword. An attribute
 | [`max-budget-usd`](docs/devs/reference/attributes/max-budget-usd.md) | Hard cost cap in USD per agent invocation. | 0.1.3 |
 | [`max-turns`](docs/devs/reference/attributes/max-turns.md) | Maximum agentic turns before forced stop. | 0.1.3 |
 | [`mcp`](docs/devs/reference/attributes/mcp.md) | Comma-separated names of MCP servers declared in `config mcp <name>`. | 0.1.3 |
+| [`on-progress`](docs/devs/reference/attributes/on-progress.md) | Handler block run on each progress event while an `agent` runs. | 0.1.4 |
 | [`permission-mode`](docs/devs/reference/attributes/permission-mode.md) | Tool-use permission policy: `plan`, `acceptEdits`, or `bypassPermissions`. | 0.1.3 |
 | [`pool`](docs/devs/reference/attributes/pool.md) | Reserved: number of warm `claude` subprocesses to keep alive (not yet implemented). | 0.1.3 |
 | [`pool-idle-ttl`](docs/devs/reference/attributes/pool-idle-ttl.md) | Reserved: idle TTL before pooled subprocesses are killed (not yet implemented). | 0.1.3 |
@@ -339,6 +340,10 @@ Each section lists the attributes valid inside that parent keyword. An attribute
 ### What changed by version
 
 Most recent first. Use this to understand the surface area added in each release.
+
+#### 0.1.4
+
+**Attributes**: [`on-progress`](docs/devs/reference/attributes/on-progress.md)
 
 #### 0.1.3
 

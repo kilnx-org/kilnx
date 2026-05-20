@@ -1,10 +1,12 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -560,8 +562,75 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 					return fmt.Errorf("enqueue error: %w", err)
 				}
 			}
+
+		case parser.NodeLLM:
+			if s.db == nil {
+				continue
+			}
+			varName := node.Name
+			if varName == "" {
+				varName = "_llm"
+			}
+			switch node.LLMMode {
+			case "agent":
+				res, err := executeLLMAgent(jobCtx(), node, s.getApp(), params, nil, s.makeAgentProgressFn(node, params))
+				if err != nil {
+					s.logger.LogError("job llm-agent error", err)
+					return fmt.Errorf("llm agent: %w", err)
+				}
+				params[varName] = res.Text
+				params[varName+".text"] = res.Text
+				params[varName+".session_id"] = res.SessionID
+				params[varName+".cost_usd"] = strconv.FormatFloat(res.CostUSD, 'f', 6, 64)
+				params[varName+".duration_ms"] = strconv.FormatInt(res.DurationMS, 10)
+				params[varName+".stop_reason"] = res.StopReason
+			case "response":
+				text, err := executeLLM(jobCtx(), node, s.db, params)
+				if err != nil {
+					s.logger.LogError("job llm error", err)
+					return fmt.Errorf("llm response: %w", err)
+				}
+				params[varName] = text
+				params[varName+".text"] = text
+			default:
+				s.logger.LogError("job llm: unknown mode", fmt.Errorf("mode %q", node.LLMMode))
+			}
 		}
 	}
 
 	return nil
+}
+
+// jobCtx returns the context used for llm calls inside jobs/schedules.
+// Jobs have no HTTP request, so a background context is used to allow
+// long-running agents (minutes). The agent's `max-budget-usd` and
+// `max-turns` bound cost and turn count, but NOT wall-clock time; a
+// subprocess that stops producing output without exiting will block the
+// job queue until the server is restarted. Acceptable in v1 for the
+// design's "long-running agent dispatched as a background job" target;
+// follow-up may add a configurable per-job timeout.
+func jobCtx() context.Context { return context.Background() }
+
+// makeAgentProgressFn builds the progress callback for an llm-agent node.
+// Returns nil when the node has no `on progress` body, so executeLLMAgent
+// skips progress work entirely. Each event runs the handler body with
+// :progress, :progress_kind, :cost_usd and :session_id bound, on top of a
+// copy of the surrounding params. A failing handler is logged, not fatal.
+func (s *Server) makeAgentProgressFn(node parser.Node, params map[string]string) progressFn {
+	if len(node.LLMAgentProgressBody) == 0 {
+		return nil
+	}
+	return func(kind, text, sessionID string, cost float64) {
+		p := make(map[string]string, len(params)+4)
+		for k, v := range params {
+			p[k] = v
+		}
+		p["progress"] = text
+		p["progress_kind"] = kind
+		p["session_id"] = sessionID
+		p["cost_usd"] = strconv.FormatFloat(cost, 'f', 6, 64)
+		if err := s.executeNodes(node.LLMAgentProgressBody, p); err != nil {
+			s.logger.LogError("on progress handler failed", err)
+		}
+	}
 }

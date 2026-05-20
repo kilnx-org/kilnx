@@ -414,6 +414,7 @@ type Node struct {
 	LLMAgentPoolIdleTTL    string   // for llm agent: reserved; runtime ignores in v0.2.x
 	LLMAgentShowTools      bool     // for llm agent: emit tool_use/tool_result frames on stream
 	LLMAgentResume         string   // for llm agent: session id to resume (supports :param)
+	LLMAgentProgressBody   []Node   // for llm agent: body of the `on progress` handler
 }
 
 // Validation is one field-level rule set inside a `validate` block.
@@ -3848,6 +3849,31 @@ func (p *parserState) parseLLMModeChildren(node *Node, mode string) {
 		key := tok.Value
 		keyLine := tok.Line
 		p.advance()
+
+		// agent: `on progress` is a block child, not a scalar attribute.
+		if mode == "agent" && key == "on" {
+			if p.current().Type == lexer.TokenIdentifier && p.current().Value == "progress" {
+				p.advance() // consume "progress"
+				p.skipToEndOfLine()
+				p.skipNewlines()
+				if p.current().Type == lexer.TokenIndent {
+					p.advance()
+					node.LLMAgentProgressBody = p.parseBody()
+				} else {
+					p.addError(fmt.Errorf("agent: `on progress` requires an indented body"))
+				}
+			} else {
+				got := p.current().Value
+				if got == "" {
+					got = "<end of line>"
+				}
+				p.addError(fmt.Errorf("agent: only `on progress` is supported, got `on %s`", got))
+				p.skipToEndOfLine()
+				p.skipNewlines()
+			}
+			continue
+		}
+
 		if p.current().Type == lexer.TokenColon {
 			p.advance()
 		}

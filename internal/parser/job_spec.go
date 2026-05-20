@@ -9,7 +9,12 @@ func init() {
 		Summary: "Asynchronous background task triggered by `enqueue`.",
 		Description: "A `job` runs asynchronously when called via `enqueue <job>`. Jobs are " +
 			"useful for slow operations (sending email batches, generating reports) that " +
-			"should not block HTTP responses. Failed jobs retry up to `retry <n>` times.",
+			"should not block HTTP responses. Failed jobs retry up to `retry <n>` times.\n\n" +
+			"Job bodies may contain `llm` and `agent` nodes. A named `llm <name>` binds " +
+			"its result for subsequent nodes as `:<name>.text`, `:<name>.cost_usd`, " +
+			"`:<name>.session_id`, `:<name>.duration_ms`, and `:<name>.stop_reason`. " +
+			"Inside `agent`, an `on progress` handler block lets a background job surface " +
+			"live progress without an HTTP connection.",
 		Syntax: "job <name>",
 		Args: []spec.Arg{
 			{Name: "name", Type: "identifier", Required: true},

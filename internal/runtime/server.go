@@ -1302,7 +1302,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 					if streaming {
 						aw = w
 					}
-					res, err := executeLLMAgent(r.Context(), node, s.getApp(), formData, aw)
+					res, err := executeLLMAgent(r.Context(), node, s.getApp(), formData, aw, s.makeAgentProgressFn(node, formData))
 					if err != nil {
 						fmt.Printf("  llm-agent error: %v\n", err)
 						if streaming {

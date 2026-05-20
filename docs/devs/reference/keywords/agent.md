@@ -17,6 +17,8 @@ agent
 
 Block-form attribute inside `llm`. Spawns the official `claude` CLI (min v2.0.0) per request and streams `stream-json` envelopes back. Requires `max-budget-usd`. The `claude` CLI must be on PATH at runtime; `kilnx run` validates this at startup when any `agent` block is declared.
 
+Inside a `job` or `schedule`, the agent runs on the worker rather than an HTTP handler. Attach an [`on progress`](../attributes/on-progress.md) block-form child to react to each progress event (typically a `query` or `broadcast`); a failing handler is logged and does not abort the agent.
+
 ## Children
 
 - [`cwd`](../attributes/cwd.md)
@@ -29,6 +31,7 @@ Block-form attribute inside `llm`. Spawns the official `claude` CLI (min v2.0.0)
 - [`pool-idle-ttl`](../attributes/pool-idle-ttl.md)
 - [`show-tools`](../attributes/show-tools.md)
 - [`resume`](../attributes/resume.md)
+- [`on-progress`](../attributes/on-progress.md)
 
 ## See also
 
@@ -38,7 +41,7 @@ Block-form attribute inside `llm`. Spawns the official `claude` CLI (min v2.0.0)
 
 | | |
 |---|---|
-| **Spec last touched** | `72e9177` (2026-05-13) |
-| **Source last touched** | `c92fd85` (2026-05-13) |
-| **Source files** | `internal/parser/parser.go`, `internal/runtime/server.go` |
+| **Spec last touched** | `cd7b558` (2026-05-19) |
+| **Source last touched** | `d050f4c` (2026-05-19) |
+| **Source files** | `internal/parser/parser.go`, `internal/runtime/scheduler.go`, `internal/runtime/server.go` |
 

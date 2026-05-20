@@ -22,7 +22,13 @@ func init() {
 		Description: "Body-level keyword. Bind the result to `<name>` for use by subsequent " +
 			"nodes. Common settings (`model`, `system`, `temperature`, `max-tokens`) live " +
 			"directly under `llm`; mode-specific children (`response` or `agent`) define " +
-			"how the call runs. Exactly one of `response` or `agent` must be present.",
+			"how the call runs. Exactly one of `response` or `agent` must be present.\n\n" +
+			"Valid inside `action`, `page`, `fragment`, `api`, `webhook`, `job`, and " +
+			"`schedule` bodies. Nodes that follow the `llm` see the final assistant reply " +
+			"on `:<name>.text`, plus `:<name>.cost_usd`, `:<name>.session_id`, " +
+			"`:<name>.duration_ms`, `:<name>.stop_reason`. For long-running jobs, attach " +
+			"an [`on progress`](../attributes/on-progress.md) handler to the `agent` block " +
+			"to persist or broadcast incremental progress while the subprocess runs.",
 		Syntax:      "llm <name>",
 		Args:        []spec.Arg{{Name: "name", Type: "identifier", Required: true}},
 		ParentScope: llmParents,
@@ -55,6 +61,18 @@ func init() {
       max-turns: 10
       max-budget-usd: 0.50
       permission-mode: plan`,
+			},
+			{
+				Title: "Agent in a job with live progress",
+				Code: `job run-review
+  llm review
+    model: claude-sonnet-4-6
+    agent
+      cwd: :bundle_dir
+      max-budget-usd: 2.00
+      on progress
+        query: UPDATE review_job SET progress = :progress WHERE id = :job_id
+  query: UPDATE review_job SET status = 'done', summary = :review.text WHERE id = :job_id`,
 			},
 		},
 		SeeAlso: []string{"response", "agent", "fetch"},
@@ -149,12 +167,16 @@ func init() {
 		Description: "Block-form attribute inside `llm`. Spawns the official `claude` CLI " +
 			"(min v2.0.0) per request and streams `stream-json` envelopes back. Requires " +
 			"`max-budget-usd`. The `claude` CLI must be on PATH at runtime; `kilnx run` " +
-			"validates this at startup when any `agent` block is declared.",
+			"validates this at startup when any `agent` block is declared.\n\n" +
+			"Inside a `job` or `schedule`, the agent runs on the worker rather than an " +
+			"HTTP handler. Attach an [`on progress`](../attributes/on-progress.md) " +
+			"block-form child to react to each progress event (typically a `query` or " +
+			"`broadcast`); a failing handler is logged and does not abort the agent.",
 		Syntax:      "agent",
 		ParentScope: []string{"llm"},
 		Children: []string{
 			"cwd", "tools", "max-turns", "max-budget-usd", "permission-mode",
-			"mcp", "pool", "pool-idle-ttl", "show-tools", "resume",
+			"mcp", "pool", "pool-idle-ttl", "show-tools", "resume", "on-progress",
 		},
 		Since: "0.1.3",
 	})
@@ -224,7 +246,7 @@ func init() {
 	spec.Register(spec.Entity{
 		Name: "pool", Kind: spec.KindAttribute,
 		Summary:     "Reserved: number of warm `claude` subprocesses to keep alive (not yet implemented).",
-		Description: "Reserved sintaxe in v0.1.3. Analyzer emits a `not yet implemented` warning; runtime ignores the value and always spawns per request.",
+		Description: "Reserved syntax in v0.1.3. Analyzer emits a `not yet implemented` warning; runtime ignores the value and always spawns per request.",
 		Syntax:      "pool: <int>",
 		Args:        []spec.Arg{{Name: "value", Type: "int", Required: false}},
 		ParentScope: []string{"agent"},
@@ -250,6 +272,32 @@ func init() {
 		ParentScope: []string{"agent"},
 		Default:     "false",
 		Since:       "0.1.3",
+	})
+
+	spec.Register(spec.Entity{
+		Name:    "on-progress",
+		Kind:    spec.KindAttribute,
+		Summary: "Handler block run on each progress event while an `agent` runs.",
+		Description: "Block-form child of [`agent`](../keywords/agent.md). The body is a normal kilnx body (typically a `query` or `broadcast`). It runs once per progress event emitted while the agent subprocess runs. Inside the body these bindings are available, in addition to the surrounding params:\n\n" +
+			"- `:progress`, short human-readable line.\n" +
+			"- `:progress_kind`, one of `session`, `text`, `assistant`, `tool`, `done`.\n" +
+			"- `:cost_usd`, running cost in USD.\n" +
+			"- `:session_id`, claude session id, populated once the `session` event fires (the first event the subprocess emits, before any text/tool).\n\n" +
+			"Written in source as two tokens (`on progress`), generated docs use the hyphenated form `on-progress`. A failing handler body is logged and does not abort the agent or the job.",
+		Syntax:      "on progress\n  <body>",
+		ParentScope: []string{"agent"},
+		Examples: []spec.Example{{
+			Title: "Persist progress for a polling UI",
+			Code: "job run-review\n" +
+				"  llm review\n" +
+				"    model: claude-sonnet-4-6\n" +
+				"    agent\n" +
+				"      cwd: :bundle_dir\n" +
+				"      max-budget-usd: 2.00\n" +
+				"      on progress\n" +
+				"        query: UPDATE review_job SET progress = :progress WHERE id = :job_id",
+		}},
+		Since: "0.1.4",
 	})
 
 	spec.Register(spec.Entity{

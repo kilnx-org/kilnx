@@ -21,7 +21,7 @@ pool: <int>
 
 ## Description
 
-Reserved sintaxe in v0.1.3. Analyzer emits a `not yet implemented` warning; runtime ignores the value and always spawns per request.
+Reserved syntax in v0.1.3. Analyzer emits a `not yet implemented` warning; runtime ignores the value and always spawns per request.
 
 ## Used in
 
@@ -31,7 +31,7 @@ Reserved sintaxe in v0.1.3. Analyzer emits a `not yet implemented` warning; runt
 
 | | |
 |---|---|
-| **Spec last touched** | `72e9177` (2026-05-13) |
-| **Source last touched** | `72e9177` (2026-05-13) |
+| **Spec last touched** | `cd7b558` (2026-05-19) |
+| **Source last touched** | `d461e57` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go` |
 

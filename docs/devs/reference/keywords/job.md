@@ -24,6 +24,8 @@ job <name>
 
 A `job` runs asynchronously when called via `enqueue <job>`. Jobs are useful for slow operations (sending email batches, generating reports) that should not block HTTP responses. Failed jobs retry up to `retry <n>` times.
 
+Job bodies may contain `llm` and `agent` nodes. A named `llm <name>` binds its result for subsequent nodes as `:<name>.text`, `:<name>.cost_usd`, `:<name>.session_id`, `:<name>.duration_ms`, and `:<name>.stop_reason`. Inside `agent`, an `on progress` handler block lets a background job surface live progress without an HTTP connection.
+
 ## Children
 
 - [`retry`](../attributes/retry.md)
@@ -48,11 +50,9 @@ job generate-report
 
 ## Provenance
 
-> ⚠ **Implementation touched after spec.** Source code changed on `2026-05-13`, but this entity's spec was last edited on `2026-05-08`. The description may be out of date.
-
 | | |
 |---|---|
-| **Spec last touched** | `5da8498` (2026-05-08) |
-| **Source last touched** | `72e9177` (2026-05-13) |
+| **Spec last touched** | `a1b78ce` (2026-05-19) |
+| **Source last touched** | `d461e57` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go` |
 

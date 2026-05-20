@@ -29,11 +29,11 @@ Typically pulled from an env var. The matching user is treated as having every r
 
 ## Provenance
 
-> ⚠ **Implementation touched after spec.** Source code changed on `2026-05-13`, but this entity's spec was last edited on `2026-05-08`. The description may be out of date.
+> ⚠ **Implementation touched after spec.** Source code changed on `2026-05-19`, but this entity's spec was last edited on `2026-05-08`. The description may be out of date.
 
 | | |
 |---|---|
 | **Spec last touched** | `5da8498` (2026-05-08) |
-| **Source last touched** | `72e9177` (2026-05-13) |
+| **Source last touched** | `d461e57` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go` |
 

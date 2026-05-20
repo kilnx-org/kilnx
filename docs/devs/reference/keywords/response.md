@@ -30,7 +30,7 @@ Block-form attribute inside `llm`. Children: `history` (SQL that yields message 
 
 | | |
 |---|---|
-| **Spec last touched** | `72e9177` (2026-05-13) |
-| **Source last touched** | `c92fd85` (2026-05-13) |
-| **Source files** | `internal/parser/parser.go`, `internal/runtime/server.go` |
+| **Spec last touched** | `cd7b558` (2026-05-19) |
+| **Source last touched** | `d050f4c` (2026-05-19) |
+| **Source files** | `internal/parser/parser.go`, `internal/runtime/scheduler.go`, `internal/runtime/server.go` |
 

@@ -5,11 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/runtime` |
-| **Source last touched** | `734d596` (2026-05-13) |
+| **Source last touched** | `d050f4c` (2026-05-19) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
 
-> **Implementation touched after doc.go.** Source changed on `2026-05-13`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
+> **Implementation touched after doc.go.** Source changed on `2026-05-19`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
@@ -56,6 +56,7 @@ kilnx CLI.
 | [`render.go`](../../../internal/runtime/render.go) | _no file-level doc_ |
 | [`scheduler.go`](../../../internal/runtime/scheduler.go) | _no file-level doc_ |
 | [`server.go`](../../../internal/runtime/server.go) | _no file-level doc_ |
+| [`slots.go`](../../../internal/runtime/slots.go) | _no file-level doc_ |
 | [`stream.go`](../../../internal/runtime/stream.go) | _no file-level doc_ |
 | [`tenant.go`](../../../internal/runtime/tenant.go) | _no file-level doc_ |
 | [`testing.go`](../../../internal/runtime/testing.go) | _no file-level doc_ |
@@ -362,6 +363,15 @@ type parsedFilter struct {
 ```
 
 parsedFilter represents a single filter in a chain
+
+### `progressFn`
+
+```go
+type progressFn func(kind, text, sessionID string, costUSD float64)
+```
+
+progressFn receives progress events while the agent runs. kind is one of
+"session" | "text" | "assistant" | "tool" | "done". Pass nil to disable.
 
 ### `rateLimitEntry`
 
@@ -773,6 +783,14 @@ func computeAcceptKey(key string) string
 ```go
 func csrfCleanupLoop()
 ```
+### `emit`
+
+```go
+func emit(onProgress progressFn, kind, text, sessionID string, cost float64)
+```
+
+emit calls onProgress when non-nil, swallowing the nil case.
+
 ### `evalAuthExpr`
 
 ```go
@@ -875,7 +893,7 @@ func executeLLM(ctx context.Context, node parser.Node, db rowQuerier, params map
 ### `executeLLMAgent`
 
 ```go
-func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, params map[string]string, w http.ResponseWriter) (*agentResult, error)
+func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, params map[string]string, w http.ResponseWriter, onProgress progressFn) (*agentResult, error)
 ```
 
 executeLLMAgent spawns `claude -p` and consumes the stream-json output.
@@ -942,6 +960,8 @@ func expandFragmentCalls(content string, ctx *renderContext) string
 
 expandFragmentCalls processes {{componentName arg=expr}} blocks inside HTML content.
 It looks up the component fragment, binds arguments, and renders the body inline.
+Handles both self-closing and block form ({{Frag}}...{{/Frag}}) with slot
+semantics, mirroring expandFragmentCallsOutsideEach.
 
 ### `expandFragmentCallsOutsideEach`
 
@@ -952,6 +972,8 @@ func expandFragmentCallsOutsideEach(content string, ctx *renderContext) string
 expandFragmentCallsOutsideEach expands fragment component calls that are
 NOT inside a {{each}}...{{end}} block. Calls inside each-blocks are handled
 per-row inside expandEachBlocks (so they can reference the current row).
+Handles both self-closing ({{Frag args}}) and block form
+({{Frag args}}...{{/Frag}}) with slot semantics.
 
 ### `expandIfBlocks`
 
@@ -979,16 +1001,6 @@ func expandQueryConditionals(sql string, params map[string]string) string
 expandQueryConditionals processes {{if expr}}...{{end}} blocks inside a SQL
 string, using the provided parameters for condition evaluation. It returns the
 SQL with conditional fragments included or removed based on the evaluation.
-
-### `expandSingleFragmentCall`
-
-```go
-func expandSingleFragmentCall(match string, ctx *renderContext) string
-```
-
-expandSingleFragmentCall expands one {{name args}} occurrence using ctx.
-Returns the original match if the name is not a known component or if the
-recursion guard has fired.
 
 ### `expandTranslations`
 
@@ -1024,6 +1036,17 @@ func extractFormData(r *http.Request, config *parser.AppConfig) map[string]strin
 extractFormData reads form values from a POST request, including file uploads.
 config may be nil; defaults are used in that case.
 
+### `extractSlots`
+
+```go
+func extractSlots(body string) (named map[string]string, def string)
+```
+
+extractSlots scans a caller's block-form body and separates named-slot blocks
+from default-slot content. Named slots are keyed by their `name` attribute;
+everything outside any top-level {{slot ...}}...{{/slot}} block becomes the
+default slot. Default slot content has leading/trailing whitespace trimmed.
+
 ### `fetchOGData`
 
 ```go
@@ -1041,6 +1064,18 @@ func findComputedField(models []parser.Model, modelName, fieldName string) *pars
 findComputedField returns the parser.Field for a model's computed field by name,
 or nil if no such computed field exists.
 
+### `findFragmentBlockEnd`
+
+```go
+func findFragmentBlockEnd(content, name string) (body string, endPos int)
+```
+
+findFragmentBlockEnd scans content for the matching {{/name}} of an opened
+{{name args}} tag at depth 1. It counts nested same-name fragment opens so
+{{Outer}}{{Outer}}{{/Outer}}{{/Outer}} pairs correctly. Returns the inner
+body (between open and close) and the position immediately after {{/name}}.
+Returns endPos == -1 when no matching close is found (treat as self-closing).
+
 ### `findMatchingEnd`
 
 ```go
@@ -1057,6 +1092,16 @@ func findModel(models []parser.Model, name string) *parser.Model
 ```
 
 findModel returns a pointer to the model with the given name, or nil if not found.
+
+### `findSlotEnd`
+
+```go
+func findSlotEnd(content string) (body string, endPos int)
+```
+
+findSlotEnd scans for the matching {{/slot}} of an opened {{slot args}} tag,
+counting nested {{slot ...}}/{{/slot}} pairs. Returns the inner body and the
+position immediately after {{/slot}}. Returns endPos == -1 if unclosed.
 
 ### `firstLine`
 
@@ -1393,6 +1438,21 @@ func isSQLKeyword(s string) bool
 ```go
 func isSensitiveField(name, passwordField string) bool
 ```
+### `jobCtx`
+
+```go
+func jobCtx() context.Context
+```
+
+jobCtx returns the context used for llm calls inside jobs/schedules.
+Jobs have no HTTP request, so a background context is used to allow
+long-running agents (minutes). The agent's `max-budget-usd` and
+`max-turns` bound cost and turn count, but NOT wall-clock time; a
+subprocess that stops producing output without exiting will block the
+job queue until the server is restarted. Acceptable in v1 for the
+design's "long-running agent dispatched as a background job" target;
+follow-up may add a configurable per-job timeout.
+
 ### `jsonCoerce`
 
 ```go
@@ -1505,6 +1565,15 @@ Supports: object (single row), array of objects (multiple rows), or wraps primit
 ```go
 func parsePermissionRule(raw string) *PermissionRule
 ```
+### `parseSlotName`
+
+```go
+func parseSlotName(argStr string) string
+```
+
+parseSlotName parses a slot tag's argument string and returns the value of
+`name="X"` (or empty string for the default slot).
+
 ### `printRoutes`
 
 ```go
@@ -1647,6 +1716,20 @@ func resolveEmailRecipient(to string, params map[string]string) string
 
 resolveEmailRecipient resolves the "to" field.
 Can be a literal email, a :param from context, or a query result.
+
+### `resolveFragmentBody`
+
+```go
+func resolveFragmentBody(frag *parser.Page, callerBody string) string
+```
+
+resolveFragmentBody returns the fragment's HTMLContent with slot markers
+substituted. If callerBody is empty (self-closing call form), only fallback
+content survives. Caller body may itself contain {{slot name="X"}}...{{/slot}}
+blocks marking named slots; everything else becomes default slot content.
+
+{{forward name="X"}} markers in the fragment body are also processed so that
+named slots can be forwarded into nested fragment calls.
 
 ### `resolveImports`
 
@@ -1834,6 +1917,27 @@ stripSQLNoise removes comments and string literals. The returned
 string preserves overall length by replacing stripped ranges with
 spaces, so byte positions remain valid for downstream regexps.
 
+### `substituteForward`
+
+```go
+func substituteForward(html string, named map[string]string) string
+```
+
+substituteForward replaces {{forward name="X"}} markers with the outer
+fragment's named slot content wrapped as a {{slot name="X"}}...{{/slot}}
+block. This lets a wrapper fragment delegate its named slots to a nested
+fragment call: the rewritten markers are recognised by the inner call's
+extractSlots pass as named-slot blocks.
+
+{{forward}} without a name is intentionally unsupported: default-to-default
+forwarding is already covered by a bare {{slot}} marker, which the outer
+substitution pass replaces with the caller's default content (which then
+becomes the inner call's default slot content naturally).
+
+When the outer caller did not provide the named slot, the marker is stripped
+entirely so the inner fragment falls back to its own slot fallback rather
+than receiving an empty override.
+
 ### `substituteParams`
 
 ```go
@@ -1843,6 +1947,25 @@ func substituteParams(value string, params map[string]string) string
 substituteParams replaces every `:key` reference in value with its mapped
 param. Keys are tried longest-first so `:user.id` takes precedence over
 `:user`.
+
+### `substituteSlots`
+
+```go
+func substituteSlots(fragHTML string, named map[string]string, def string) string
+```
+
+substituteSlots replaces slot markers in a fragment's HTMLContent with
+caller-provided slot bodies. Marker forms accepted:
+
+	{{slot}}                       -- self-closing default
+	{{slot}}fb{{/slot}}            -- default with fallback
+	{{slot name="X"}}              -- self-closing named
+	{{slot name="X"}}fb{{/slot}}   -- named with fallback
+
+If the caller did not provide a body for a slot (e.g. self-closing form, or
+a named slot the caller did not fill), the fallback content is used. If
+there is also no fallback (self-closing slot marker), the marker is removed
+entirely.
 
 ### `timeAgo`
 
@@ -1881,6 +2004,21 @@ Supported shapes (case-insensitive):
 ```go
 func truncateSQL(sql string) string
 ```
+### `tryExpandFragmentAt`
+
+```go
+func tryExpandFragmentAt(content string, openStart, openEnd int, ctx *renderContext) (replacement string, end int)
+```
+
+tryExpandFragmentAt attempts to expand a fragment call beginning at the
+{{Name args}} match between openStart and openEnd in content. If a matching
+{{/Name}} is found later in content, the call is treated as block-form: the
+inner body is parsed for slot blocks and substituted into the fragment body.
+Otherwise the self-closing form is used and slot markers fall back to their
+fallback content. Returns the replacement HTML and the absolute end position
+(one past the last consumed char). When the call cannot be expanded (unknown
+name, depth guard hit), returns the original open tag and absEnd.
+
 ### `unfurlURLs`
 
 ```go
@@ -2388,6 +2526,18 @@ func (s *Server) invalidateDynamicManifestCache(sql string)
 
 invalidateDynamicManifestCache clears the manifest cache entry when a
 mutation targets a _<model>_field_defs table.
+
+### `(Server) makeAgentProgressFn`
+
+```go
+func (s *Server) makeAgentProgressFn(node parser.Node, params map[string]string) progressFn
+```
+
+makeAgentProgressFn builds the progress callback for an llm-agent node.
+Returns nil when the node has no `on progress` body, so executeLLMAgent
+skips progress work entirely. Each event runs the handler body with
+:progress, :progress_kind, :cost_usd and :session_id bound, on top of a
+copy of the surrounding params. A failing handler is logged, not fatal.
 
 ### `(Server) mergeDBFieldDefs`
 

@@ -82,12 +82,23 @@ type assistantMessage struct {
 
 var uuidRegex = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
+// progressFn receives progress events while the agent runs. kind is one of
+// "session" | "text" | "assistant" | "tool" | "done". Pass nil to disable.
+type progressFn func(kind, text, sessionID string, costUSD float64)
+
+// emit calls onProgress when non-nil, swallowing the nil case.
+func emit(onProgress progressFn, kind, text, sessionID string, cost float64) {
+	if onProgress != nil {
+		onProgress(kind, text, sessionID, cost)
+	}
+}
+
 // executeLLMAgent spawns `claude -p` and consumes the stream-json output.
 // When node.LLMStreamTarget is set the response writer must be a
 // http.Flusher; assistant text deltas are emitted as hyperstream
 // envelopes in real time. The final agentResult exposes cost, duration,
 // session id, stop reason and the full text.
-func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, params map[string]string, w http.ResponseWriter) (*agentResult, error) {
+func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, params map[string]string, w http.ResponseWriter, onProgress progressFn) (*agentResult, error) {
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
 		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
 	}
@@ -202,6 +213,9 @@ func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, par
 	turns := 0
 	maxTurns := node.LLMAgentMaxTurns
 
+	var lastTextFlush time.Time
+	var pendingText strings.Builder
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -217,6 +231,7 @@ func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, par
 		case "system":
 			if evt.SessionID != "" {
 				res.SessionID = evt.SessionID
+				emit(onProgress, "session", "", res.SessionID, res.CostUSD)
 			}
 		case "stream_event":
 			if len(evt.Event) == 0 {
@@ -230,8 +245,14 @@ func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, par
 			case "content_block_delta":
 				if inner.Delta.Type == "text_delta" && inner.Delta.Text != "" {
 					textBuf.WriteString(inner.Delta.Text)
+					pendingText.WriteString(inner.Delta.Text)
 					if textHW != nil {
 						_ = textHW.writeDelta(inner.Delta.Text)
+					}
+					if onProgress != nil && time.Since(lastTextFlush) > 250*time.Millisecond {
+						emit(onProgress, "text", firstLine(pendingText.String()), res.SessionID, res.CostUSD)
+						pendingText.Reset()
+						lastTextFlush = time.Now()
 					}
 				}
 			case "content_block_start":
@@ -260,6 +281,21 @@ func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, par
 					}
 				}
 			}
+			if onProgress != nil && len(evt.Message) > 0 {
+				var msg assistantMessage
+				if err := json.Unmarshal(evt.Message, &msg); err == nil {
+					for _, b := range msg.Content {
+						switch b.Type {
+						case "text":
+							if t := firstLine(b.Text); t != "" {
+								emit(onProgress, "assistant", t, res.SessionID, res.CostUSD)
+							}
+						case "tool_use":
+							emit(onProgress, "tool", "tool: "+b.Name, res.SessionID, res.CostUSD)
+						}
+					}
+				}
+			}
 		case "user":
 			if toolHW != nil && len(evt.Message) > 0 {
 				_ = toolHW.writeDelta("tool_result")
@@ -277,11 +313,16 @@ func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, par
 			if evt.Result != "" && textBuf.Len() == 0 {
 				textBuf.WriteString(evt.Result)
 			}
+			emit(onProgress, "done", res.StopReason, res.SessionID, res.CostUSD)
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		_ = cmd.Wait()
 		return nil, fmt.Errorf("agent stream scan: %w", err)
+	}
+
+	if onProgress != nil && pendingText.Len() > 0 {
+		emit(onProgress, "text", firstLine(pendingText.String()), res.SessionID, res.CostUSD)
 	}
 
 	if err := cmd.Wait(); err != nil {

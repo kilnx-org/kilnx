@@ -31,7 +31,7 @@ Mapped to the `claude` CLI `--allowedTools` flag. Common values: `read`, `write`
 
 | | |
 |---|---|
-| **Spec last touched** | `72e9177` (2026-05-13) |
-| **Source last touched** | `72e9177` (2026-05-13) |
+| **Spec last touched** | `cd7b558` (2026-05-19) |
+| **Source last touched** | `d461e57` (2026-05-19) |
 | **Source files** | `internal/parser/parser.go` |
 

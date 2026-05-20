@@ -32,5 +32,5 @@ Default `append`. Follows hyperstream's swap dispatcher whitelist.
 
 | | |
 |---|---|
-| **Spec last touched** | `72e9177` (2026-05-13) |
+| **Spec last touched** | `cd7b558` (2026-05-19) |
 
