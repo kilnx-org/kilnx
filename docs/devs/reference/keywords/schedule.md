@@ -50,7 +50,7 @@ schedule cleanup-sessions every 1h
 
 | | |
 |---|---|
-| **Spec last touched** | `a1b78ce` (2026-05-19) |
-| **Source last touched** | `d461e57` (2026-05-19) |
+| **Spec last touched** | `36bcf1b` (2026-05-20) |
+| **Source last touched** | `af278bb` (2026-05-20) |
 | **Source files** | `internal/parser/parser.go` |
 

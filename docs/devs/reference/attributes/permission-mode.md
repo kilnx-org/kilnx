@@ -32,5 +32,5 @@ Default `plan` (no side effects until user confirms). `acceptEdits` auto-approve
 
 | | |
 |---|---|
-| **Spec last touched** | `cd7b558` (2026-05-19) |
+| **Spec last touched** | `36bcf1b` (2026-05-20) |
 

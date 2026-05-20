@@ -86,11 +86,12 @@ Generated from `internal/spec/entities.go`. Do not edit by hand.
 | [`required`](attributes/required.md) | Field must have a non-null value. | `model` |
 | [`requires`](attributes/requires.md) | Require authentication or a specific role/permission. | `page`, `action`, `api` |
 | [`reset`](attributes/reset.md) | Path for the password-reset confirmation page. | `auth` |
-| [`respond`](attributes/respond.md) | Return a partial HTML response (htmx fragment) or status code. | `page`, `action`, `fragment`, `api`, `schedule`, `job`, `webhook` |
+| [`respond`](attributes/respond.md) | Return a partial HTML response, a status code, or a file from disk. | `page`, `action`, `fragment`, `api`, `schedule`, `job`, `webhook` |
 | [`resume`](attributes/resume.md) | Resume an existing claude session by UUID (supports `:param`). | `agent` |
 | [`retry`](attributes/retry.md) | Maximum retry attempts before the job is marked failed. | `job` |
 | [`secret`](attributes/secret.md) | Secret key for session cookies and CSRF tokens. | `config` |
 | [`send`](attributes/send.md) | Send an email. | `page`, `action`, `fragment`, `api`, `schedule`, `job`, `webhook` |
+| [`serve-roots`](attributes/serve-roots.md) | Directories from which `respond file` may serve. | `config` |
 | [`show-tools`](attributes/show-tools.md) | Stream tool_use/tool_result frames in addition to assistant text. | `agent` |
 | [`slow_query`](attributes/slow_query.md) | Threshold above which a SQL query is logged as slow. | `log` |
 | [`static`](attributes/static.md) | Filesystem path served as static assets. | `config` |
@@ -104,7 +105,8 @@ Generated from `internal/spec/entities.go`. Do not edit by hand.
 | [`title`](attributes/title.md) | Set the HTML document title. | `page` |
 | [`tools`](attributes/tools.md) | Comma-separated list of tools the agent may use. | `agent` |
 | [`unique`](attributes/unique.md) | Field value must be unique across all rows. | `model` |
-| [`uploads`](attributes/uploads.md) | Filesystem path and max size (MB) for user uploads. | `config` |
+| [`upload-extensions`](attributes/upload-extensions.md) | Extend or replace the upload extension whitelist. | `config` |
+| [`uploads`](attributes/uploads.md) | Filesystem path and max size (MB) for user uploads. Form bindings serialise as JSON array of `/_uploads/...` paths (use `json_each`). | `config` |
 | [`validate`](attributes/validate.md) | Validate input against a model or per-field rules. | `page`, `action`, `fragment`, `api`, `schedule`, `job`, `webhook` |
 | [`visit`](attributes/visit.md) | Navigate to a URL. | `test` |
 | [`workspace-root`](attributes/workspace-root.md) | Filesystem root for agent cwd resolution and tmp dirs. | `config` |

@@ -25,6 +25,8 @@ The `config` block sets values that the runtime reads at startup: app name, data
 - [`secret`](../attributes/secret.md)
 - [`static`](../attributes/static.md)
 - [`uploads`](../attributes/uploads.md)
+- [`upload-extensions`](../attributes/upload-extensions.md)
+- [`serve-roots`](../attributes/serve-roots.md)
 - [`default_language`](../attributes/default_language.md)
 - [`detect_language`](../attributes/detect_language.md)
 - [`cors`](../attributes/cors.md)
@@ -50,11 +52,11 @@ config
 
 ## Provenance
 
-> ⚠ **Implementation touched after spec.** Source code changed on `2026-05-19`, but this entity's spec was last edited on `2026-05-13`. The description may be out of date.
+> ⚠ **Implementation touched after spec.** Source code changed on `2026-05-20`, but this entity's spec was last edited on `2026-05-13`. The description may be out of date.
 
 | | |
 |---|---|
 | **Spec last touched** | `72e9177` (2026-05-13) |
-| **Source last touched** | `d461e57` (2026-05-19) |
+| **Source last touched** | `af278bb` (2026-05-20) |
 | **Source files** | `internal/parser/parser.go` |
 
