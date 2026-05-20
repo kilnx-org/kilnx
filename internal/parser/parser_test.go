@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -1351,5 +1353,85 @@ func TestComputedFieldWithParentheses(t *testing.T) {
 	f := m.Fields[2]
 	if f.ComputedExpr != "(subtotal * tax_rate) + subtotal" {
 		t.Errorf("expected '(subtotal * tax_rate) + subtotal', got %q", f.ComputedExpr)
+	}
+}
+
+func TestParseConfig_UploadExtensions(t *testing.T) {
+	cases := []struct {
+		name         string
+		src          string
+		wantAdd      []string
+		wantRemove   []string
+		wantAll      bool
+		wantParseErr bool
+	}{
+		{
+			name:    "plus tokens",
+			src:     "config\n  upload-extensions: +dxf, +dwg, +step\n",
+			wantAdd: []string{"dxf", "dwg", "step"},
+		},
+		{
+			name:       "mixed plus minus",
+			src:        "config\n  upload-extensions: +dxf, -doc\n",
+			wantAdd:    []string{"dxf"},
+			wantRemove: []string{"doc"},
+		},
+		{
+			name:    "star allows all",
+			src:     "config\n  upload-extensions: *\n",
+			wantAll: true,
+		},
+		{
+			name:         "bare token rejected",
+			src:          "config\n  upload-extensions: pdf, dxf\n",
+			wantParseErr: true,
+		},
+		{
+			name:         "star plus other token rejected",
+			src:          "config\n  upload-extensions: *, +dxf\n",
+			wantParseErr: true,
+		},
+		{
+			name:    "case and dot normalised",
+			src:     "config\n  upload-extensions: +.PDF, +DXF\n",
+			wantAdd: []string{"pdf", "dxf"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tokens := lexer.Tokenize(tc.src)
+			app, err := Parse(tokens, tc.src)
+			if tc.wantParseErr {
+				if err == nil {
+					t.Fatalf("expected parse error, got none (cfg=%+v)", app.Config)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			var gotAdd, gotRemove []string
+			if app.Config != nil {
+				gotAdd = append([]string(nil), app.Config.UploadExtensionsAdd...)
+				gotRemove = append([]string(nil), app.Config.UploadExtensionsRemove...)
+			}
+			sort.Strings(gotAdd)
+			sort.Strings(gotRemove)
+			wantAdd := append([]string(nil), tc.wantAdd...)
+			wantRemove := append([]string(nil), tc.wantRemove...)
+			sort.Strings(wantAdd)
+			sort.Strings(wantRemove)
+			if !reflect.DeepEqual(gotAdd, wantAdd) {
+				t.Errorf("add: got %v want %v", gotAdd, wantAdd)
+			}
+			if !reflect.DeepEqual(gotRemove, wantRemove) {
+				t.Errorf("remove: got %v want %v", gotRemove, wantRemove)
+			}
+			wantAllowAll := tc.wantAll
+			gotAllowAll := app.Config != nil && app.Config.UploadExtensionsAllowAll
+			if gotAllowAll != wantAllowAll {
+				t.Errorf("allowAll: got %v want %v", gotAllowAll, wantAllowAll)
+			}
+		})
 	}
 }
