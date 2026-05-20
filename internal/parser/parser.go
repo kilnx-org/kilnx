@@ -366,6 +366,7 @@ const (
 	NodeGeneratePDF          // generate pdf from template X data Y
 	NodeFetch                // fetch data: GET https://api.example.com/endpoint
 	NodeLLM                  // llm varname: model\n  history: SQL\n  system: prompt
+	NodeRespondFile          // respond file <path> [as <name>] [inline|attachment]
 )
 
 // Node is one statement inside a Page, Action, Schedule, or similar
@@ -423,6 +424,11 @@ type Node struct {
 	LLMAgentShowTools      bool     // for llm agent: emit tool_use/tool_result frames on stream
 	LLMAgentResume         string   // for llm agent: session id to resume (supports :param)
 	LLMAgentProgressBody   []Node   // for llm agent: body of the `on progress` handler
+
+	// respond file fields
+	RespondFilePath        string // raw expr (supports :params), e.g. ":pdf_path"
+	RespondFileName        string // "" = use filepath.Base(path)
+	RespondFileDisposition string // "attachment" (default) or "inline"
 }
 
 // Validation is one field-level rule set inside a `validate` block.
