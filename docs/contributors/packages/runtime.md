@@ -5,11 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/runtime` |
-| **Source last touched** | `281e9d1` (2026-05-20) |
+| **Source last touched** | `c01c7b5` (2026-05-21) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
 
-> **Implementation touched after doc.go.** Source changed on `2026-05-20`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
+> **Implementation touched after doc.go.** Source changed on `2026-05-21`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
