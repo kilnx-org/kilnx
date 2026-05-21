@@ -1571,7 +1571,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request, action par
 				disp = "attachment"
 			}
 			if tx != nil {
-				tx.Commit()
+				_ = tx.Commit()
 			}
 			w.Header().Set("Content-Type", ct)
 			w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=%q", disp, fileName))

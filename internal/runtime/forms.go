@@ -437,17 +437,17 @@ func extractFormData(r *http.Request, config *parser.AppConfig) map[string]strin
 					filePath := filepath.Join(uploadsDir, fileName)
 
 					if err := os.MkdirAll(uploadsDir, 0o750); err != nil {
-						file.Close()
+						_ = file.Close()
 						continue
 					}
 					dst, err := os.Create(filePath)
 					if err != nil {
-						file.Close()
+						_ = file.Close()
 						continue
 					}
-					io.Copy(dst, file)
-					dst.Close()
-					file.Close()
+					_, _ = io.Copy(dst, file)
+					_ = dst.Close()
+					_ = file.Close()
 
 					paths = append(paths, "/_uploads/"+fileName)
 				}
