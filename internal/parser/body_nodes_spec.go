@@ -123,14 +123,26 @@ func init() {
 
 	spec.Register(spec.Entity{
 		Name: "respond", Kind: spec.KindAttribute,
-		Summary:     "Return a partial HTML response (htmx fragment) or status code.",
-		Description: "Without arguments, renders the body's HTML normally. With `fragment <selector>` returns an htmx swap. With `status <code>` returns an explicit HTTP status.",
-		Syntax:      "respond [fragment <selector> | status <code>]",
+		Summary: "Return a partial HTML response, a status code, or a file from disk.",
+		Description: "Three forms:\n\n" +
+			"- Without arguments: renders the body's HTML normally.\n" +
+			"- `fragment <selector>`: returns an htmx swap.\n" +
+			"- `status <code>`: returns an explicit HTTP status.\n" +
+			"- `file <path> [as <name>] [inline | attachment]`: streams a disk file. " +
+			"`<path>` accepts `:param` substitution. Default disposition is `attachment`; " +
+			"`as <name>` overrides the `filename=` portion of `Content-Disposition`. " +
+			"Requires [`serve-roots`](serve-roots.md) in the `config` block listing allowed directories.",
+		Syntax:      "respond [fragment <selector> | status <code> | file <path> [as <name>] [inline|attachment]]",
 		ParentScope: bodyParents,
 		Since:       "0.1.0",
-		Examples: []spec.Example{{Title: "Replace a row via htmx", Code: `action /users/:id/toggle method POST
+		Examples: []spec.Example{
+			{Title: "Replace a row via htmx", Code: `action /users/:id/toggle method POST
   query: UPDATE user SET active = NOT active WHERE id = :id
-  respond fragment ".user-row" query: SELECT * FROM user WHERE id = :id`}},
+  respond fragment ".user-row" query: SELECT * FROM user WHERE id = :id`},
+			{Title: "Serve a generated PDF as download", Code: `action get /review/:id/pdf
+  query: SELECT pdf_path FROM review_job WHERE id = :id
+  respond file :pdf_path as relatorio.pdf`},
+		},
 	})
 
 	spec.Register(spec.Entity{

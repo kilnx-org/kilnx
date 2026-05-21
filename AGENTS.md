@@ -117,7 +117,7 @@ Each section lists the attributes valid inside that parent keyword. An attribute
 | [`on`](docs/devs/reference/attributes/on.md) | Conditional or event handler. | 0.1.0 |
 | [`redirect`](docs/devs/reference/attributes/redirect.md) | Redirect to another URL. | 0.1.0 |
 | [`requires`](docs/devs/reference/attributes/requires.md) | Require authentication or a specific role/permission. | 0.1.0 |
-| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response (htmx fragment) or status code. | 0.1.0 |
+| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response, a status code, or a file from disk. | 0.1.0 |
 | [`send`](docs/devs/reference/attributes/send.md) | Send an email. | 0.1.0 |
 | [`validate`](docs/devs/reference/attributes/validate.md) | Validate input against a model or per-field rules. | 0.1.0 |
 
@@ -149,7 +149,7 @@ Each section lists the attributes valid inside that parent keyword. An attribute
 | [`method`](docs/devs/reference/attributes/method.md) | Restrict the HTTP method for the parent route. | 0.1.0 |
 | [`on`](docs/devs/reference/attributes/on.md) | Conditional or event handler. | 0.1.0 |
 | [`requires`](docs/devs/reference/attributes/requires.md) | Require authentication or a specific role/permission. | 0.1.0 |
-| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response (htmx fragment) or status code. | 0.1.0 |
+| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response, a status code, or a file from disk. | 0.1.0 |
 | [`send`](docs/devs/reference/attributes/send.md) | Send an email. | 0.1.0 |
 | [`validate`](docs/devs/reference/attributes/validate.md) | Validate input against a model or per-field rules. | 0.1.0 |
 
@@ -179,8 +179,10 @@ Each section lists the attributes valid inside that parent keyword. An attribute
 | [`name`](docs/devs/reference/attributes/name.md) | Human-readable application name. | 0.1.0 |
 | [`port`](docs/devs/reference/attributes/port.md) | TCP port to listen on. | 0.1.0 |
 | [`secret`](docs/devs/reference/attributes/secret.md) | Secret key for session cookies and CSRF tokens. | 0.1.0 |
+| [`serve-roots`](docs/devs/reference/attributes/serve-roots.md) | Directories from which `respond file` may serve. | 0.1.5 |
 | [`static`](docs/devs/reference/attributes/static.md) | Filesystem path served as static assets. | 0.1.0 |
-| [`uploads`](docs/devs/reference/attributes/uploads.md) | Filesystem path and max size (MB) for user uploads. | 0.1.0 |
+| [`upload-extensions`](docs/devs/reference/attributes/upload-extensions.md) | Extend or replace the upload extension whitelist. | 0.1.5 |
+| [`uploads`](docs/devs/reference/attributes/uploads.md) | Filesystem path and max size (MB) for user uploads. Form bindings serialise as JSON array of `/_uploads/...` paths (use `json_each`). | 0.1.0 |
 | [`workspace-root`](docs/devs/reference/attributes/workspace-root.md) | Filesystem root for agent cwd resolution and tmp dirs. | 0.1.3 |
 
 #### `fragment`
@@ -193,7 +195,7 @@ Each section lists the attributes valid inside that parent keyword. An attribute
 | [`generate`](docs/devs/reference/attributes/generate.md) | Generate a PDF from a template and a data query. | 0.1.0 |
 | [`html`](docs/devs/reference/attributes/html.md) | Render an inline HTML template block. | 0.1.0 |
 | [`on`](docs/devs/reference/attributes/on.md) | Conditional or event handler. | 0.1.0 |
-| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response (htmx fragment) or status code. | 0.1.0 |
+| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response, a status code, or a file from disk. | 0.1.0 |
 | [`send`](docs/devs/reference/attributes/send.md) | Send an email. | 0.1.0 |
 | [`validate`](docs/devs/reference/attributes/validate.md) | Validate input against a model or per-field rules. | 0.1.0 |
 
@@ -207,7 +209,7 @@ Each section lists the attributes valid inside that parent keyword. An attribute
 | [`generate`](docs/devs/reference/attributes/generate.md) | Generate a PDF from a template and a data query. | 0.1.0 |
 | [`html`](docs/devs/reference/attributes/html.md) | Render an inline HTML template block. | 0.1.0 |
 | [`on`](docs/devs/reference/attributes/on.md) | Conditional or event handler. | 0.1.0 |
-| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response (htmx fragment) or status code. | 0.1.0 |
+| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response, a status code, or a file from disk. | 0.1.0 |
 | [`retry`](docs/devs/reference/attributes/retry.md) | Maximum retry attempts before the job is marked failed. | 0.1.0 |
 | [`send`](docs/devs/reference/attributes/send.md) | Send an email. | 0.1.0 |
 | [`validate`](docs/devs/reference/attributes/validate.md) | Validate input against a model or per-field rules. | 0.1.0 |
@@ -272,7 +274,7 @@ Each section lists the attributes valid inside that parent keyword. An attribute
 | [`on`](docs/devs/reference/attributes/on.md) | Conditional or event handler. | 0.1.0 |
 | [`redirect`](docs/devs/reference/attributes/redirect.md) | Redirect to another URL. | 0.1.0 |
 | [`requires`](docs/devs/reference/attributes/requires.md) | Require authentication or a specific role/permission. | 0.1.0 |
-| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response (htmx fragment) or status code. | 0.1.0 |
+| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response, a status code, or a file from disk. | 0.1.0 |
 | [`send`](docs/devs/reference/attributes/send.md) | Send an email. | 0.1.0 |
 | [`title`](docs/devs/reference/attributes/title.md) | Set the HTML document title. | 0.1.0 |
 | [`validate`](docs/devs/reference/attributes/validate.md) | Validate input against a model or per-field rules. | 0.1.0 |
@@ -295,7 +297,7 @@ Each section lists the attributes valid inside that parent keyword. An attribute
 | [`generate`](docs/devs/reference/attributes/generate.md) | Generate a PDF from a template and a data query. | 0.1.0 |
 | [`html`](docs/devs/reference/attributes/html.md) | Render an inline HTML template block. | 0.1.0 |
 | [`on`](docs/devs/reference/attributes/on.md) | Conditional or event handler. | 0.1.0 |
-| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response (htmx fragment) or status code. | 0.1.0 |
+| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response, a status code, or a file from disk. | 0.1.0 |
 | [`send`](docs/devs/reference/attributes/send.md) | Send an email. | 0.1.0 |
 | [`validate`](docs/devs/reference/attributes/validate.md) | Validate input against a model or per-field rules. | 0.1.0 |
 
@@ -333,13 +335,17 @@ Each section lists the attributes valid inside that parent keyword. An attribute
 | [`generate`](docs/devs/reference/attributes/generate.md) | Generate a PDF from a template and a data query. | 0.1.0 |
 | [`html`](docs/devs/reference/attributes/html.md) | Render an inline HTML template block. | 0.1.0 |
 | [`on`](docs/devs/reference/attributes/on.md) | Conditional or event handler. | 0.1.0 |
-| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response (htmx fragment) or status code. | 0.1.0 |
+| [`respond`](docs/devs/reference/attributes/respond.md) | Return a partial HTML response, a status code, or a file from disk. | 0.1.0 |
 | [`send`](docs/devs/reference/attributes/send.md) | Send an email. | 0.1.0 |
 | [`validate`](docs/devs/reference/attributes/validate.md) | Validate input against a model or per-field rules. | 0.1.0 |
 
 ### What changed by version
 
 Most recent first. Use this to understand the surface area added in each release.
+
+#### 0.1.5
+
+**Attributes**: [`serve-roots`](docs/devs/reference/attributes/serve-roots.md), [`upload-extensions`](docs/devs/reference/attributes/upload-extensions.md)
 
 #### 0.1.4
 

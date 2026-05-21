@@ -1,6 +1,6 @@
 # `respond`
 
-> Return a partial HTML response (htmx fragment) or status code.
+> Return a partial HTML response, a status code, or a file from disk.
 
 | | |
 |---|---|
@@ -10,12 +10,17 @@
 ## Syntax
 
 ```
-respond [fragment <selector> | status <code>]
+respond [fragment <selector> | status <code> | file <path> [as <name>] [inline|attachment]]
 ```
 
 ## Description
 
-Without arguments, renders the body's HTML normally. With `fragment <selector>` returns an htmx swap. With `status <code>` returns an explicit HTTP status.
+Three forms:
+
+- Without arguments: renders the body's HTML normally.
+- `fragment <selector>`: returns an htmx swap.
+- `status <code>`: returns an explicit HTTP status.
+- `file <path> [as <name>] [inline | attachment]`: streams a disk file. `<path>` accepts `:param` substitution. Default disposition is `attachment`; `as <name>` overrides the `filename=` portion of `Content-Disposition`. Requires [`serve-roots`](serve-roots.md) in the `config` block listing allowed directories.
 
 ## Used in
 
@@ -37,13 +42,19 @@ action /users/:id/toggle method POST
   respond fragment ".user-row" query: SELECT * FROM user WHERE id = :id
 ```
 
-## Provenance
+### Serve a generated PDF as download
 
-> ⚠ **Implementation touched after spec.** Source code changed on `2026-05-19`, but this entity's spec was last edited on `2026-05-13`. The description may be out of date.
+```kilnx
+action get /review/:id/pdf
+  query: SELECT pdf_path FROM review_job WHERE id = :id
+  respond file :pdf_path as relatorio.pdf
+```
+
+## Provenance
 
 | | |
 |---|---|
-| **Spec last touched** | `72e9177` (2026-05-13) |
-| **Source last touched** | `d461e57` (2026-05-19) |
+| **Spec last touched** | `18cf488` (2026-05-20) |
+| **Source last touched** | `af278bb` (2026-05-20) |
 | **Source files** | `internal/parser/parser.go` |
 

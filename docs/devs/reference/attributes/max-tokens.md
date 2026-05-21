@@ -28,5 +28,5 @@ max-tokens: <int>
 
 | | |
 |---|---|
-| **Spec last touched** | `cd7b558` (2026-05-19) |
+| **Spec last touched** | `36bcf1b` (2026-05-20) |
 

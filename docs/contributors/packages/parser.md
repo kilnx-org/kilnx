@@ -5,11 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/parser` |
-| **Source last touched** | `cd7b558` (2026-05-19) |
+| **Source last touched** | `a780f04` (2026-05-20) |
 | **Doc last touched** | `4479336` (2026-05-08) |
 
 
-> **Implementation touched after doc.go.** Source changed on `2026-05-19`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
+> **Implementation touched after doc.go.** Source changed on `2026-05-20`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
@@ -95,6 +95,14 @@ type AppConfig struct {
 	DetectLanguage	string		// "header accept-language" or empty
 	CORSOrigins	[]string	// allowed CORS origins (empty = same-origin only)
 	WorkspaceRoot	string		// filesystem root for llm agent cwd resolution (P3)
+
+	// Patch 2 — upload-extensions
+	UploadExtensionsAdd		[]string	// lowercase, no leading "."
+	UploadExtensionsRemove		[]string	// lowercase, no leading "."
+	UploadExtensionsAllowAll	bool		// set when "*" was given alone
+
+	// Patch 3 — serve-roots
+	ServeRoots	[]string	// absolute paths the `respond file` statement may read from
 }
 ```
 
@@ -349,6 +357,11 @@ type Node struct {
 	LLMAgentShowTools	bool		// for llm agent: emit tool_use/tool_result frames on stream
 	LLMAgentResume		string		// for llm agent: session id to resume (supports :param)
 	LLMAgentProgressBody	[]Node		// for llm agent: body of the `on progress` handler
+
+	// respond file fields
+	RespondFilePath		string	// raw expr (supports :params), e.g. ":pdf_path"
+	RespondFileName		string	// "" = use filepath.Base(path)
+	RespondFileDisposition	string	// "attachment" (default) or "inline"
 }
 ```
 
@@ -610,6 +623,14 @@ func firstRoleValue(clauses []RequiresClause) string
 
 firstRoleValue returns the first role/auth string from clauses for backward compat.
 
+### `indexWord`
+
+```go
+func indexWord(fields []string, w string) int
+```
+
+indexWord returns the index of the first element equal to w, or -1.
+
 ### `init`
 
 ```go
@@ -652,6 +673,16 @@ parseRateLimitClause parses "10/hour per user" into a RequiresClause.
 ```go
 func parseTestStep(line string) TestStep
 ```
+### `parseUploadExtensionsTokens`
+
+```go
+func parseUploadExtensionsTokens(raw string) (add, remove []string, allowAll bool, err error)
+```
+
+parseUploadExtensionsTokens parses the CSV tokens of `upload-extensions:`.
+Returns add, remove, allowAll, and a parse error on bare tokens or
+"*" mixed with any other token.
+
 ### `requiresClauseEnd`
 
 ```go

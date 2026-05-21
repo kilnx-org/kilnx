@@ -31,7 +31,7 @@ Reserved syntax in v0.1.3. Analyzer emits a `not yet implemented` warning; runti
 
 | | |
 |---|---|
-| **Spec last touched** | `cd7b558` (2026-05-19) |
-| **Source last touched** | `d461e57` (2026-05-19) |
+| **Spec last touched** | `36bcf1b` (2026-05-20) |
+| **Source last touched** | `af278bb` (2026-05-20) |
 | **Source files** | `internal/parser/parser.go` |
 

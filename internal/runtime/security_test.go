@@ -108,7 +108,7 @@ func TestIsAllowedUploadExt(t *testing.T) {
 		{"", false},
 	}
 	for _, tc := range tests {
-		got := isAllowedUploadExt(tc.filename)
+		got := isAllowedUploadExt(tc.filename, nil)
 		if got != tc.expected {
 			t.Errorf("isAllowedUploadExt(%q) = %v, want %v", tc.filename, got, tc.expected)
 		}

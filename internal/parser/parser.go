@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -75,6 +76,14 @@ type AppConfig struct {
 	DetectLanguage  string   // "header accept-language" or empty
 	CORSOrigins     []string // allowed CORS origins (empty = same-origin only)
 	WorkspaceRoot   string   // filesystem root for llm agent cwd resolution (P3)
+
+	// Patch 2 — upload-extensions
+	UploadExtensionsAdd      []string // lowercase, no leading "."
+	UploadExtensionsRemove   []string // lowercase, no leading "."
+	UploadExtensionsAllowAll bool     // set when "*" was given alone
+
+	// Patch 3 — serve-roots
+	ServeRoots []string // absolute paths the `respond file` statement may read from
 }
 
 // LogConfig configures runtime logging behaviour from a `log` block.
@@ -358,6 +367,7 @@ const (
 	NodeGeneratePDF          // generate pdf from template X data Y
 	NodeFetch                // fetch data: GET https://api.example.com/endpoint
 	NodeLLM                  // llm varname: model\n  history: SQL\n  system: prompt
+	NodeRespondFile          // respond file <path> [as <name>] [inline|attachment]
 )
 
 // Node is one statement inside a Page, Action, Schedule, or similar
@@ -415,6 +425,11 @@ type Node struct {
 	LLMAgentShowTools      bool     // for llm agent: emit tool_use/tool_result frames on stream
 	LLMAgentResume         string   // for llm agent: session id to resume (supports :param)
 	LLMAgentProgressBody   []Node   // for llm agent: body of the `on progress` handler
+
+	// respond file fields
+	RespondFilePath        string // raw expr (supports :params), e.g. ":pdf_path"
+	RespondFileName        string // "" = use filepath.Base(path)
+	RespondFileDisposition string // "attachment" (default) or "inline"
 }
 
 // Validation is one field-level rule set inside a `validate` block.
@@ -1737,6 +1752,43 @@ func (p *parserState) parseRespondNode() Node {
 		if p.current().Type == lexer.TokenNumber {
 			fmt.Sscanf(p.advance().Value, "%d", &node.StatusCode)
 		}
+		p.skipToEndOfLine()
+		return node
+	}
+
+	// "respond file <path> [as <name>] [inline | attachment]"
+	if (p.current().Type == lexer.TokenIdentifier || p.current().Type == lexer.TokenKeyword) && p.current().Value == "file" {
+		p.advance()
+		node.Type = NodeRespondFile
+		node.RespondFileDisposition = "attachment"
+
+		// Extract the raw text after "file" from the source line.
+		rest := ""
+		if respondLine >= 1 && respondLine <= len(p.lines) {
+			line := p.lines[respondLine-1]
+			idx := strings.Index(line, "file")
+			if idx >= 0 {
+				rest = strings.TrimSpace(line[idx+len("file"):])
+			}
+		}
+
+		fields := strings.Fields(rest)
+		// Disposition token (must be the last whitespace-separated word, if present).
+		if n := len(fields); n > 0 {
+			last := fields[n-1]
+			if last == "inline" || last == "attachment" {
+				node.RespondFileDisposition = last
+				fields = fields[:n-1]
+			}
+		}
+
+		// Optional "as <name>"
+		if i := indexWord(fields, "as"); i >= 0 && i+1 < len(fields) {
+			node.RespondFileName = strings.Join(fields[i+1:], " ")
+			fields = fields[:i]
+		}
+
+		node.RespondFilePath = strings.TrimSpace(strings.Join(fields, " "))
 		p.skipToEndOfLine()
 		return node
 	}
@@ -3169,6 +3221,46 @@ func (p *parserState) parseTranslations() map[string]map[string]string {
 	return result
 }
 
+// parseUploadExtensionsTokens parses the CSV tokens of `upload-extensions:`.
+// Returns add, remove, allowAll, and a parse error on bare tokens or
+// "*" mixed with any other token.
+func parseUploadExtensionsTokens(raw string) (add, remove []string, allowAll bool, err error) {
+	tokens := strings.Split(raw, ",")
+	hasStar := false
+	hasOther := false
+	for _, t := range tokens {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if t == "*" {
+			hasStar = true
+			continue
+		}
+		hasOther = true
+		switch {
+		case strings.HasPrefix(t, "+"):
+			ext := strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(t, "+"), "."))
+			if ext == "" {
+				return nil, nil, false, fmt.Errorf("upload-extensions: empty extension after '+'")
+			}
+			add = append(add, ext)
+		case strings.HasPrefix(t, "-"):
+			ext := strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(t, "-"), "."))
+			if ext == "" {
+				return nil, nil, false, fmt.Errorf("upload-extensions: empty extension after '-'")
+			}
+			remove = append(remove, ext)
+		default:
+			return nil, nil, false, fmt.Errorf("upload-extensions: expected +ext, -ext, or *, got %q", t)
+		}
+	}
+	if hasStar && hasOther {
+		return nil, nil, false, fmt.Errorf("upload-extensions: '*' cannot be combined with other tokens")
+	}
+	return add, remove, hasStar, nil
+}
+
 // parseConfig parses:
 //
 //	config
@@ -3266,6 +3358,29 @@ func (p *parserState) parseConfig() AppConfig {
 				}
 			case "workspace-root", "workspace_root":
 				cfg.WorkspaceRoot = strings.Trim(rawVal, "\"' ")
+			case "upload-extensions", "upload_extensions":
+				add, remove, allowAll, parseErr := parseUploadExtensionsTokens(rawVal)
+				if parseErr != nil {
+					p.addError(parseErr)
+				} else {
+					cfg.UploadExtensionsAdd = add
+					cfg.UploadExtensionsRemove = remove
+					cfg.UploadExtensionsAllowAll = allowAll
+				}
+			case "serve-roots", "serve_roots":
+				wd, _ := os.Getwd()
+				for _, token := range strings.Split(rawVal, ",") {
+					token = strings.Trim(strings.TrimSpace(token), "\"' ")
+					if token == "" {
+						continue
+					}
+					abs := token
+					if !filepath.IsAbs(abs) {
+						abs = filepath.Join(wd, abs)
+					}
+					abs = filepath.Clean(abs)
+					cfg.ServeRoots = append(cfg.ServeRoots, abs)
+				}
 			}
 
 			p.skipToEndOfLine()
@@ -3349,6 +3464,16 @@ func (p *parserState) parseBroadcastNode() Node {
 
 	p.skipToEndOfLine()
 	return node
+}
+
+// indexWord returns the index of the first element equal to w, or -1.
+func indexWord(fields []string, w string) int {
+	for i, f := range fields {
+		if f == w {
+			return i
+		}
+	}
+	return -1
 }
 
 // resolveEnvValue handles "env VAR_NAME default VALUE" syntax.

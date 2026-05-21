@@ -5,11 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/analyzer` |
-| **Source last touched** | `5775a72` (2026-05-14) |
+| **Source last touched** | `bb99256` (2026-05-20) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
 
-> **Implementation touched after doc.go.** Source changed on `2026-05-14`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
+> **Implementation touched after doc.go.** Source changed on `2026-05-20`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
@@ -419,6 +419,17 @@ func checkPasswordExposure(app *parser.App, schema *Schema) []Diagnostic
 
 checkPasswordExposure warns when queries in public-facing endpoints
 select password fields from the auth table.
+
+### `checkRespondFileServeRoots`
+
+```go
+func checkRespondFileServeRoots(app *parser.App) []Diagnostic
+```
+
+checkRespondFileServeRoots emits an error if any body node uses
+NodeRespondFile but serve-roots is not configured. Without serve-roots
+every respond-file call is rejected at runtime (fail-safe), so this
+catches the misconfiguration at analysis time.
 
 ### `checkSQLCustomFieldRefs`
 

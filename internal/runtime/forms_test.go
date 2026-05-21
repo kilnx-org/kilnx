@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"bytes"
+	"encoding/json"
 	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -58,11 +60,15 @@ func TestExtractFormData_MultipartWithFileUpload(t *testing.T) {
 	if data["document"] == "" {
 		t.Fatal("expected document path in data")
 	}
-	if !strings.HasPrefix(data["document"], "/_uploads/") {
-		t.Errorf("expected uploaded document path to start with /_uploads/, got %q", data["document"])
+	var docPaths []string
+	if err := json.Unmarshal([]byte(data["document"]), &docPaths); err != nil {
+		t.Fatalf("expected JSON array for document, got %q: %v", data["document"], err)
+	}
+	if len(docPaths) != 1 || !strings.HasPrefix(docPaths[0], "/_uploads/") {
+		t.Errorf("expected 1 /_uploads/ path, got %v", docPaths)
 	}
 	// Verify file exists
-	filePath := filepath.Join(uploadDir, strings.TrimPrefix(data["document"], "/_uploads/"))
+	filePath := filepath.Join(uploadDir, strings.TrimPrefix(docPaths[0], "/_uploads/"))
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		t.Errorf("uploaded file does not exist at %s", filePath)
 	}
@@ -79,8 +85,12 @@ func TestExtractFormData_MultipartDisallowedExt(t *testing.T) {
 	req.Header.Set("Content-Type", w.FormDataContentType())
 
 	data := extractFormData(req, nil)
-	if data["document"] != "" {
-		t.Errorf("expected disallowed extension to be rejected, got %q", data["document"])
+	var paths []string
+	if err := json.Unmarshal([]byte(data["document"]), &paths); err != nil {
+		t.Fatalf("expected JSON array, got %q: %v", data["document"], err)
+	}
+	if len(paths) != 0 {
+		t.Errorf("expected disallowed extension to be rejected (empty array), got %v", paths)
 	}
 }
 
@@ -127,5 +137,132 @@ func TestExtractFormData_MultipartParseError(t *testing.T) {
 	data := extractFormData(req, nil)
 	if data == nil {
 		t.Error("expected empty map, not nil")
+	}
+}
+
+func TestExtractFormData_SingleFile_StillJSONArray(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := &parser.AppConfig{UploadsDir: tmp, UploadsMaxMB: 32}
+	req := newMultipartRequest(t, map[string][]string{
+		"avatar": {"me.png|content"},
+	})
+	data := extractFormData(req, cfg)
+	raw := data["avatar"]
+	var paths []string
+	if err := json.Unmarshal([]byte(raw), &paths); err != nil {
+		t.Fatalf("expected JSON array for single file, got %q", raw)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("want 1 path, got %d", len(paths))
+	}
+}
+
+func newMultipartRequest(t *testing.T, files map[string][]string) *http.Request {
+	t.Helper()
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	for field, entries := range files {
+		for _, entry := range entries {
+			// entry is "<filename>|<content>"
+			parts := strings.SplitN(entry, "|", 2)
+			fw, err := w.CreateFormFile(field, parts[0])
+			if err != nil {
+				t.Fatalf("CreateFormFile: %v", err)
+			}
+			fw.Write([]byte(parts[1]))
+		}
+	}
+	w.Close()
+	req, _ := http.NewRequest("POST", "/", body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	return req
+}
+
+func TestExtractFormData_MultiFile_ReturnsJSONArray(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := &parser.AppConfig{UploadsDir: tmp, UploadsMaxMB: 32}
+	req := newMultipartRequest(t, map[string][]string{
+		"files": {"a.pdf|alpha", "b.pdf|beta", "c.pdf|gamma"},
+	})
+	data := extractFormData(req, cfg)
+	raw, ok := data["files"]
+	if !ok {
+		t.Fatalf("expected files binding, got %#v", data)
+	}
+	var paths []string
+	if err := json.Unmarshal([]byte(raw), &paths); err != nil {
+		t.Fatalf("expected JSON array, got %q (err %v)", raw, err)
+	}
+	if len(paths) != 3 {
+		t.Fatalf("expected 3 paths, got %d (%v)", len(paths), paths)
+	}
+	for _, p := range paths {
+		if !strings.HasPrefix(p, "/_uploads/") {
+			t.Fatalf("expected /_uploads/ prefix, got %q", p)
+		}
+	}
+}
+
+func TestExtractFormData_RejectedFileSkippedSurvivorsKept(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := &parser.AppConfig{UploadsDir: tmp, UploadsMaxMB: 32}
+	req := newMultipartRequest(t, map[string][]string{
+		"files": {"good.pdf|ok", "bad.exe|nope", "ok2.png|ok"},
+	})
+	data := extractFormData(req, cfg)
+	var paths []string
+	if err := json.Unmarshal([]byte(data["files"]), &paths); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("want 2 surviving paths, got %d (%v)", len(paths), paths)
+	}
+}
+
+func TestIsAllowedUploadExt_ConfigOverrides(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  *parser.AppConfig
+		file string
+		want bool
+	}{
+		{"default allows pdf", nil, "report.pdf", true},
+		{"default rejects dxf", nil, "drawing.dxf", false},
+		{
+			"add dxf allows it",
+			&parser.AppConfig{UploadExtensionsAdd: []string{"dxf"}},
+			"drawing.dxf", true,
+		},
+		{
+			"remove pdf rejects it",
+			&parser.AppConfig{UploadExtensionsRemove: []string{"pdf"}},
+			"report.pdf", false,
+		},
+		{
+			"allowAll lets exe through",
+			&parser.AppConfig{UploadExtensionsAllowAll: true},
+			"installer.exe", true,
+		},
+		{
+			"remove wins over add",
+			&parser.AppConfig{
+				UploadExtensionsAdd:    []string{"pdf"},
+				UploadExtensionsRemove: []string{"pdf"},
+			},
+			"x.pdf", false,
+		},
+		{
+			"empty extension never allowed even with star",
+			&parser.AppConfig{UploadExtensionsAllowAll: true},
+			"noext", false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isAllowedUploadExt(tc.file, tc.cfg)
+			if got != tc.want {
+				t.Errorf("got %v want %v", got, tc.want)
+			}
+		})
 	}
 }

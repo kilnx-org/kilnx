@@ -27,12 +27,26 @@ var allowedUploadExts = map[string]bool{
 	"csv": true, "zip": true,
 }
 
-func isAllowedUploadExt(filename string) bool {
-	ext := strings.ToLower(filepath.Ext(filename))
+func isAllowedUploadExt(filename string, cfg *parser.AppConfig) bool {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(filename), "."))
 	if ext == "" {
 		return false
 	}
-	ext = ext[1:] // remove leading dot
+	if cfg != nil {
+		if cfg.UploadExtensionsAllowAll {
+			return true
+		}
+		for _, r := range cfg.UploadExtensionsRemove {
+			if r == ext {
+				return false
+			}
+		}
+		for _, a := range cfg.UploadExtensionsAdd {
+			if a == ext {
+				return true
+			}
+		}
+	}
 	return allowedUploadExts[ext]
 }
 
@@ -405,41 +419,40 @@ func extractFormData(r *http.Request, config *parser.AppConfig) map[string]strin
 			}
 			// Handle file uploads
 			for key, fileHeaders := range r.MultipartForm.File {
-				if len(fileHeaders) > 0 {
-					if fileHeaders[0].Filename == "" {
+				paths := make([]string, 0, len(fileHeaders))
+				for _, fh := range fileHeaders {
+					if fh.Filename == "" {
 						continue
 					}
-					// Validate file extension against whitelist
-					if !isAllowedUploadExt(fileHeaders[0].Filename) {
-						fmt.Fprintf(os.Stderr, "kilnx: rejected upload of disallowed file type: %s\n", fileHeaders[0].Filename)
+					if !isAllowedUploadExt(fh.Filename, config) {
+						fmt.Fprintf(os.Stderr, "kilnx: rejected upload of disallowed file type: %s\n", fh.Filename)
 						continue
 					}
-					file, err := fileHeaders[0].Open()
+					file, err := fh.Open()
 					if err != nil {
 						continue
 					}
-					defer file.Close()
-
-					// Sanitize filename to prevent path traversal
-					safeName := filepath.Base(fileHeaders[0].Filename)
+					safeName := filepath.Base(fh.Filename)
 					fileName := fmt.Sprintf("%d_%s", time.Now().UnixNano(), safeName)
 					filePath := filepath.Join(uploadsDir, fileName)
 
-					// Create uploads directory if needed
 					if err := os.MkdirAll(uploadsDir, 0o750); err != nil {
+						_ = file.Close()
 						continue
 					}
-
 					dst, err := os.Create(filePath)
 					if err != nil {
+						_ = file.Close()
 						continue
 					}
-					defer dst.Close()
-					io.Copy(dst, file)
+					_, _ = io.Copy(dst, file)
+					_ = dst.Close()
+					_ = file.Close()
 
-					// Store the web-accessible path
-					data[key] = "/_uploads/" + fileName
+					paths = append(paths, "/_uploads/"+fileName)
 				}
+				buf, _ := json.Marshal(paths)
+				data[key] = string(buf)
 			}
 		}
 	} else {

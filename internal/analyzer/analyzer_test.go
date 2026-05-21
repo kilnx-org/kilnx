@@ -2131,3 +2131,57 @@ func TestAnalyze_IndexDuplicateGroup(t *testing.T) {
 		t.Fatalf("expected duplicate-index error, got: %+v", diags)
 	}
 }
+
+func TestAnalyzer_UploadExtensionsStarWarning(t *testing.T) {
+	app := &parser.App{
+		Config: &parser.AppConfig{UploadExtensionsAllowAll: true},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "warning" && strings.Contains(d.Message, "upload-extensions") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected upload-extensions star warning, got %v", diags)
+	}
+}
+
+func TestAnalyzer_RespondFileRequiresServeRoots(t *testing.T) {
+	app := &parser.App{
+		Config: &parser.AppConfig{},
+		Actions: []parser.Page{{
+			Method: "POST", Path: "/x",
+			Body: []parser.Node{{Type: parser.NodeRespondFile, RespondFilePath: ":p"}},
+		}},
+	}
+	diags := Analyze(app)
+	found := false
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "serve-roots") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected serve-roots error, got %v", diags)
+	}
+}
+
+func TestAnalyzer_RespondFileWithServeRootsClean(t *testing.T) {
+	app := &parser.App{
+		Config: &parser.AppConfig{ServeRoots: []string{"/srv/x"}},
+		Actions: []parser.Page{{
+			Method: "POST", Path: "/x",
+			Body: []parser.Node{{Type: parser.NodeRespondFile, RespondFilePath: ":p"}},
+		}},
+	}
+	diags := Analyze(app)
+	for _, d := range diags {
+		if d.Level == "error" && strings.Contains(d.Message, "serve-roots") {
+			t.Fatalf("did not expect serve-roots error, got %v", diags)
+		}
+	}
+}

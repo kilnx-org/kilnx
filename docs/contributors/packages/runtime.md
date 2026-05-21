@@ -5,11 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/runtime` |
-| **Source last touched** | `d050f4c` (2026-05-19) |
+| **Source last touched** | `c01c7b5` (2026-05-21) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
 
-> **Implementation touched after doc.go.** Source changed on `2026-05-19`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
+> **Implementation touched after doc.go.** Source changed on `2026-05-21`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
@@ -55,6 +55,7 @@ kilnx CLI.
 | [`ratelimit.go`](../../../internal/runtime/ratelimit.go) | _no file-level doc_ |
 | [`render.go`](../../../internal/runtime/render.go) | _no file-level doc_ |
 | [`scheduler.go`](../../../internal/runtime/scheduler.go) | _no file-level doc_ |
+| [`serve_roots.go`](../../../internal/runtime/serve_roots.go) | _no file-level doc_ |
 | [`server.go`](../../../internal/runtime/server.go) | _no file-level doc_ |
 | [`slots.go`](../../../internal/runtime/slots.go) | _no file-level doc_ |
 | [`stream.go`](../../../internal/runtime/stream.go) | _no file-level doc_ |
@@ -1375,7 +1376,7 @@ isAllowedURLScheme returns true if the URL uses an allowed scheme.
 ### `isAllowedUploadExt`
 
 ```go
-func isAllowedUploadExt(filename string) bool
+func isAllowedUploadExt(filename string, cfg *parser.AppConfig) bool
 ```
 ### `isBareIdent`
 
@@ -1573,6 +1574,17 @@ func parseSlotName(argStr string) string
 
 parseSlotName parses a slot tag's argument string and returns the value of
 `name="X"` (or empty string for the default slot).
+
+### `pathInsideAnyRoot`
+
+```go
+func pathInsideAnyRoot(abs string, roots []string) bool
+```
+
+pathInsideAnyRoot reports whether abs is equal to or inside one of roots.
+abs and each root must already be absolute and Clean-ed.
+filepath.Rel resolves ".." syntactically, so a traversal attempt like
+"/srv/reports/../etc/passwd" becomes "../etc/passwd" and is rejected.
 
 ### `printRoutes`
 
