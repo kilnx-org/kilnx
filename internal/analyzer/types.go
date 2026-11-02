@@ -501,6 +501,9 @@ var reservedInterpolations = map[string]bool{
 	"page":  true,
 	"kilnx": true,
 	"t":     true,
+	// {params.key} reads the request query string (e.g. ?token=... on
+	// /reset-password); the runtime resolves it in render.resolveValue.
+	"params": true,
 }
 
 // checkTemplateInterpolations validates {queryName.field} references inside

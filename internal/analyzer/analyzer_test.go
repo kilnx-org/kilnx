@@ -1626,6 +1626,22 @@ func TestCheckTemplateInterpolations_UnknownQuery(t *testing.T) {
 	}
 }
 
+func TestCheckTemplateInterpolations_ParamsAllowed(t *testing.T) {
+	app := &parser.App{
+		Pages: []parser.Page{{
+			Path: "/reset-password",
+			Body: []parser.Node{
+				{Type: parser.NodeHTML, HTMLContent: `<form action="/reset-password?token={params.token}"></form>`},
+			},
+		}},
+	}
+	for _, d := range Analyze(app) {
+		if strings.Contains(d.Message, "params") {
+			t.Errorf("{params.token} should be allowed, got: %v", d)
+		}
+	}
+}
+
 func TestCheckTemplateInterpolations_ReservedNames(t *testing.T) {
 	app := &parser.App{
 		Models: []parser.Model{{
