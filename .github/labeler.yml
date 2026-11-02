@@ -42,8 +42,6 @@ area/docs:
   - changed-files:
       - any-glob-to-any-file:
           - docs/**
-          - GRAMMAR.md
-          - FEATURES.md
           - PRINCIPLES.md
           - CONTRIBUTING.md
           - README.md

@@ -10,6 +10,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 - Multi-file form upload bindings now serialise as a JSON array of `/_uploads/...` paths, including single-file uploads. Migrate single-file consumers via `SELECT value FROM json_each(:files) LIMIT 1`. See `docs/devs/reference/attributes/uploads.md`.
 
+### Fixed
+- `/register` no longer fails with "Could not create account" when the auth model has no `name` field. The handler only writes `name` when the model declares it.
+- `{params.<key>}` (request query string) is accepted by the analyzer in templates. The runtime already resolved it, but the analyzer rejected it as an unknown query, which made it impossible to carry `?token=` through a `/reset-password` page or show `?error=` on auth pages.
+- Every `{csrf}` inside an `{{each}}` block now gets its own token. Tokens were minted before the loop expanded, so all rows shared one single-use token and only the first htmx click on a list (delete, toggle) passed CSRF validation.
+- README example, quickstart and tutorials compile and run again (they predated the user-declared auth pages requirement, and the tutorials used template syntax that never existed). CI now compiles the README example and each tutorial's final source.
+
 ### Added
 
 - `upload-extensions:` config attribute with `+ext`, `-ext`, `*` operators to extend or restrict the default upload whitelist. `*` triggers an analyzer warning.
