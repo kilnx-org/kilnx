@@ -21,8 +21,11 @@ coverage.out
 *.cover
 *.cov
 
-# agent artifacts
+# Agent artifacts
+.superpowers/
 .claude/
 CLAUDE.md
-docs/superpowers/
 **/settings.local.json
+**/scheduled_tasks.lock
+.apache-steward/
+docs/superpowers/
