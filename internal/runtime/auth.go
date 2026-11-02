@@ -756,8 +756,16 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		name = strings.Split(identity, "@")[0]
 	}
 
-	sql := fmt.Sprintf("INSERT INTO \"%s\" (name, \"%s\", \"%s\") VALUES (:name, :identity, :password)",
-		sanitizeIdentifier(app.Auth.Table), sanitizeIdentifier(app.Auth.Identity), sanitizeIdentifier(app.Auth.Password))
+	// Only write `name` when the user model declares it; otherwise a minimal
+	// model (identity + password) would fail every signup.
+	table := sanitizeIdentifier(app.Auth.Table)
+	columns := fmt.Sprintf("\"%s\", \"%s\"", sanitizeIdentifier(app.Auth.Identity), sanitizeIdentifier(app.Auth.Password))
+	values := ":identity, :password"
+	if modelHasField(findModel(app.Models, app.Auth.Table), "name") {
+		columns = "name, " + columns
+		values = ":name, " + values
+	}
+	sql := fmt.Sprintf("INSERT INTO \"%s\" (%s) VALUES (%s)", table, columns, values)
 	err = s.db.ExecWithParams(sql, map[string]string{
 		"name":     name,
 		"identity": identity,
@@ -777,7 +785,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 // redirectWithError issues a 303 See Other to `path?error=...` so the
 // user-declared page can re-render with the error visible via a query
-// parameter (`{error|default:""}`). Keeps POST handlers in Go while
+// parameter (`{params.error}`). Keeps POST handlers in Go while
 // letting the UI live entirely in .kilnx land.
 func redirectWithError(w http.ResponseWriter, r *http.Request, path, msg string) {
 	sep := "?"
