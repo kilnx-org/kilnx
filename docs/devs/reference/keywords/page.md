@@ -66,6 +66,6 @@ page /dashboard layout app title "Dashboard" requires auth
 | | |
 |---|---|
 | **Spec last touched** | `5da8498` (2026-05-08) |
-| **Source last touched** | `d555367` (2026-11-02) |
+| **Source last touched** | `abd91de` (2026-11-02) |
 | **Source files** | `internal/parser/parser.go`, `internal/runtime/render.go` |
 

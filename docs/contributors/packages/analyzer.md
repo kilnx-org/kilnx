@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/analyzer` |
-| **Source last touched** | `a9b3fc2` (2026-11-02) |
+| **Source last touched** | `abd91de` (2026-11-02) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
 
