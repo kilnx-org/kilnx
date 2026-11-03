@@ -206,7 +206,12 @@ func executeLLMAgent(ctx context.Context, node parser.Node, app *parser.App, par
 	}()
 
 	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	// Claude streaming JSON events can be very large: a single tool_result
+	// holding a big Read or Glob output, or a final result event containing
+	// the full assistant transcript, regularly exceeds a few MB on real
+	// workloads. Raise to 64MB so the scanner does not bail with
+	// "token too long" before the agent finishes.
+	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024*1024)
 
 	res := &agentResult{}
 	textBuf := &strings.Builder{}

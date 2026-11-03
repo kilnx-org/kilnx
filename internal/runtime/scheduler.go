@@ -420,6 +420,16 @@ func (s *Server) executeNodes(nodes []parser.Node, params map[string]string) err
 					name = "_last"
 				}
 				ctx.queries[name] = rows
+				// Mirror action behavior (server.go NodeQuery): expose SELECT
+				// results to subsequent nodes via dotted params so `system:`
+				// text and downstream UPDATEs can interpolate `:name.field`.
+				// Without this, jobs cannot reference INSERT/SELECT outputs
+				// in agent prompts or UPDATE WHERE clauses.
+				for _, row := range rows {
+					for k, v := range row {
+						params[name+"."+k] = v
+					}
+				}
 			} else {
 				err := s.db.ExecWithParams(sql, params)
 				if err != nil {
