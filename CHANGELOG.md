@@ -6,15 +6,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ## [Unreleased]
 
-### Breaking
-
-- Multi-file form upload bindings now serialise as a JSON array of `/_uploads/...` paths, including single-file uploads. Migrate single-file consumers via `SELECT value FROM json_each(:files) LIMIT 1`. See `docs/devs/reference/attributes/uploads.md`.
+## [0.1.5] - 2026-11-03
 
 ### Fixed
 - `/register` no longer fails with "Could not create account" when the auth model has no `name` field. The handler only writes `name` when the model declares it.
 - `{params.<key>}` (request query string) is accepted by the analyzer in templates. The runtime already resolved it, but the analyzer rejected it as an unknown query, which made it impossible to carry `?token=` through a `/reset-password` page or show `?error=` on auth pages.
 - Every `{csrf}` inside an `{{each}}` block now gets its own token. Tokens were minted before the loop expanded, so all rows shared one single-use token and only the first htmx click on a list (delete, toggle) passed CSRF validation.
 - README example, quickstart and tutorials compile and run again (they predated the user-declared auth pages requirement, and the tutorials used template syntax that never existed). CI now compiles the README example and each tutorial's final source.
+
+## [0.1.4] - 2026-05-25
+
+### Breaking
+
+- Multi-file form upload bindings now serialise as a JSON array of `/_uploads/...` paths, including single-file uploads. Migrate single-file consumers via `SELECT value FROM json_each(:files) LIMIT 1`. See `docs/devs/reference/attributes/uploads.md`.
 
 ### Added
 
@@ -116,7 +120,10 @@ All 14 hardening items from the pre-release security review landed in this versi
 - `.kilnx` import sandbox: extension check, project root containment, depth limit
 - Sensitive field redaction in logs and error output
 
-[Unreleased]: https://github.com/kilnx-org/kilnx/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/kilnx-org/kilnx/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/kilnx-org/kilnx/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/kilnx-org/kilnx/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/kilnx-org/kilnx/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/kilnx-org/kilnx/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/kilnx-org/kilnx/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kilnx-org/kilnx/releases/tag/v0.1.0
