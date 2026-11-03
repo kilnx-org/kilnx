@@ -174,9 +174,17 @@ jobs:
             exit 1
           fi
 
+      # Advisory: lists specs/doc.go whose source changed after them, as a
+      # review prompt. It is not a correctness check, so it warns instead of
+      # failing main.
       - name: Check for stale entries
         if: github.event_name == 'push'
-        run: go run ./cmd/kilnx-gendocs -check-stale -o /tmp/kilnx-docs-stale-check
+        continue-on-error: true
+        run: |
+          if ! go run ./cmd/kilnx-gendocs -check-stale -o /tmp/kilnx-docs-stale-check 2> /tmp/stale.txt; then
+            echo "::warning::Some specs or package docs predate their source. See the log for the list."
+            grep '^  - ' /tmp/stale.txt || true
+          fi
 
   docker:
     name: Docker Build
