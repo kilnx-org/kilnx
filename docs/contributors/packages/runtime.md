@@ -5,11 +5,11 @@
 | | |
 |---|---|
 | **Import path** | `github.com/kilnx-org/kilnx/internal/runtime` |
-| **Source last touched** | `c01c7b5` (2026-05-21) |
+| **Source last touched** | `d555367` (2026-11-02) |
 | **Doc last touched** | `5da8498` (2026-05-08) |
 
 
-> **Implementation touched after doc.go.** Source changed on `2026-05-21`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
+> **Implementation touched after doc.go.** Source changed on `2026-11-02`, but `doc.go` was last edited on `2026-05-08`. The summary above may be out of date.
 
 ## Overview
 
@@ -1515,6 +1515,14 @@ func mergeConsecutiveRoles(msgs []anthropic.MessageParam) []anthropic.MessagePar
 mergeConsecutiveRoles collapses consecutive messages with the same role
 to satisfy Anthropic's alternating user/assistant requirement.
 
+### `modelHasField`
+
+```go
+func modelHasField(m *parser.Model, name string) bool
+```
+
+modelHasField reports whether m declares a field with the given name.
+
 ### `nextCronOccurrence`
 
 ```go
@@ -1625,7 +1633,7 @@ func redirectWithError(w http.ResponseWriter, r *http.Request, path, msg string)
 
 redirectWithError issues a 303 See Other to `path?error=...` so the
 user-declared page can re-render with the error visible via a query
-parameter (`{error|default:""}`). Keeps POST handlers in Go while
+parameter (`{params.error}`). Keeps POST handlers in Go while
 letting the UI live entirely in .kilnx land.
 
 ### `render404`

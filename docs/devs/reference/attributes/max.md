@@ -34,6 +34,6 @@ Mirror of `min`. For string fields, this also influences column size where appli
 | | |
 |---|---|
 | **Spec last touched** | `5da8498` (2026-05-08) |
-| **Source last touched** | `c01c7b5` (2026-05-21) |
+| **Source last touched** | `9276716` (2026-05-21) |
 | **Source files** | `internal/parser/parser.go`, `internal/runtime/forms.go` |
 

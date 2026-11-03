@@ -1853,6 +1853,19 @@ func findModel(models []parser.Model, name string) *parser.Model {
 	return nil
 }
 
+// modelHasField reports whether m declares a field with the given name.
+func modelHasField(m *parser.Model, name string) bool {
+	if m == nil {
+		return false
+	}
+	for _, f := range m.Fields {
+		if f.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveTenantPlaceholder replaces {user.field}, {:param}, {header.H} in a manifest
 // path template using session, path params, and request headers.
 func resolveTenantPlaceholder(template string, session *Session, pathParams map[string]string, r *http.Request) string {

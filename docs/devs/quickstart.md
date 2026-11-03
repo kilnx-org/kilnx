@@ -77,12 +77,15 @@ action /tasks/new method POST
 page /new
   html
     <form method="post" action="/tasks/new">
+      <input type="hidden" name="_csrf" value="{csrf}">
       <input name="title" required>
       <button>Add</button>
     </form>
 ```
 
-Visit [http://localhost:8080/new](http://localhost:8080/new), submit the form, and the redirect lands you back on the list.
+Append it to `app.kilnx` and restart. The hidden `_csrf` input carries the CSRF token Kilnx checks on every POST; `{csrf}` renders a fresh one. Without it the action answers 403.
+
+Visit [http://localhost:8080/new](http://localhost:8080/new), submit the form, and the redirect lands you back on the list. `kilnx check` warns that the action has no auth requirement; that is expected here, and the [auth tutorial](tutorials/02-auth-and-sessions.md) fixes it.
 
 ## 4. Static analysis
 

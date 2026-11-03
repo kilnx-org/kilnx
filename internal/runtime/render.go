@@ -287,15 +287,17 @@ func renderHTML(content string, ctx *renderContext) string {
 	// Step 0.5: Expand action= attributes to htmx equivalents
 	result = expandActionAttributes(result, ctx)
 
-	// Step 1: Replace each {csrf} with a unique token (one per occurrence for multi-form pages)
-	for strings.Contains(result, "{csrf}") {
-		token := generateCSRFToken()
-		result = strings.Replace(result, "{csrf}", token, 1)
-	}
-
-	// Step 2: Process {field | filters} outside of {{each}} blocks
 	// Use a random nonce to prevent placeholder collision with user data
 	nonce := generateNonce()
+
+	// Step 1: Mark each {csrf} with a placeholder. Tokens are single-use, so
+	// they are minted in Step 7, after {{each}} has copied the placeholder
+	// into every row; minting here would give all rows the same token and
+	// only the first click would pass CSRF validation.
+	csrfPlaceholder := "\x00KILNX_CSRF_" + nonce + "\x00"
+	result = strings.ReplaceAll(result, "{csrf}", csrfPlaceholder)
+
+	// Step 2: Process {field | filters} outside of {{each}} blocks
 	rawPlaceholders := make(map[string]string)
 	rawCounter := 0
 
@@ -352,6 +354,11 @@ func renderHTML(content string, ctx *renderContext) string {
 	// Step 6: Restore raw placeholders (unescaped values)
 	for placeholder, val := range rawPlaceholders {
 		result = strings.ReplaceAll(result, placeholder, val)
+	}
+
+	// Step 7: Mint one CSRF token per occurrence (per form, per row)
+	for strings.Contains(result, csrfPlaceholder) {
+		result = strings.Replace(result, csrfPlaceholder, generateCSRFToken(), 1)
 	}
 
 	return result

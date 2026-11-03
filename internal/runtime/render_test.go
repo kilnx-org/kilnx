@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"html"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -376,6 +377,28 @@ func TestRenderHTML_MultipleCSRFTokensUnique(t *testing.T) {
 	}
 	if !validateCSRFToken(token2) {
 		t.Errorf("second csrf token failed validation")
+	}
+}
+
+func TestRenderHTML_CSRFUniquePerEachRow(t *testing.T) {
+	ctx := newTestContext()
+	ctx.queries["tasks"] = []database.Row{{"id": "1"}, {"id": "2"}, {"id": "3"}}
+	result := renderHTML(`{{each tasks}}<button hx-post="/tasks/{id}/delete" hx-vals='{"_csrf":"{csrf}"}'>x</button>{{end}}`, ctx)
+
+	re := regexp.MustCompile(`"_csrf":"([^"]+)"`)
+	matches := re.FindAllStringSubmatch(result, -1)
+	if len(matches) != 3 {
+		t.Fatalf("expected 3 tokens, got %d: %s", len(matches), result)
+	}
+	seen := map[string]bool{}
+	for _, m := range matches {
+		if seen[m[1]] {
+			t.Errorf("rows share CSRF token %s; single-use tokens break every click after the first", m[1])
+		}
+		seen[m[1]] = true
+		if !validateCSRFToken(m[1]) {
+			t.Errorf("token %s failed validation", m[1])
+		}
 	}
 }
 

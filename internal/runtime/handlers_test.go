@@ -1045,7 +1045,7 @@ func TestHandleRegister_ShortPassword(t *testing.T) {
 func TestHandleRegister_UserExists(t *testing.T) {
 	mock := newMockExecutor()
 	mock.queryRowsWithParamsResults[`SELECT id FROM "users" WHERE "email" = :identity`] = []database.Row{}
-	mock.execErr[`INSERT INTO "users" (name, "email", "password_hash") VALUES (:name, :identity, :password)`] = fmt.Errorf("UNIQUE constraint failed")
+	mock.execErr[`INSERT INTO "users" ("email", "password_hash") VALUES (:identity, :password)`] = fmt.Errorf("UNIQUE constraint failed")
 	s := newTestServer(mock)
 	csrf := generateCSRFToken()
 
@@ -1111,7 +1111,7 @@ func TestHandleRegister_NoAuthConfig(t *testing.T) {
 
 func TestHandleRegister_DBError(t *testing.T) {
 	mock := newMockExecutor()
-	mock.execErr[`INSERT INTO "users" (name, "email", "password_hash") VALUES (:name, :identity, :password)`] = fmt.Errorf("disk full")
+	mock.execErr[`INSERT INTO "users" ("email", "password_hash") VALUES (:identity, :password)`] = fmt.Errorf("disk full")
 	s := newTestServer(mock)
 	csrf := generateCSRFToken()
 
@@ -1127,6 +1127,28 @@ func TestHandleRegister_DBError(t *testing.T) {
 	loc := rec.Header().Get("Location")
 	if !strings.Contains(loc, "error=Could+not+create+account") {
 		t.Errorf("expected db error, got %q", loc)
+	}
+}
+
+func TestHandleRegister_NameColumnOnlyWhenModelDeclaresIt(t *testing.T) {
+	cases := []struct {
+		fields []parser.Field
+		want   string
+	}{
+		{nil, `INSERT INTO "users" ("email", "password_hash") VALUES (:identity, :password)`},
+		{[]parser.Field{{Name: "name"}}, `INSERT INTO "users" (name, "email", "password_hash") VALUES (:name, :identity, :password)`},
+	}
+	for _, c := range cases {
+		mock := newMockExecutor()
+		s := newTestServer(mock)
+		s.app.Models = []parser.Model{{Name: "users", Fields: c.fields}}
+		form := url.Values{"_csrf": {generateCSRFToken()}, "identity": {"new@example.com"}, "password": {"secret123"}}
+		req := httptest.NewRequest("POST", "/register", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		s.handleRegister(httptest.NewRecorder(), req)
+		if len(mock.execCalled) != 1 || mock.execCalled[0].SQL != c.want {
+			t.Errorf("fields %v: exec = %+v, want %q", c.fields, mock.execCalled, c.want)
+		}
 	}
 }
 

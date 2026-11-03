@@ -48,6 +48,23 @@ jobs:
       - name: Check examples (hello)
         run: ./kilnx check smoke/hello.kilnx
 
+      - name: Check README example
+        run: |
+          # The hero example is the first code people copy; it must compile.
+          sed -n '/^```kilnx$/,/^```$/p' README.md | sed '1d;$d' > /tmp/readme.kilnx
+          test -s /tmp/readme.kilnx
+          ./kilnx check /tmp/readme.kilnx
+
+      - name: Check tutorial final sources
+        run: |
+          # Each tutorial ends with the complete app; it must compile.
+          for f in docs/devs/tutorials/0*.md; do
+            awk '/^```kilnx$/{buf="";on=1;next} /^```$/{if(on)last=buf;on=0;next} on{buf=buf $0 "\n"} END{printf "%s", last}' "$f" > /tmp/tutorial.kilnx
+            test -s /tmp/tutorial.kilnx
+            echo "== $f"
+            ./kilnx check /tmp/tutorial.kilnx
+          done
+
   kilnx-build:
     name: Build Examples
     runs-on: ubuntu-latest
