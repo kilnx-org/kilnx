@@ -145,9 +145,11 @@ jobs:
       - name: Regenerate docs
         run: go run ./cmd/kilnx-gendocs -o /tmp/kilnx-docs-fresh
 
+      # "Source last touched" records a commit SHA that a squash merge
+      # rewrites, so it is ignored here; only real content drift fails.
       - name: Diff reference against committed docs
         run: |
-          if ! diff -r docs/devs/reference /tmp/kilnx-docs-fresh/devs/reference > /tmp/ref-diff.txt; then
+          if ! diff -r -I '^| \*\*Source last touched\*\* |' docs/devs/reference /tmp/kilnx-docs-fresh/devs/reference > /tmp/ref-diff.txt; then
             echo "::error::docs/devs/reference is out of sync with internal/spec."
             echo "Run 'go generate ./...' locally and commit the result."
             cat /tmp/ref-diff.txt
@@ -156,7 +158,7 @@ jobs:
 
       - name: Diff packages against committed docs
         run: |
-          if ! diff -r docs/contributors/packages /tmp/kilnx-docs-fresh/contributors/packages > /tmp/pkg-diff.txt; then
+          if ! diff -r -I '^| \*\*Source last touched\*\* |' docs/contributors/packages /tmp/kilnx-docs-fresh/contributors/packages > /tmp/pkg-diff.txt; then
             echo "::error::docs/contributors/packages is out of sync with internal/* source."
             echo "Run 'go generate ./...' locally and commit the result."
             cat /tmp/pkg-diff.txt
