@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ## [Unreleased]
 
+### Fixed
+- `kilnx build` works from an installed kilnx. It used to require the kilnx source tree and the Go toolchain, so it failed for anyone who installed through Homebrew or the install script. A build now appends the app to a copy of the running kilnx binary, with no Go or source tree needed, and targets the host OS and architecture.
+- Built binaries include imported files and static custom-field manifests. Previously only the entry file was embedded, silently dropping everything imported.
+- `kilnx build` runs static analysis and refuses to build an invalid app instead of producing a binary that fails at startup. It also rejects a missing `-o` value and an output path that would overwrite the source file.
+- Built binaries answer `version`, `--version` and `-v`, and fail at startup when a schema migration fails instead of ignoring the error.
+
 ## [0.1.5] - 2026-11-03
 
 ### Fixed

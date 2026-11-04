@@ -1,205 +1,173 @@
 package build
 
 import (
+	"encoding/binary"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
-// Build compiles a .kilnx file into a standalone binary.
-// It creates a temporary main.go inside the kilnx source tree
-// (cmd/_build/) that embeds the .kilnx source, then compiles it.
-// Requires the kilnx source tree to be present (development, CI, or Docker).
-func Build(kilnxFile, outputPath string) error {
-	source, err := os.ReadFile(kilnxFile)
-	if err != nil {
-		return fmt.Errorf("reading %s: %w", kilnxFile, err)
-	}
+// Bundle is everything a standalone binary needs from the project: the
+// resolved source with imports inlined, and the raw text of each static
+// custom-field manifest keyed by model name.
+type Bundle struct {
+	Source    string            `json:"source"`
+	Manifests map[string]string `json:"manifests,omitempty"`
+}
 
+// magic marks the end of a binary that carries a bundle. The layout is
+// <executable><bundle JSON><bundle length, 8 bytes LE><magic>.
+const magic = "KILNX-BUNDLE-V01"
+
+const trailerSize = 8 + len(magic)
+
+// Build writes a standalone binary to outputPath: a copy of the running
+// kilnx executable with the bundle appended. It needs neither the Go
+// toolchain nor the kilnx source tree, and targets the host OS and
+// architecture. It returns the path written.
+func Build(bundle Bundle, kilnxFile, outputPath string) (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locating kilnx executable: %w", err)
+	}
+	return write(self, bundle, kilnxFile, outputPath)
+}
+
+// Read returns the bundle appended to the running executable, or nil for a
+// plain kilnx CLI.
+func Read() (*Bundle, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("locating executable: %w", err)
+	}
+	return read(self)
+}
+
+func write(exePath string, bundle Bundle, kilnxFile, outputPath string) (string, error) {
 	if outputPath == "" {
 		base := filepath.Base(kilnxFile)
 		outputPath = strings.TrimSuffix(base, filepath.Ext(base))
 	}
-
-	kilnxRoot := findKilnxRoot()
-	if kilnxRoot == "" {
-		return fmt.Errorf("could not find kilnx source tree (looked from CWD and executable path).\n" +
-			"Run from within the kilnx repo, or use Docker:\n" +
-			"  docker build --build-arg KILNX_FILE=app.kilnx -t myapp .")
+	if runtime.GOOS == "windows" && filepath.Ext(outputPath) == "" {
+		outputPath += ".exe"
 	}
-
-	// Create a temporary build entry point inside the kilnx tree
-	buildDir := filepath.Join(kilnxRoot, "cmd", "_build")
-	if err := os.MkdirAll(buildDir, 0o750); err != nil {
-		return fmt.Errorf("creating build dir: %w", err)
-	}
-	defer os.RemoveAll(buildDir)
-
-	mainGo := generateMainGo(string(source))
-	mainPath := filepath.Join(buildDir, "main.go")
-	if err := os.WriteFile(mainPath, []byte(mainGo), 0o600); err != nil { //nolint:gosec // mainPath is constructed from kilnxRoot (internal lookup) joined with a literal filename, no user-controlled segment
-		return fmt.Errorf("writing main.go: %w", err)
-	}
-
-	absOutput, _ := filepath.Abs(outputPath)
-
-	fmt.Printf("Building %s...\n", filepath.Base(absOutput))
-
-	cmd := exec.Command("go", "build", "-o", absOutput, "./cmd/_build/")
-	cmd.Dir = kilnxRoot
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("go build: %w", err)
-	}
-
-	info, err := os.Stat(absOutput)
+	absOutput, err := filepath.Abs(outputPath)
 	if err != nil {
-		return err
+		return "", fmt.Errorf("resolving path %s: %w", outputPath, err)
+	}
+	absSource, err := filepath.Abs(kilnxFile)
+	if err != nil {
+		return "", fmt.Errorf("resolving path %s: %w", kilnxFile, err)
+	}
+	if absOutput == absSource {
+		return "", fmt.Errorf("output path %s would overwrite the source file", outputPath)
+	}
+	if same, err := sameFile(absOutput, exePath); err != nil {
+		return "", err
+	} else if same {
+		return "", fmt.Errorf("output path %s would overwrite the kilnx executable", outputPath)
 	}
 
-	fmt.Printf("Built: %s (%.1f MB)\n", absOutput, float64(info.Size())/1024/1024)
-	return nil
+	payload, err := json.Marshal(bundle)
+	if err != nil {
+		return "", fmt.Errorf("encoding bundle: %w", err)
+	}
+
+	exe, err := os.Open(exePath) //nolint:gosec // exePath is os.Executable, not user input
+	if err != nil {
+		return "", fmt.Errorf("opening kilnx executable: %w", err)
+	}
+	defer func() { _ = exe.Close() }()
+
+	// Write next to the target and rename, so a failed build never leaves a
+	// truncated binary and a running one can be replaced in place.
+	tmp, err := os.CreateTemp(filepath.Dir(absOutput), ".kilnx-build-*")
+	if err != nil {
+		return "", fmt.Errorf("creating output: %w", err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }() // already renamed on success
+
+	trailer := make([]byte, trailerSize)
+	binary.LittleEndian.PutUint64(trailer, uint64(len(payload)))
+	copy(trailer[8:], magic)
+
+	if _, err := io.Copy(tmp, exe); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("writing output: %w", err)
+	}
+	if _, err := tmp.Write(append(payload, trailer...)); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("writing output: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("writing output: %w", err)
+	}
+	if err := os.Chmod(tmp.Name(), 0o755); err != nil { //nolint:gosec // the output is an executable
+		return "", fmt.Errorf("writing output: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), absOutput); err != nil {
+		return "", fmt.Errorf("writing output: %w", err)
+	}
+	return absOutput, nil
 }
 
-func generateMainGo(source string) string {
-	// Escape backticks
-	escaped := strings.ReplaceAll(source, "`", "` + \"`\" + `")
-
-	return `package main
-
-import (
-	"fmt"
-	"os"
-
-	"github.com/kilnx-org/kilnx/internal/analyzer"
-	"github.com/kilnx-org/kilnx/internal/database"
-	"github.com/kilnx-org/kilnx/internal/lexer"
-	"github.com/kilnx-org/kilnx/internal/optimizer"
-	"github.com/kilnx-org/kilnx/internal/parser"
-	"github.com/kilnx-org/kilnx/internal/runtime"
-)
-
-const embeddedSource = ` + "`" + escaped + "`" + `
-
-func main() {
-	source := lexer.StripComments(embeddedSource)
-	tokens := lexer.Tokenize(source)
-	app, err := parser.Parse(tokens, source)
+func sameFile(a, b string) (bool, error) {
+	ai, err := os.Stat(a)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
 	if err != nil {
-		fmt.Printf("Parse error: %v\n", err)
-		os.Exit(1)
+		return false, fmt.Errorf("checking %s: %w", a, err)
 	}
-
-	if diags := analyzer.Analyze(app); len(diags) > 0 {
-		hasErrors := false
-		for _, d := range diags {
-			prefix := "warning"
-			if d.Level == "error" {
-				prefix = "error"
-				hasErrors = true
-			}
-			fmt.Fprintf(os.Stderr, "kilnx %s: [%s] %s\n", prefix, d.Context, d.Message)
-		}
-		if hasErrors {
-			fmt.Fprintln(os.Stderr, "Static analysis found errors, aborting.")
-			os.Exit(1)
-		}
-	}
-
-	optimizer.Optimize(app)
-
-	port := 8080
-	dbURL := "app.db"
-	if app.Config != nil {
-		if app.Config.Port > 0 {
-			port = app.Config.Port
-		}
-		if app.Config.Database != "" {
-			dbURL = app.Config.Database
-		}
-	}
-
-	// PaaS platforms (Railway, Fly.io, Render, Cloud Run) set PORT env var
-	if envPort := os.Getenv("PORT"); envPort != "" {
-		var p int
-		if n, err := fmt.Sscanf(envPort, "%d", &p); n == 1 && err == nil && p > 0 && p < 65536 {
-			port = p
-		} else {
-			fmt.Fprintf(os.Stderr, "kilnx: invalid PORT=%q, using %d\n", envPort, port)
-		}
-	}
-
-	for i, arg := range os.Args {
-		if arg == "--port" && i+1 < len(os.Args) {
-			fmt.Sscanf(os.Args[i+1], "%d", &port)
-		}
-		if arg == "--db" && i+1 < len(os.Args) {
-			dbURL = os.Args[i+1]
-		}
-	}
-
-	db, err := database.Open(dbURL)
+	bi, err := os.Stat(b)
 	if err != nil {
-		fmt.Printf("Database error: %v\n", err)
-		os.Exit(1)
+		return false, fmt.Errorf("checking %s: %w", b, err)
 	}
-	defer db.Close()
-
-	// Create internal tables for sessions and jobs
-	if err := db.MigrateInternal(); err != nil {
-		fmt.Printf("Internal migration error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if len(app.Models) > 0 {
-		stmts, _ := db.Migrate(app.Models, app.CustomManifests)
-		if len(stmts) > 0 {
-			fmt.Printf("Migrated %d change(s)\n", len(stmts))
-		}
-	}
-
-	srv := runtime.NewServer(app, db, port)
-	srv.StartScheduler()
-	srv.StartJobQueue()
-
-	fmt.Printf("Serving on http://localhost:%d\n", port)
-	if err := srv.Start(); err != nil {
-		fmt.Printf("Server error: %v\n", err)
-		os.Exit(1)
-	}
-}
-`
+	return os.SameFile(ai, bi), nil
 }
 
-func findKilnxRoot() string {
-	// Start from executable location
-	ex, _ := os.Executable()
-	dir := filepath.Dir(ex)
+func read(exePath string) (*Bundle, error) {
+	f, err := os.Open(exePath) //nolint:gosec // exePath is os.Executable, not user input
+	if err != nil {
+		return nil, fmt.Errorf("opening executable: %w", err)
+	}
+	defer func() { _ = f.Close() }()
 
-	// Also try CWD
-	cwd, _ := os.Getwd()
-
-	for _, startDir := range []string{dir, cwd} {
-		d := startDir
-		for {
-			gomod := filepath.Join(d, "go.mod")
-			if data, err := os.ReadFile(gomod); err == nil {
-				if strings.Contains(string(data), "kilnx-org/kilnx") {
-					return d
-				}
-			}
-			parent := filepath.Dir(d)
-			if parent == d {
-				break
-			}
-			d = parent
-		}
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("reading executable: %w", err)
+	}
+	size := info.Size()
+	if size < int64(trailerSize) {
+		return nil, nil
 	}
 
-	return ""
+	trailer := make([]byte, trailerSize)
+	if _, err := f.ReadAt(trailer, size-int64(trailerSize)); err != nil {
+		return nil, fmt.Errorf("reading executable: %w", err)
+	}
+	if string(trailer[8:]) != magic {
+		return nil, nil
+	}
+
+	length := binary.LittleEndian.Uint64(trailer)
+	limit := uint64(size) - uint64(trailerSize) //nolint:gosec // size is at least trailerSize here
+	if length > limit {
+		return nil, errors.New("corrupt app bundle: length exceeds file size")
+	}
+	payload := make([]byte, length)
+	if _, err := f.ReadAt(payload, int64(limit-length)); err != nil { //nolint:gosec // bounded by file size above
+		return nil, fmt.Errorf("reading app bundle: %w", err)
+	}
+
+	var bundle Bundle
+	if err := json.Unmarshal(payload, &bundle); err != nil {
+		return nil, fmt.Errorf("corrupt app bundle: %w", err)
+	}
+	return &bundle, nil
 }

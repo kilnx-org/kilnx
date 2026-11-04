@@ -32,7 +32,7 @@ There are two ways to execute a `.kilnx` file.
 
 `kilnx run app.kilnx` parses the file, builds the AST in memory, and starts an HTTP server that interprets it. Migrations apply on startup. Edits to the file are picked up on restart. This is the dev loop.
 
-`kilnx build app.kilnx -o app` produces a standalone binary that embeds the AST, the runtime, your templates, htmx, SQLite, and bcrypt. The output is around 15 MB and has no external dependencies. This is what you ship.
+`kilnx build app.kilnx -o app` produces a standalone binary: a copy of the kilnx runtime with your app appended, imports and custom-field manifests included, plus htmx, SQLite, and bcrypt. No Go toolchain is needed to build it. The output is around 20 MB, has no external dependencies, and runs on the same OS and architecture as the kilnx that built it. This is what you ship.
 
 There is no separate "code generation" step in either case. The AST drives the runtime. `build` just freezes the AST inside an executable. There is no Go file written to disk that mirrors your `.kilnx`.
 

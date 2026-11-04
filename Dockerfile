@@ -19,7 +19,6 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /usr/local/bin/kilnx ./cmd/kilnx/
 
 # Build the .kilnx app into a standalone binary.
-# CWD must be inside the kilnx source tree so findKilnxRoot() works.
 ARG KILNX_FILE=app.kilnx
 COPY ${KILNX_FILE} /kilnx/${KILNX_FILE}
 RUN kilnx build ${KILNX_FILE} -o /app/server
