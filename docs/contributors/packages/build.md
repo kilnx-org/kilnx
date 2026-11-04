@@ -1,6 +1,6 @@
 # `internal/build`
 
-> Package build compiles a .kilnx source file into a standalone Go binary by emitting Go source that embeds the AST and a minimal runtime, then invoking `go build`.
+> Package build produces standalone binaries by appending an app bundle to a copy of the running kilnx executable, and reads that bundle back at startup.
 
 | | |
 |---|---|
@@ -11,11 +11,10 @@
 
 ## Overview
 
-Used by the `kilnx build` CLI command. Build output is a self-contained
-executable: no kilnx CLI is required at runtime, only the resulting
-binary. The build process writes a temporary Go module under a build
-directory, copies in the embedded runtime, and shells out to the host
-Go toolchain.
+Used by the `kilnx build` CLI command. The kilnx CLI already contains the
+whole runtime, so a build needs neither the Go toolchain nor the kilnx
+source tree. Output runs on the same OS and architecture as the kilnx
+that produced it, with no kilnx CLI required at runtime.
 
 ## Files
 
@@ -23,28 +22,57 @@ Go toolchain.
 |------|---------|
 | [`build.go`](../../../internal/build/build.go) | _no file-level doc_ |
 
+## Types
+
+### `Bundle`
+
+```go
+type Bundle struct {
+	Source		string			`json:"source"`
+	Manifests	map[string]string	`json:"manifests,omitempty"`
+}
+```
+
+Bundle is everything a standalone binary needs from the project: the
+resolved source with imports inlined, and the raw text of each static
+custom-field manifest keyed by model name.
+
 ## Functions
 
 ### `Build`
 
 ```go
-func Build(kilnxFile, outputPath string) error
+func Build(bundle Bundle, kilnxFile, outputPath string) (string, error)
 ```
 
-Build compiles a .kilnx file into a standalone binary.
-It creates a temporary main.go inside the kilnx source tree
-(cmd/_build/) that embeds the .kilnx source, then compiles it.
-Requires the kilnx source tree to be present (development, CI, or Docker).
+Build writes a standalone binary to outputPath: a copy of the running
+kilnx executable with the bundle appended. It needs neither the Go
+toolchain nor the kilnx source tree, and targets the host OS and
+architecture. It returns the path written.
 
-### `findKilnxRoot`
+### `Read`
 
 ```go
-func findKilnxRoot() string
+func Read() (*Bundle, error)
 ```
-### `generateMainGo`
+
+Read returns the bundle appended to the running executable, or nil for a
+plain kilnx CLI.
+
+### `read`
 
 ```go
-func generateMainGo(source string) string
+func read(exePath string) (*Bundle, error)
+```
+### `sameFile`
+
+```go
+func sameFile(a, b string) (bool, error)
+```
+### `write`
+
+```go
+func write(exePath string, bundle Bundle, kilnxFile, outputPath string) (string, error)
 ```
 
 ## Notes

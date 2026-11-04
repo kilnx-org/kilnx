@@ -40,7 +40,7 @@ Kilnx is a full-stack server framework, closer in scope to Rails or Django than 
 Two design choices set the tone for everything else:
 
 1. SQL is part of the language. Queries are inline, parsed and validated against your models at compile time. There is no ORM in the path.
-2. The output is a binary. `kilnx build app.kilnx -o app` produces one executable that embeds the runtime, your templates, htmx, SQLite, and bcrypt. Copy it to a server and run it.
+2. The output is a binary. `kilnx build app.kilnx -o app` produces one executable, for the OS and architecture you build on, that embeds the runtime, your app, htmx, SQLite, and bcrypt. Copy it to a server and run it.
 
 Read [PRINCIPLES.md](https://github.com/kilnx-org/kilnx/blob/main/PRINCIPLES.md) for the constitutional rules that drive these decisions.
 

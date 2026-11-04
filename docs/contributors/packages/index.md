@@ -13,5 +13,5 @@ Generated from `internal/*` package source. Do not edit by hand. Run `go generat
 | [`pathutil`](pathutil.md) | Package pathutil provides helpers for matching declarative route templates (e.g. "/tasks/:id/delete") against concrete request paths (e.g. "/tasks/123/delete"). |
 | [`pdf`](pdf.md) | Package pdf is a minimal, dependency-free PDF writer used by the runtime to render reports and printable views from .kilnx pages. |
 | [`runtime`](runtime.md) | Package runtime is the HTTP server and AST interpreter that backs `kilnx run` and the binaries produced by `kilnx build`. |
-| [`build`](build.md) | Package build compiles a .kilnx source file into a standalone Go binary by emitting Go source that embeds the AST and a minimal runtime, then invoking `go build`. |
+| [`build`](build.md) | Package build produces standalone binaries by appending an app bundle to a copy of the running kilnx executable, and reads that bundle back at startup. |
 

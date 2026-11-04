@@ -1,11 +1,18 @@
 package main
 
 import (
+	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func buildKilnx(t *testing.T) string {
@@ -127,4 +134,112 @@ func TestCLI_Run_AgentMissingClaudeFails(t *testing.T) {
 	if !strings.Contains(string(out), "claude") {
 		t.Errorf("expected claude-missing error, got: %s", out)
 	}
+}
+
+// TestCLI_Build_StandaloneOutsideRepo: an installed kilnx has no source tree and
+// often no Go, so `kilnx build` must work from an unrelated directory with an
+// empty PATH, and the output must serve a multi-file app on its own.
+func TestCLI_Build_StandaloneOutsideRepo(t *testing.T) {
+	bin := buildKilnx(t)
+	dir := t.TempDir()
+	files := map[string]string{
+		"app.kilnx":        "import \"pages/home.kilnx\"\n\nmodel note\n  title: text required\n",
+		"pages/home.kilnx": "page /\n  html\n    <h1>from an import</h1>\n",
+	}
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := filepath.Join(dir, "myapp")
+	if goruntime.GOOS == "windows" {
+		out += ".exe"
+	}
+	build := exec.Command(bin, "build", "app.kilnx", "-o", out)
+	build.Dir = dir
+	build.Env = append(os.Environ(), "PATH=/nonexistent-path-for-test")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("kilnx build failed: %v\n%s", err, output)
+	}
+
+	// The source must not be needed once built.
+	if err := os.RemoveAll(filepath.Join(dir, "pages")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "app.kilnx")); err != nil {
+		t.Fatal(err)
+	}
+
+	port := freePort(t)
+	run := exec.Command(out, "--port", strconv.Itoa(port), "--db", filepath.Join(dir, "built.db"))
+	run.Dir = dir
+	if err := run.Start(); err != nil {
+		t.Fatalf("starting built binary: %v", err)
+	}
+	defer func() {
+		_ = run.Process.Kill()
+		_ = run.Wait()
+	}()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/", port)
+	var body string
+	for i := 0; i < 100; i++ {
+		resp, err := http.Get(url) //nolint:gosec // local test server
+		if err == nil {
+			raw, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			body = string(raw)
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !strings.Contains(body, "from an import") {
+		t.Errorf("built binary did not serve the imported page, got: %q", body)
+	}
+
+	version := exec.Command(out, "--version")
+	if output, err := version.Output(); err != nil || !strings.HasPrefix(string(output), "kilnx ") {
+		t.Errorf("built binary --version: %v, %q", err, output)
+	}
+}
+
+func TestCLI_Build_RejectsInvalidApp(t *testing.T) {
+	bin := buildKilnx(t)
+	dir := t.TempDir()
+	file := filepath.Join(dir, "bad.kilnx")
+	src := "page /\n  query rows: SELECT id FROM missing\n  html\n    <p>x</p>\n"
+	if err := os.WriteFile(file, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "bad")
+
+	if output, err := exec.Command(bin, "build", file, "-o", out).CombinedOutput(); err == nil {
+		t.Fatalf("expected build to fail, got: %s", output)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Error("failed build left an output file")
+	}
+}
+
+func TestCLI_Build_RequiresOutputValue(t *testing.T) {
+	bin := buildKilnx(t)
+	output, err := exec.Command(bin, "build", "app.kilnx", "-o").CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "-o requires") {
+		t.Errorf("expected -o error, got %v: %s", err, output)
+	}
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
 }

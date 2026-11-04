@@ -81,11 +81,11 @@ A `.kilnx` source file flows through five stages before serving traffic. The sam
 ### Build (AOT)
 
 - Package: [`internal/build`](../../../internal/build).
-- Entry: [`build.Build(kilnxFile, outputPath)`](../../../internal/build/build.go).
+- Entry: [`cmdBuild` in `cmd/kilnx/main.go`](../../../cmd/kilnx/main.go), which resolves imports and manifests, then calls [`build.Build`](../../../internal/build/build.go).
 - Input: path to a `.kilnx` file and an optional output binary path.
-- Output: standalone Go binary that runs the same lexer, parser, analyzer, optimizer, runtime stack on startup against the embedded source.
-- Responsibility: locate the kilnx source tree, write a temporary `cmd/_build/main.go` that embeds the source as a backtick-escaped Go string, invoke `go build -o <output> ./cmd/_build/` with `CGO_ENABLED=0`, then clean up.
-- Build does not pre-resolve the AST. The embedded `main.go` re-runs the full pipeline at process start so behaviour matches `kilnx run` exactly.
+- Output: standalone binary for the host OS and architecture, which runs the same lexer, parser, analyzer, optimizer, runtime stack on startup against the embedded source.
+- Responsibility: copy the running kilnx executable and append a bundle (resolved source plus static custom-field manifests) followed by a length and magic trailer. No Go toolchain or source tree is involved.
+- Build does not pre-resolve the AST. At startup `main` looks for a trailer on its own executable and, if found, `runBundle` re-runs the full pipeline so behaviour matches `kilnx run`.
 - Key files: [`build.go`](../../../internal/build/build.go).
 
 ## Where each entry point wires the pipeline
@@ -93,4 +93,4 @@ A `.kilnx` source file flows through five stages before serving traffic. The sam
 - `kilnx run`: [`cmdRun` in `cmd/kilnx/main.go`](../../../cmd/kilnx/main.go) calls `loadApp` (lexer plus parser), then `analyzer.Analyze`, then `optimizer.Optimize`, then `runtime.NewServer(...).Start()`.
 - `kilnx check`: [`cmdCheck`](../../../cmd/kilnx/main.go) stops after analyzer.
 - `kilnx test`: parser plus analyzer plus optimizer, then a runtime instance bound to port 9999 to drive `Test` blocks.
-- `kilnx build`: delegates to `internal/build` which generates the same call sequence inside the emitted `main.go`.
+- `kilnx build`: [`cmdBuild`](../../../cmd/kilnx/main.go) validates and writes the binary through `internal/build`; [`runBundle`](../../../cmd/kilnx/main.go) is the same call sequence at the output's startup.

@@ -22,6 +22,19 @@ import (
 var version = "dev"
 
 func main() {
+	bundle, err := build.Read()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	if bundle != nil {
+		if err := runBundle(bundle, os.Args[1:]); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)
@@ -61,10 +74,18 @@ func main() {
 			os.Exit(1)
 		}
 		output := ""
-		if len(os.Args) > 4 && os.Args[3] == "-o" {
+		if len(os.Args) > 3 {
+			if os.Args[3] != "-o" {
+				fmt.Printf("Error: unexpected argument %q (expected -o output)\n", os.Args[3])
+				os.Exit(1)
+			}
+			if len(os.Args) < 5 || os.Args[4] == "" {
+				fmt.Println("Error: flag -o requires an output path")
+				os.Exit(1)
+			}
 			output = os.Args[4]
 		}
-		if err := build.Build(os.Args[2], output); err != nil {
+		if err := cmdBuild(os.Args[2], output); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -217,6 +238,144 @@ func cmdRun(filename string) error {
 	os.Setenv("KILNX_DEV", "1")
 
 	return runtime.WatchAndServe(filename, db, port)
+}
+
+// cmdBuild validates the app, then writes a standalone binary with its
+// resolved source and static custom-field manifests embedded, since neither
+// file exists on the deploy host.
+func cmdBuild(filename, output string) error {
+	app, err := loadApp(filename)
+	if err != nil {
+		return err
+	}
+	if diags := analyzer.Analyze(app); len(diags) > 0 {
+		if printDiagnostics(diags) {
+			return fmt.Errorf("static analysis found errors, not building")
+		}
+	}
+
+	absEntry, err := filepath.Abs(filename)
+	if err != nil {
+		return fmt.Errorf("resolving path %s: %w", filename, err)
+	}
+	projectRoot := filepath.Dir(absEntry)
+	source, err := resolveImports(absEntry, projectRoot, nil, 0)
+	if err != nil {
+		return err
+	}
+
+	manifests := make(map[string]string)
+	for _, model := range app.Models {
+		path := staticManifestPath(model)
+		if path == "" {
+			continue
+		}
+		raw, err := readManifest(projectRoot, path)
+		if err != nil {
+			return err
+		}
+		manifests[model.Name] = raw
+	}
+
+	out, err := build.Build(build.Bundle{Source: source, Manifests: manifests}, filename, output)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(out) //nolint:gosec // out is the path this build just wrote
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Built: %s (%.1f MB)\n", out, float64(info.Size())/1024/1024)
+	return nil
+}
+
+// runBundle is the entry point of a standalone binary built by cmdBuild.
+func runBundle(bundle *build.Bundle, args []string) error {
+	for _, a := range args {
+		if a == "version" || a == "--version" || a == "-v" {
+			fmt.Printf("kilnx %s\n", version)
+			return nil
+		}
+	}
+
+	source := lexer.StripComments(bundle.Source)
+	app, err := parser.Parse(lexer.Tokenize(source), source)
+	if err != nil {
+		return err
+	}
+	app.CustomManifests = make(map[string]*parser.CustomFieldManifest)
+	for name, raw := range bundle.Manifests {
+		m, err := parser.ParseManifest(raw, name)
+		if err != nil {
+			return fmt.Errorf("parsing manifest for %s: %w", name, err)
+		}
+		app.CustomManifests[name] = m
+	}
+
+	if diags := analyzer.Analyze(app); len(diags) > 0 {
+		if printDiagnostics(diags) {
+			return fmt.Errorf("static analysis found errors, not starting server")
+		}
+	}
+	optimizer.Optimize(app)
+
+	port := 8080
+	dbURL := "app.db"
+	if app.Config != nil {
+		if app.Config.Port > 0 {
+			port = app.Config.Port
+		}
+		if app.Config.Database != "" {
+			dbURL = app.Config.Database
+		}
+	}
+
+	// PaaS platforms (Railway, Fly.io, Render, Cloud Run) set PORT env var
+	if envPort := os.Getenv("PORT"); envPort != "" {
+		var p int
+		if n, err := fmt.Sscanf(envPort, "%d", &p); n == 1 && err == nil && p > 0 && p < 65536 {
+			port = p
+		} else {
+			fmt.Fprintf(os.Stderr, "kilnx: invalid PORT=%q, using %d\n", envPort, port)
+		}
+	}
+
+	for i, arg := range args {
+		if arg == "--port" && i+1 < len(args) {
+			if _, err := fmt.Sscanf(args[i+1], "%d", &port); err != nil {
+				return fmt.Errorf("invalid --port %q", args[i+1])
+			}
+		}
+		if arg == "--db" && i+1 < len(args) {
+			dbURL = args[i+1]
+		}
+	}
+
+	db, err := database.Open(dbURL)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+
+	if err := db.MigrateInternal(); err != nil {
+		return err
+	}
+	if len(app.Models) > 0 {
+		stmts, err := db.Migrate(app.Models, app.CustomManifests)
+		if err != nil {
+			return err
+		}
+		if len(stmts) > 0 {
+			fmt.Printf("Migrated %d change(s)\n", len(stmts))
+		}
+	}
+
+	srv := runtime.NewServer(app, db, port)
+	srv.StartScheduler()
+	srv.StartJobQueue()
+
+	fmt.Printf("Serving on http://localhost:%d\n", port)
+	return srv.Start()
 }
 
 func cmdMigrate(filename string, flags []string) error {
@@ -523,22 +682,11 @@ func loadApp(filename string) (*parser.App, error) {
 
 	app.CustomManifests = make(map[string]*parser.CustomFieldManifest)
 	for _, model := range app.Models {
-		if model.CustomFieldsFile == "" {
+		path := staticManifestPath(model)
+		if path == "" {
 			continue
 		}
-		// Dynamic paths (containing {placeholder}) are resolved at request time.
-		// Load the fallback manifest at startup if it is a static path.
-		if strings.Contains(model.CustomFieldsFile, "{") {
-			if model.CustomFieldsFallback != "" && !strings.Contains(model.CustomFieldsFallback, "{") {
-				m, err := loadManifest(projectRoot, model.CustomFieldsFallback, model.Name)
-				if err != nil {
-					return nil, err
-				}
-				app.CustomManifests[model.Name] = m
-			}
-			continue
-		}
-		m, err := loadManifest(projectRoot, model.CustomFieldsFile, model.Name)
+		m, err := loadManifest(projectRoot, path, model.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -548,24 +696,45 @@ func loadApp(filename string) (*parser.App, error) {
 	return app, nil
 }
 
+// staticManifestPath returns the manifest a model loads at startup, or "" if
+// it has none. Dynamic paths (containing {placeholder}) are resolved at request
+// time, so only a static fallback applies.
+func staticManifestPath(model parser.Model) string {
+	if strings.Contains(model.CustomFieldsFile, "{") {
+		if strings.Contains(model.CustomFieldsFallback, "{") {
+			return ""
+		}
+		return model.CustomFieldsFallback
+	}
+	return model.CustomFieldsFile
+}
+
 func loadManifest(projectRoot, path, modelName string) (*parser.CustomFieldManifest, error) {
-	if !strings.HasSuffix(path, ".kilnx") {
-		return nil, fmt.Errorf("custom fields manifest must be a .kilnx file: %s", path)
-	}
-	manifestPath := filepath.Join(projectRoot, path)
-	rel, err := filepath.Rel(projectRoot, manifestPath)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return nil, fmt.Errorf("custom fields manifest escapes project directory: %s", path)
-	}
-	raw, err := os.ReadFile(manifestPath)
+	raw, err := readManifest(projectRoot, path)
 	if err != nil {
-		return nil, fmt.Errorf("reading manifest %s: %w", path, err)
+		return nil, err
 	}
-	m, err := parser.ParseManifest(string(raw), modelName)
+	m, err := parser.ParseManifest(raw, modelName)
 	if err != nil {
 		return nil, fmt.Errorf("parsing manifest %s: %w", path, err)
 	}
 	return m, nil
+}
+
+func readManifest(projectRoot, path string) (string, error) {
+	if !strings.HasSuffix(path, ".kilnx") {
+		return "", fmt.Errorf("custom fields manifest must be a .kilnx file: %s", path)
+	}
+	manifestPath := filepath.Join(projectRoot, path)
+	rel, err := filepath.Rel(projectRoot, manifestPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("custom fields manifest escapes project directory: %s", path)
+	}
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return "", fmt.Errorf("reading manifest %s: %w", path, err)
+	}
+	return string(raw), nil
 }
 
 const maxImportDepth = 64

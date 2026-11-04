@@ -114,7 +114,7 @@ Save it as `app.kilnx` and run `kilnx run app.kilnx`. You get registration, logi
 
 **SQL is a first-class citizen.** Queries live inline, not in strings, not behind an ORM. The analyzer validates column references against your models at compile time. The optimizer rewrites `SELECT *` to only the columns your templates actually use.
 
-**The binary is the deploy.** `kilnx build app.kilnx -o myapp` produces a single ~15MB executable that embeds your app, the HTTP server, htmx.js, SQLite, and bcrypt. Copy it to a server and run it.
+**The binary is the deploy.** `kilnx build app.kilnx -o myapp` produces a single ~20MB executable that embeds your app, the HTTP server, htmx.js, SQLite, and bcrypt, with no Go toolchain needed. It targets the OS and architecture you build on. Copy it to a matching server and run it.
 
 **Security is default, not opt-in.** CSRF tokens, SQL parameter binding, HTML escaping, bcrypt hashing, HMAC-signed sessions, and webhook signature verification are all automatic. You have to make effort to be insecure.
 

@@ -105,7 +105,7 @@ When you are ready to ship:
 kilnx build app.kilnx -o myapp
 ```
 
-The output is a single executable, around 15 MB, that embeds the runtime, your templates, htmx, SQLite, and bcrypt. Copy it to any Linux or macOS host and run it:
+The output is a single executable, around 20 MB, that embeds the runtime, your app (imports included), htmx, SQLite, and bcrypt. The build needs no Go toolchain and takes under a second. It targets the OS and architecture of the machine you build on, so build on a machine that matches your server (or in a container). Copy it over and run it:
 
 ```bash
 scp myapp server:~/

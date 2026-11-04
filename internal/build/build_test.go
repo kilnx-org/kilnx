@@ -3,51 +3,126 @@ package build
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-func TestGenerateMainGo(t *testing.T) {
-	src := `model user
-  name: text required
-`
-	out := generateMainGo(src)
+func fakeExe(t *testing.T, dir string) string {
+	t.Helper()
+	exe := filepath.Join(dir, "kilnx-fake")
+	if err := os.WriteFile(exe, []byte("\x7fELF fake runtime"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return exe
+}
 
-	if !strings.Contains(out, "package main") {
-		t.Error("generated main.go missing package declaration")
+func TestWriteReadRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	exe := fakeExe(t, dir)
+	want := Bundle{
+		Source:    "page /\n  html\n    <h1>`quoted` \x00 ok</h1>\n",
+		Manifests: map[string]string{"user": "field nick: text\n"},
 	}
-	if !strings.Contains(out, "embeddedSource") {
-		t.Error("generated main.go missing embeddedSource constant")
+
+	out, err := write(exe, want, filepath.Join(dir, "app.kilnx"), filepath.Join(dir, "myapp"))
+	if err != nil {
+		t.Fatalf("write: %v", err)
 	}
-	if !strings.Contains(out, "lexer.StripComments") {
-		t.Error("generated main.go missing lexer call")
+
+	got, err := read(out)
+	if err != nil {
+		t.Fatalf("read: %v", err)
 	}
-	if !strings.Contains(out, "parser.Parse") {
-		t.Error("generated main.go missing parser call")
+	if got == nil {
+		t.Fatal("read returned no bundle")
+		return
 	}
-	if !strings.Contains(out, "analyzer.Analyze") {
-		t.Error("generated main.go missing analyzer call")
+	if got.Source != want.Source || got.Manifests["user"] != want.Manifests["user"] {
+		t.Errorf("bundle mismatch: %+v", got)
 	}
-	if !strings.Contains(out, "runtime.NewServer") {
-		t.Error("generated main.go missing runtime.NewServer call")
+
+	raw, err := os.ReadFile(out) //nolint:gosec // test temp path
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Verify backtick escaping
-	if strings.Contains(src, "`") && !strings.Contains(out, "` + \"`\" + `") {
-		t.Error("generated main.go did not escape backticks")
+	if !strings.HasPrefix(string(raw), "\x7fELF fake runtime") {
+		t.Error("output does not start with the executable")
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm()&0o100 == 0 {
+			t.Errorf("output is not executable: %v", info.Mode())
+		}
 	}
 }
 
-func TestFindKilnxRoot(t *testing.T) {
-	root := findKilnxRoot()
-	if root == "" {
-		t.Skip("findKilnxRoot returned empty; may be running outside repo")
-	}
-	gomod := filepath.Join(root, "go.mod")
-	data, err := os.ReadFile(gomod)
+func TestReadPlainExecutable(t *testing.T) {
+	dir := t.TempDir()
+	got, err := read(fakeExe(t, dir))
 	if err != nil {
-		t.Fatalf("could not read go.mod at %s: %v", gomod, err)
+		t.Fatalf("read: %v", err)
 	}
-	if !strings.Contains(string(data), "kilnx-org/kilnx") {
-		t.Errorf("go.mod at %s does not contain expected module name", gomod)
+	if got != nil {
+		t.Errorf("expected no bundle, got %+v", got)
+	}
+
+	short := filepath.Join(dir, "short")
+	if err := os.WriteFile(short, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := read(short); err != nil || got != nil {
+		t.Errorf("short file: got %+v, %v", got, err)
+	}
+}
+
+func TestReadCorruptBundle(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "corrupt")
+	trailer := make([]byte, 8)
+	trailer[0] = 0xff
+	trailer[3] = 0xff
+	if err := os.WriteFile(path, append(trailer, magic...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := read(path); err == nil || !strings.Contains(err.Error(), "corrupt") {
+		t.Errorf("expected corrupt bundle error, got %v", err)
+	}
+}
+
+func TestWriteRefusesToOverwriteSourceOrExecutable(t *testing.T) {
+	dir := t.TempDir()
+	exe := fakeExe(t, dir)
+	src := filepath.Join(dir, "app")
+	if err := os.WriteFile(src, []byte("page /\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := write(exe, Bundle{}, src, src); err == nil || !strings.Contains(err.Error(), "source") {
+		t.Errorf("expected source overwrite error, got %v", err)
+	}
+	if _, err := write(exe, Bundle{}, src, exe); err == nil || !strings.Contains(err.Error(), "executable") {
+		t.Errorf("expected executable overwrite error, got %v", err)
+	}
+}
+
+func TestWriteDefaultOutputName(t *testing.T) {
+	dir := t.TempDir()
+	exe := fakeExe(t, dir)
+	t.Chdir(dir)
+
+	out, err := write(exe, Bundle{Source: "x"}, "shop.kilnx", "")
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	want := "shop"
+	if runtime.GOOS == "windows" {
+		want = "shop.exe"
+	}
+	if filepath.Base(out) != want {
+		t.Errorf("got %s, want %s", out, want)
 	}
 }

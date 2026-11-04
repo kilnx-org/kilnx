@@ -111,6 +111,41 @@ jobs:
           fi
           echo "PORT override OK"
 
+  standalone-build:
+    name: Standalone build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build CLI like a release
+        run: CGO_ENABLED=0 go build -ldflags "-s -w" -o "$RUNNER_TEMP/install/kilnx" ./cmd/kilnx/
+
+      # Mirrors an installed kilnx: outside the repo, with no Go on PATH.
+      - name: Build and serve an app outside the repo
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir app && cd app
+          printf 'page /\n  html\n    <h1>standalone</h1>\n' > app.kilnx
+          PATH="$RUNNER_TEMP/install:/usr/bin:/bin" kilnx build app.kilnx -o myapp
+          rm app.kilnx
+          PORT=8123 ./myapp &
+          PID=$!
+          sleep 3
+          BODY=$(curl -s http://localhost:8123/)
+          kill $PID
+          echo "$BODY" | grep -q standalone
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
